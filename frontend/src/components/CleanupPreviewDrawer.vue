@@ -74,6 +74,11 @@
       </div>
 
       <!-- Per-category breakdown -->
+      <el-empty
+        v-if="isEmpty"
+        description="按当前保留天数没有任何内容需要清理。无需执行操作。"
+      />
+      <template v-else>
       <div class="cat">
         <div class="cat-head">
           <div>
@@ -192,6 +197,7 @@
           </el-table-column>
         </el-table>
       </div>
+      </template>
     </div>
 
     <!-- Detail list sub-drawer -->
@@ -251,6 +257,15 @@ const totals = computed(() => props.preview?.totals || {
   executionDirCount: 0, artifactCount: 0, logCount: 0, historyCount: 0,
   executionBytes: 0, artifactBytes: 0, logBytes: 0, totalBytes: 0,
   skippedRunning: 0
+})
+
+// True when the preview found nothing to delete across every category.
+// Used by the body to swap the candidate tables for a single friendly hint
+// instead of four empty tables that look like a load failure.
+const isEmpty = computed(() => {
+  const t = totals.value
+  return t.executionDirCount === 0 && t.artifactCount === 0 &&
+    t.logCount === 0 && t.historyCount === 0 && t.skippedRunning === 0
 })
 
 const listDrawerOpen = ref(false)
