@@ -93,7 +93,7 @@
             <el-button size="small" :icon="MoreFilled" />
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="copy">{{ row.favorite ? '复制' : '复制' }}</el-dropdown-item>
+                <el-dropdown-item command="copy">复制</el-dropdown-item>
                 <el-dropdown-item command="export">导出 .zip</el-dropdown-item>
                 <el-dropdown-item command="toggle">
                   {{ row.enabled === false ? '启用' : '禁用' }}

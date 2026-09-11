@@ -183,6 +183,7 @@
             <div class="sb-log-toolbar">
               <el-button size="small" :icon="Refresh" :loading="resultLoading" @click="loadResult(current?.id)">刷新</el-button>
               <el-button size="small" :icon="DocumentCopy" :disabled="!resultText" @click="copy(resultText)">复制</el-button>
+              <el-button size="small" :icon="Download" :disabled="!resultText" @click="download('result', resultText)">下载</el-button>
             </div>
             <pre class="sb-log" v-if="resultText">{{ resultText }}</pre>
             <div v-else class="sb-log sb-log-empty">
