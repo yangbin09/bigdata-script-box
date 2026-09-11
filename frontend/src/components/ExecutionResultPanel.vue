@@ -117,7 +117,7 @@ import {
   RefreshRight, EditPen, Clock, Document, Download
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { formatDateTime, formatDuration, parseParamsJson } from '../utils/format'
+import { formatDateTime, formatDuration, formatBytes, parseParamsJson } from '../utils/format'
 import { STATUS, STATUS_LABEL, STATUS_TAG_TYPE, statusOfHistory } from '../utils/labels'
 import LogPane from './LogPane.vue'
 import { listArtifacts, artifactDownloadUrl } from '../api/executions'
@@ -158,14 +158,6 @@ function shortName(name) {
   if (!name) return ''
   const i = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'))
   return i >= 0 ? name.substring(i + 1) : name
-}
-
-function formatBytes(n) {
-  if (n == null) return '-'
-  if (n < 1024) return `${n} B`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
-  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`
-  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`
 }
 
 const status = computed(() => statusOfHistory(props.history))

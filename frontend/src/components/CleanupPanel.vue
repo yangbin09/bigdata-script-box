@@ -182,6 +182,7 @@ import {
   previewCleanup, getSettings, updateSettings,
   listCleanupHistory
 } from '../api/admin'
+import { formatBytes } from '../utils/format'
 import CleanupPreviewDrawer from './CleanupPreviewDrawer.vue'
 import CleanupConfirmDialog from './CleanupConfirmDialog.vue'
 import CleanupReportDrawer from './CleanupReportDrawer.vue'
@@ -197,14 +198,6 @@ const confirmDialogOpen = ref(false)
 const reportDrawerOpen = ref(false)
 const lastReport = ref(null)
 const history = ref([])
-
-function formatBytes(n) {
-  if (!n || n <= 0) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let v = n; let i = 0
-  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++ }
-  return `${v.toFixed(v >= 10 ? 0 : 2)} ${units[i]}`
-}
 
 function formatTime(s) {
   if (!s) return '—'

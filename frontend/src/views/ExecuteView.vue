@@ -385,7 +385,7 @@ import { listPresets, dryRun, uploadFile, runBatch, getBatch } from '../api/extr
 import ScriptCard from '../components/ScriptCard.vue'
 import ParamForm from '../components/ParamForm.vue'
 import ExecutionResultPanel from '../components/ExecutionResultPanel.vue'
-import { formatDateTime } from '../utils/format'
+import { formatDateTime, formatBytes } from '../utils/format'
 import { getItem, setItem, removeItem } from '../utils/storage'
 import { RISK_LEVEL, RISK_LEVEL_LABEL, RISK_LEVEL_TAG_TYPE, normalizeRiskLevel, RISK_CONFIRM_TOKEN } from '../utils/labels'
 
@@ -618,13 +618,6 @@ async function uploadFileFor(file, paramName) {
   } catch (e) {
     // interceptor already toasted
   }
-}
-
-function formatBytes(n) {
-  if (!n) return '0 B'
-  if (n < 1024) return `${n} B`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
-  return `${(n / 1024 / 1024).toFixed(1)} MB`
 }
 
 async function openPreview() {
