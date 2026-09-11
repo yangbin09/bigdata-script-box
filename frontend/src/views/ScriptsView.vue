@@ -1,54 +1,96 @@
 <!--
   ScriptsView — table of all scripts.
-  "新增" opens the create/upload Drawer.
-  Row actions: 编辑 (params + body), 启用切换, 删除.
+  Columns: 名称 / 分类 / 描述 / 参数 / 超时 / 状态 / 最后修改 / 操作
+  Row actions: 执行 / 编辑 / 更多(复制 / 启用-禁用 / 删除).
+  Delete is moved into the "更多" menu to avoid accidental clicks.
 -->
 <template>
   <div>
     <div class="sb-header">
       <div>
         <h2 class="sb-page-title">脚本管理</h2>
-        <p class="sb-page-sub">所有已注册的脚本。新增脚本需要上传 .sh 文件。</p>
+        <p class="sb-page-sub">所有已注册的脚本。常用脚本可以点击星标加入收藏。</p>
       </div>
-      <el-button type="primary" :icon="Plus" @click="openCreate">新增脚本</el-button>
+      <div>
+        <el-button :icon="Refresh" plain @click="refresh" :loading="loading">刷新</el-button>
+        <el-button type="primary" :icon="Plus" @click="openCreate">新增脚本</el-button>
+      </div>
     </div>
 
     <el-table :data="rows" v-loading="loading" class="sb-card" stripe>
-      <el-table-column prop="id" label="ID" width="60" />
-      <el-table-column prop="name" label="名称" width="160">
+      <el-table-column label="名称" min-width="200">
         <template #default="{ row }">
-          <span class="mono">{{ row.name }}</span>
+          <div class="sb-name-cell">
+            <button
+              class="sb-star"
+              :class="{ active: row.favorite }"
+              @click="toggleFavorite(row)"
+              :title="row.favorite ? '取消收藏' : '收藏'"
+            >
+              <el-icon :size="14">
+                <component :is="row.favorite ? StarFilled : Star" />
+              </el-icon>
+            </button>
+            <div>
+              <div class="sb-name-main">{{ row.displayName || row.name }}</div>
+              <div class="sb-name-sub mono">{{ row.name }}</div>
+            </div>
+          </div>
         </template>
       </el-table-column>
-      <el-table-column prop="displayName" label="显示名" min-width="160" />
-      <el-table-column prop="category" label="分类" width="120">
+      <el-table-column label="分类" width="120">
         <template #default="{ row }">
           <el-tag v-if="row.category" size="small" disable-transitions>{{ row.category }}</el-tag>
           <span v-else class="muted">—</span>
         </template>
       </el-table-column>
       <el-table-column prop="description" label="描述" min-width="220" show-overflow-tooltip />
-      <el-table-column prop="timeoutSeconds" label="超时(s)" width="90" align="right" />
-      <el-table-column prop="enabled" label="启用" width="80" align="center">
+      <el-table-column label="参数" width="80" align="center">
         <template #default="{ row }">
-          <el-switch
-            :model-value="row.enabled"
-            @change="(v) => toggleEnabled(row, v)"
-            inline-prompt
-            active-text="on"
-            inactive-text="off"
-          />
+          <span class="mono">{{ paramCounts[row.id] ?? '-' }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="超时" width="100" align="right">
+        <template #default="{ row }">{{ row.timeoutSeconds || 600 }} 秒</template>
+      </el-table-column>
+      <el-table-column label="状态" width="100" align="center">
+        <template #default="{ row }">
+          <el-tag
+            size="small"
+            :type="row.enabled === false ? 'info' : 'success'"
+            disable-transitions
+            effect="plain"
+          >{{ row.enabled === false ? '已禁用' : '已启用' }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="最后修改" width="160">
+        <template #default="{ row }">
+          <span class="muted">{{ formatDateTime(row.updateTime) }}</span>
         </template>
       </el-table-column>
       <el-table-column label="操作" width="220" fixed="right">
         <template #default="{ row }">
+          <el-button size="small" type="primary" :icon="VideoPlay" @click="goExecute(row)">执行</el-button>
           <el-button size="small" @click="goEdit(row)">编辑</el-button>
-          <el-button size="small" type="danger" plain @click="confirmDelete(row)">删除</el-button>
+          <el-dropdown trigger="click" @command="(c) => onMore(c, row)">
+            <el-button size="small" :icon="MoreFilled" />
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="copy">{{ row.favorite ? '复制' : '复制' }}</el-dropdown-item>
+                <el-dropdown-item command="toggle">
+                  {{ row.enabled === false ? '启用' : '禁用' }}
+                </el-dropdown-item>
+                <el-dropdown-item command="delete" divided>
+                  <span style="color: var(--sb-danger)">删除</span>
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </template>
       </el-table-column>
     </el-table>
 
-    <!-- Create / Upload Drawer -->
+    <!-- Create Drawer -->
     <el-drawer
       v-model="createOpen"
       title="新增脚本"
@@ -56,7 +98,7 @@
       size="480px"
     >
       <el-form :model="createForm" label-position="top">
-        <el-form-item label="名称 (cli key)" required>
+        <el-form-item label="名称" required>
           <el-input v-model="createForm.name" placeholder="小写字母+数字+下划线" />
         </el-form-item>
         <el-form-item label="显示名">
@@ -69,7 +111,12 @@
           <el-input v-model="createForm.description" type="textarea" :rows="2" />
         </el-form-item>
         <el-form-item label="超时(秒)">
-          <el-input-number v-model="createForm.timeoutSeconds" :min="1" :max="86400" controls-position="right" style="width: 100%" />
+          <el-input-number
+            v-model="createForm.timeoutSeconds"
+            :min="1" :max="86400"
+            controls-position="right"
+            style="width: 100%"
+          />
         </el-form-item>
         <el-form-item label="上传 .sh 文件" required>
           <el-upload
@@ -81,9 +128,7 @@
             accept=".sh"
             drag
           >
-            <div class="el-upload__text">
-              拖拽 .sh 到此处或<em>点击选择</em>
-            </div>
+            <div class="el-upload__text">拖拽 .sh 到此处或<em>点击选择</em></div>
           </el-upload>
         </el-form-item>
       </el-form>
@@ -98,14 +143,20 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Plus } from '@element-plus/icons-vue'
+import {
+  Plus, Star, StarFilled, Refresh, VideoPlay, MoreFilled
+} from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  listScripts, createScript, deleteScript, setScriptEnabled
+  listScripts, createScript, deleteScript,
+  setScriptEnabled, setScriptFavorite,
+  copyScript, listParams
 } from '../api/scripts'
+import { formatDateTime } from '../utils/format'
 
 const router = useRouter()
 const rows = ref([])
+const paramCounts = reactive({})
 const loading = ref(false)
 
 const createOpen = ref(false)
@@ -119,8 +170,17 @@ const creating = ref(false)
 
 async function refresh() {
   loading.value = true
-  try { rows.value = (await listScripts()) || [] }
-  finally { loading.value = false }
+  try {
+    rows.value = (await listScripts()) || []
+    // Resolve parameter counts in the background (a small N+1, fine for personal use)
+    for (const k of Object.keys(paramCounts)) delete paramCounts[k]
+    await Promise.all(rows.value.map(async (s) => {
+      try {
+        const p = await listParams(s.id)
+        paramCounts[s.id] = (p || []).length
+      } catch { paramCounts[s.id] = 0 }
+    }))
+  } finally { loading.value = false }
 }
 
 function openCreate() {
@@ -134,9 +194,7 @@ function openCreate() {
   createOpen.value = true
 }
 
-function onFileChange(file) {
-  scriptFile.value = file.raw
-}
+function onFileChange(file) { scriptFile.value = file.raw }
 
 async function submitCreate() {
   if (!createForm.name) return ElMessage.warning('名称必填')
@@ -160,36 +218,67 @@ async function submitCreate() {
   } finally { creating.value = false }
 }
 
-async function toggleEnabled(row, val) {
-  await setScriptEnabled(row.id, val)
-  row.enabled = val
+async function toggleEnabled(row) {
+  const v = row.enabled === false
+  await setScriptEnabled(row.id, v)
+  row.enabled = v
+  ElMessage.success(v ? '已启用' : '已禁用')
+}
+
+async function toggleFavorite(row) {
+  const v = !row.favorite
+  await setScriptFavorite(row.id, v)
+  row.favorite = v
+}
+
+async function onMore(cmd, row) {
+  switch (cmd) {
+    case 'copy': {
+      const copy = await copyScript(row.id)
+      ElMessage.success(`已复制为「${copy.displayName}」（已禁用）`)
+      await refresh()
+      break
+    }
+    case 'toggle': await toggleEnabled(row); break
+    case 'delete': await confirmDelete(row); break
+  }
 }
 
 async function confirmDelete(row) {
-  await ElMessageBox.confirm(`确认删除脚本「${row.name}」？此操作不可恢复。`, '确认', {
-    type: 'warning'
-  })
+  await ElMessageBox.confirm(
+    `确认删除脚本「${row.displayName || row.name}」？此操作不可恢复。`,
+    '确认', { type: 'warning' })
   await deleteScript(row.id)
   ElMessage.success('已删除')
   await refresh()
 }
 
-function goEdit(row) {
-  router.push({ name: 'script-edit', query: { id: row.id } })
-}
+function goEdit(row) { router.push({ name: 'script-edit', query: { id: row.id } }) }
+function goExecute(row) { router.push({ name: 'execute', query: { script: row.id } }) }
 
 onMounted(refresh)
 </script>
 
 <style scoped>
-.sb-header {
+.sb-name-cell {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  margin-bottom: 16px;
+  align-items: flex-start;
+  gap: 8px;
 }
-.sb-page-title { margin: 0; font-size: 18px; font-weight: 600; }
-.sb-page-sub { margin: 4px 0 0 0; color: var(--sb-text-3); font-size: 13px; }
-.mono { font-family: var(--sb-mono); font-size: 13px; }
-.muted { color: var(--sb-text-3); }
+.sb-name-main { font-weight: 600; font-size: 13.5px; }
+.sb-name-sub { font-size: 11.5px; color: var(--sb-text-3); }
+.sb-star {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  color: var(--sb-text-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 2px;
+}
+.sb-star:hover { background: #f3f4f6; color: var(--sb-text-2); }
+.sb-star.active { color: #f59e0b; }
 </style>

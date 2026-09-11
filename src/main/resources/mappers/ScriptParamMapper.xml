@@ -12,10 +12,12 @@
         <result column="options"       property="options"/>
         <result column="required"      property="required"/>
         <result column="sort_order"    property="sortOrder"/>
+        <result column="placeholder"   property="placeholder"/>
+        <result column="help_text"     property="helpText"/>
     </resultMap>
 
     <select id="selectByScriptId" resultMap="BaseResultMap">
-        SELECT id, script_id, name, label, type, default_value, options, required, sort_order
+        SELECT id, script_id, name, label, type, default_value, options, required, sort_order, placeholder, help_text
         FROM script_param
         WHERE script_id = #{scriptId}
         ORDER BY sort_order ASC, id ASC

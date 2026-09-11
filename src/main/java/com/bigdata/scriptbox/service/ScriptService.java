@@ -45,10 +45,6 @@ public class ScriptService {
         return scriptMapper.selectList(new QueryWrapper<Script>().orderByAsc("category", "id"));
     }
 
-    public List<Script> listByCategory() {
-        return listAll();
-    }
-
     public Script getById(Long id) {
         return scriptMapper.selectById(id);
     }
@@ -61,6 +57,7 @@ public class ScriptService {
     public Script create(Script script, MultipartFile file) throws IOException {
         if (script.getTimeoutSeconds() == null) script.setTimeoutSeconds(600);
         if (script.getEnabled() == null) script.setEnabled(Boolean.TRUE);
+        if (script.getFavorite() == null) script.setFavorite(Boolean.FALSE);
 
         String body = readScriptFile(file);
 
@@ -89,6 +86,8 @@ public class ScriptService {
         } else {
             script.setScriptPath(db.getScriptPath());
         }
+        if (script.getEnabled() == null) script.setEnabled(db.getEnabled());
+        if (script.getFavorite() == null) script.setFavorite(db.getFavorite());
         script.setUpdateTime(LocalDateTime.now());
         scriptMapper.updateById(script);
         return scriptMapper.selectById(script.getId());
@@ -122,7 +121,6 @@ public class ScriptService {
             try {
                 Path p = Paths.get(db.getScriptPath());
                 Files.deleteIfExists(p);
-                // also delete the script dir if empty
                 Path parent = p.getParent();
                 if (parent != null && Files.isDirectory(parent)) {
                     try (var stream = Files.list(parent)) {
@@ -137,6 +135,15 @@ public class ScriptService {
         Script db = scriptMapper.selectById(id);
         if (db == null) return null;
         db.setEnabled(enabled);
+        db.setUpdateTime(LocalDateTime.now());
+        scriptMapper.updateById(db);
+        return db;
+    }
+
+    public Script setFavorite(Long id, boolean favorite) {
+        Script db = scriptMapper.selectById(id);
+        if (db == null) return null;
+        db.setFavorite(favorite);
         db.setUpdateTime(LocalDateTime.now());
         scriptMapper.updateById(db);
         return db;
@@ -179,7 +186,6 @@ public class ScriptService {
         Path dir = scriptsRoot.resolve(String.valueOf(scriptId));
         Files.createDirectories(dir);
         Path file = dir.resolve("script.sh");
-        // Defense in depth: refuse to write outside configured dir.
         if (!file.toAbsolutePath().startsWith(scriptsRoot)) {
             throw new IllegalStateException("script path escapes scripts dir");
         }

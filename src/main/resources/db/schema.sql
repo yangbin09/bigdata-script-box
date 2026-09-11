@@ -15,17 +15,21 @@ CREATE TABLE IF NOT EXISTS tenant (
 );
 
 CREATE TABLE IF NOT EXISTS script (
-    id              BIGINT AUTO_INCREMENT PRIMARY KEY,
-    name            VARCHAR(128) NOT NULL,
-    display_name    VARCHAR(256),
-    category        VARCHAR(128),
-    description     VARCHAR(1024),
-    script_path     VARCHAR(512) NOT NULL,
-    timeout_seconds INT NOT NULL DEFAULT 600,
-    enabled         BOOLEAN NOT NULL DEFAULT TRUE,
-    create_time     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    update_time     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    id                 BIGINT AUTO_INCREMENT PRIMARY KEY,
+    name               VARCHAR(128) NOT NULL,
+    display_name       VARCHAR(256),
+    category           VARCHAR(128),
+    description        VARCHAR(1024),
+    script_path        VARCHAR(512) NOT NULL,
+    timeout_seconds    INT NOT NULL DEFAULT 600,
+    enabled            BOOLEAN NOT NULL DEFAULT TRUE,
+    favorite           BOOLEAN NOT NULL DEFAULT FALSE,
+    default_tenant_id  BIGINT,
+    create_time        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    update_time        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+ALTER TABLE script ADD COLUMN IF NOT EXISTS favorite BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE script ADD COLUMN IF NOT EXISTS default_tenant_id BIGINT;
 
 CREATE TABLE IF NOT EXISTS script_param (
     id             BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -36,9 +40,13 @@ CREATE TABLE IF NOT EXISTS script_param (
     default_value  VARCHAR(1024),
     options        VARCHAR(2048),
     required       BOOLEAN NOT NULL DEFAULT FALSE,
-    sort_order     INT NOT NULL DEFAULT 0
+    sort_order     INT NOT NULL DEFAULT 0,
+    placeholder    VARCHAR(1024),
+    help_text      VARCHAR(1024)
 );
 CREATE INDEX IF NOT EXISTS idx_script_param_script_id ON script_param(script_id);
+ALTER TABLE script_param ADD COLUMN IF NOT EXISTS placeholder VARCHAR(1024);
+ALTER TABLE script_param ADD COLUMN IF NOT EXISTS help_text VARCHAR(1024);
 
 CREATE TABLE IF NOT EXISTS execution_history (
     id              BIGINT AUTO_INCREMENT PRIMARY KEY,

@@ -45,6 +45,8 @@ public class ScriptController {
                                       @RequestParam(value = "description", required = false) String description,
                                       @RequestParam(value = "timeoutSeconds", required = false) Integer timeoutSeconds,
                                       @RequestParam(value = "enabled", required = false) Boolean enabled,
+                                      @RequestParam(value = "favorite", required = false) Boolean favorite,
+                                      @RequestParam(value = "defaultTenantId", required = false) Long defaultTenantId,
                                       @RequestParam("file") MultipartFile file) throws IOException {
         Script s = new Script();
         s.setName(name);
@@ -53,6 +55,8 @@ public class ScriptController {
         s.setDescription(description);
         s.setTimeoutSeconds(timeoutSeconds == null ? 600 : timeoutSeconds);
         s.setEnabled(enabled == null ? Boolean.TRUE : enabled);
+        s.setFavorite(favorite != null && favorite);
+        s.setDefaultTenantId(defaultTenantId);
         return ApiResponse.ok(scriptService.create(s, file));
     }
 
@@ -64,6 +68,8 @@ public class ScriptController {
                                       @RequestParam(value = "description", required = false) String description,
                                       @RequestParam(value = "timeoutSeconds", required = false) Integer timeoutSeconds,
                                       @RequestParam(value = "enabled", required = false) Boolean enabled,
+                                      @RequestParam(value = "favorite", required = false) Boolean favorite,
+                                      @RequestParam(value = "defaultTenantId", required = false) Long defaultTenantId,
                                       @RequestParam(value = "file", required = false) MultipartFile file) throws IOException {
         Script s = new Script();
         s.setId(id);
@@ -73,6 +79,8 @@ public class ScriptController {
         s.setDescription(description);
         s.setTimeoutSeconds(timeoutSeconds == null ? 600 : timeoutSeconds);
         s.setEnabled(enabled == null ? Boolean.TRUE : enabled);
+        s.setFavorite(favorite != null && favorite);
+        s.setDefaultTenantId(defaultTenantId);
         return ApiResponse.ok(scriptService.update(s, file));
     }
 
@@ -100,6 +108,56 @@ public class ScriptController {
         Script s = scriptService.setEnabled(id, enabled);
         if (s == null) return ApiResponse.error("script not found");
         return ApiResponse.ok(s);
+    }
+
+    @PostMapping("/{id}/favorite")
+    public ApiResponse<Script> setFavorite(@PathVariable Long id, @RequestParam boolean favorite) {
+        Script s = scriptService.setFavorite(id, favorite);
+        if (s == null) return ApiResponse.error("script not found");
+        return ApiResponse.ok(s);
+    }
+
+    /** Duplicate an existing script (and its params) under a new name. */
+    @PostMapping("/{id}/copy")
+    public ApiResponse<Script> copy(@PathVariable Long id,
+                                    @RequestParam(value = "suffix", required = false) String suffix) throws IOException {
+        Script src = scriptService.getById(id);
+        if (src == null) return ApiResponse.error("script not found");
+        String body = scriptService.readScriptBody(id);
+        Script copy = new Script();
+        copy.setName(src.getName() + (suffix != null && !suffix.isBlank() ? suffix : "-copy"));
+        copy.setDisplayName((src.getDisplayName() == null ? src.getName() : src.getDisplayName()) + " - Copy");
+        copy.setCategory(src.getCategory());
+        copy.setDescription(src.getDescription());
+        copy.setTimeoutSeconds(src.getTimeoutSeconds());
+        copy.setEnabled(Boolean.FALSE); // disabled until edited to avoid clobbering
+        copy.setFavorite(Boolean.FALSE);
+        copy.setDefaultTenantId(src.getDefaultTenantId());
+        // Reuse the create pipeline via an in-memory upload
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        org.springframework.web.multipart.MultipartFile mf =
+                new com.bigdata.scriptbox.config.InMemoryMultipartFile(
+                        "file", copy.getName() + ".sh", "application/x-sh", bytes);
+        Script saved = scriptService.create(copy, mf);
+        // Duplicate params
+        List<ScriptParam> params = scriptService.paramsOf(id);
+        if (!params.isEmpty()) {
+            scriptService.replaceParams(saved.getId(),
+                    params.stream().map(p -> {
+                        ScriptParam np = new ScriptParam();
+                        np.setName(p.getName());
+                        np.setLabel(p.getLabel());
+                        np.setType(p.getType());
+                        np.setDefaultValue(p.getDefaultValue());
+                        np.setOptions(p.getOptions());
+                        np.setRequired(p.getRequired());
+                        np.setSortOrder(p.getSortOrder());
+                        np.setPlaceholder(p.getPlaceholder());
+                        np.setHelpText(p.getHelpText());
+                        return np;
+                    }).toList());
+        }
+        return ApiResponse.ok(saved);
     }
 
     // ---- params ----

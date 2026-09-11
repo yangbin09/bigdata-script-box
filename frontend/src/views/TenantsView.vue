@@ -1,5 +1,9 @@
 <!--
-  TenantsView — table of tenants + create/edit drawer + keytab upload + test modal.
+  TenantsView — tenant table + create/edit drawer + keytab upload + test drawer.
+
+  Visual improvements:
+    - keytab column shows ✓ 已配置 / 未配置 (full path on hover via tooltip)
+    - Test result is shown in a dedicated drawer with clearer status pills.
 -->
 <template>
   <div>
@@ -12,37 +16,42 @@
     </div>
 
     <el-table :data="rows" v-loading="loading" class="sb-card" stripe>
-      <el-table-column prop="id" label="ID" width="60" />
-      <el-table-column prop="name" label="名称" min-width="120">
+      <el-table-column label="ID" width="60" prop="id" />
+      <el-table-column label="名称" min-width="140">
         <template #default="{ row }">
-          <span class="mono">{{ row.name }}</span>
+          <div class="sb-name-main">{{ row.name }}</div>
         </template>
       </el-table-column>
-      <el-table-column prop="principal" label="principal" min-width="200">
+      <el-table-column label="Principal" min-width="220">
         <template #default="{ row }">
           <span class="mono">{{ row.principal }}</span>
         </template>
       </el-table-column>
-      <el-table-column prop="defaultDatabase" label="默认数据库" min-width="120" />
-      <el-table-column prop="keytabPath" label="keytab" min-width="180" show-overflow-tooltip>
+      <el-table-column label="默认数据库" min-width="120" prop="defaultDatabase" />
+      <el-table-column label="Keytab" min-width="120">
         <template #default="{ row }">
-          <span v-if="row.keytabPath" class="mono">{{ row.keytabPath }}</span>
-          <span v-else class="muted">—</span>
+          <el-tooltip
+            v-if="row.keytabPath"
+            :content="row.keytabPath"
+            placement="top"
+          >
+            <span class="sb-kt-configured">✓ 已配置</span>
+          </el-tooltip>
+          <span v-else class="muted">未配置</span>
         </template>
       </el-table-column>
-      <el-table-column prop="description" label="描述" min-width="180" show-overflow-tooltip />
-      <el-table-column prop="enabled" label="启用" width="80" align="center">
+      <el-table-column label="描述" min-width="180" prop="description" show-overflow-tooltip />
+      <el-table-column label="状态" width="90" align="center">
         <template #default="{ row }">
-          <el-switch
-            :model-value="row.enabled"
-            @change="(v) => toggleEnabled(row, v)"
-            inline-prompt
-            active-text="on"
-            inactive-text="off"
-          />
+          <el-tag
+            size="small"
+            :type="row.enabled === false ? 'info' : 'success'"
+            disable-transitions
+            effect="plain"
+          >{{ row.enabled === false ? '已禁用' : '已启用' }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="280" fixed="right">
+      <el-table-column label="操作" width="320" fixed="right">
         <template #default="{ row }">
           <el-button size="small" @click="openEdit(row)">编辑</el-button>
           <el-button size="small" @click="openKeytab(row)">keytab</el-button>
@@ -53,12 +62,7 @@
     </el-table>
 
     <!-- Create / Edit Drawer -->
-    <el-drawer
-      v-model="formOpen"
-      :title="form.id ? '编辑租户' : '新增租户'"
-      direction="rtl"
-      size="440px"
-    >
+    <el-drawer v-model="formOpen" :title="form.id ? '编辑租户' : '新增租户'" direction="rtl" size="440px">
       <el-form :model="form" label-position="top">
         <el-form-item label="名称" required>
           <el-input v-model="form.name" placeholder="如 mock-hive" />
@@ -100,30 +104,58 @@
       </template>
     </el-dialog>
 
-    <!-- Test result dialog -->
-    <el-dialog v-model="testOpen" title="租户测试结果" width="640px">
-      <div v-if="testResult">
-        <div class="sb-test-summary" :class="{ ok: testResult.ok, fail: !testResult.ok }">
-          <el-icon :size="20">
+    <!-- Test result drawer -->
+    <el-drawer v-model="testOpen" direction="rtl" size="520px" :show-close="false" class="sb-exec-drawer">
+      <template #header>
+        <div class="sb-drawer-header">
+          <div>
+            <div class="sb-drawer-title">租户测试 — {{ testTarget?.name || '' }}</div>
+            <div v-if="testTarget" class="sb-exec-sub">
+              <span>{{ testTarget.principal }}</span>
+            </div>
+          </div>
+          <el-button text :icon="Close" @click="testOpen = false" />
+        </div>
+      </template>
+
+      <template v-if="testResult">
+        <div class="sb-test-card" :class="{ ok: testResult.ok, fail: !testResult.ok }">
+          <el-icon :size="22">
             <component :is="testResult.ok ? CircleCheck : CircleClose" />
           </el-icon>
-          <span>{{ testResult.ok ? 'OK' : 'FAILED' }}</span>
-          <span v-if="testResult.mode" class="muted">mode={{ testResult.mode }}</span>
-          <span v-if="testResult.kinitExit != null" class="muted">kinit exit={{ testResult.kinitExit }}</span>
+          <span>{{ testResult.ok ? '通过' : '失败' }}</span>
+          <span v-if="testResult.mode" class="muted">· 环境 {{ testResult.mode }}</span>
+          <span v-if="testResult.kinitExit != null" class="muted">· kinit exit={{ testResult.kinitExit }}</span>
         </div>
+
+        <h4 class="sb-test-section-title">Kerberos</h4>
+        <div class="sb-test-row">
+          <span class="dot-green">●</span><span>kinit</span>
+          <span class="status">{{ testResult.kinitExit == null ? (testResult.ok ? '成功' : '失败') : (testResult.kinitExit === 0 ? '成功' : `exit ${testResult.kinitExit}`) }}</span>
+        </div>
+        <div class="sb-test-row">
+          <span class="dot-green">●</span><span>principal</span>
+          <span class="mono">{{ testTarget?.principal }}</span>
+        </div>
+        <div v-if="testResult.klist != null" class="sb-test-row">
+          <span class="dot-green">●</span><span>klist</span>
+          <span class="status">{{ testResult.ok ? '正常' : '异常' }}</span>
+        </div>
+        <div class="sb-test-row">
+          <span class="dot-green">●</span><span>环境</span>
+          <span class="status">{{ testResult.mode === 'mock' ? 'Mock' : 'Real' }}</span>
+        </div>
+
         <pre v-if="testResult.stdout" class="sb-log">{{ testResult.stdout }}</pre>
-        <div v-if="testResult.klist" class="sb-test-section">
-          <div class="sb-test-section-title">klist</div>
-          <pre class="sb-log">{{ testResult.klist }}</pre>
-        </div>
-      </div>
-    </el-dialog>
+        <pre v-if="testResult.klist" class="sb-log">{{ testResult.klist }}</pre>
+      </template>
+    </el-drawer>
   </div>
 </template>
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
-import { Plus, CircleCheck, CircleClose } from '@element-plus/icons-vue'
+import { Plus, CircleCheck, CircleClose, Close } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   listTenants, createTenant, updateTenant, deleteTenant,
@@ -147,6 +179,7 @@ const keytabUploadRef = ref(null)
 const uploading = ref(false)
 
 const testOpen = ref(false)
+const testTarget = ref(null)
 const testResult = ref(null)
 
 async function refresh() {
@@ -220,45 +253,60 @@ async function submitKeytab() {
 }
 
 async function runTest(row) {
-  testOpen.value = true
+  testTarget.value = row
   testResult.value = null
-  try {
-    const r = await testTenant(row.id)
-    testResult.value = r
-  } catch {
-    testOpen.value = false
-  }
+  testOpen.value = true
+  try { testResult.value = await testTenant(row.id) }
+  catch { /* keep open */ }
 }
 
 onMounted(refresh)
 </script>
 
 <style scoped>
-.sb-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  margin-bottom: 16px;
+.sb-name-main { font-weight: 600; }
+.sb-kt-configured {
+  color: var(--sb-success);
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
-.sb-page-title { margin: 0; font-size: 18px; font-weight: 600; }
-.sb-page-sub { margin: 4px 0 0 0; color: var(--sb-text-3); font-size: 13px; }
 
-.mono { font-family: var(--sb-mono); font-size: 13px; }
-.muted { color: var(--sb-text-3); }
-
-.sb-test-summary {
+.sb-test-card {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
-  border-radius: 4px;
-  background: #f3f4f6;
-  margin-bottom: 10px;
+  padding: 12px 14px;
+  border-radius: 6px;
   font-weight: 600;
+  margin-bottom: 14px;
+  border: 1px solid var(--sb-border);
+  background: #f8fafc;
 }
-.sb-test-summary.ok   { background: #f0fdf4; color: var(--sb-success); }
-.sb-test-summary.fail { background: #fef2f2; color: var(--sb-danger); }
+.sb-test-card.ok   { background: #f0fdf4; border-color: #bbf7d0; color: var(--sb-success); }
+.sb-test-card.fail { background: #fef2f2; border-color: #fecaca; color: var(--sb-danger); }
 
-.sb-test-section { margin-top: 10px; }
-.sb-test-section-title { font-size: 12px; color: var(--sb-text-3); margin-bottom: 4px; }
+.sb-test-section-title {
+  margin: 12px 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sb-text-2);
+}
+
+.sb-test-row {
+  display: grid;
+  grid-template-columns: 16px 100px 1fr;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--sb-border);
+  font-size: 13px;
+}
+.sb-test-row:last-of-type { border-bottom: 0; }
+.sb-test-row .dot-green { color: var(--sb-success); }
+.sb-test-row .status {
+  color: var(--sb-text-2);
+  font-weight: 500;
+}
 </style>

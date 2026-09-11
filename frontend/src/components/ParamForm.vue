@@ -1,6 +1,12 @@
 <!--
-  DynamicParamForm — renders an Element Plus control for each declared ScriptParam.
-  v-model binds a plain { [name]: string } map (matches the ExecutionRequest contract).
+  ParamForm — dynamic form for ScriptParam[].
+  - Coerces number/boolean to the right runtime type, mirrors back as plain string map.
+  - Supports placeholder + helpText (added in the v2 ScriptParam schema).
+  - Seed value precedence (highest first):
+        1) initialValues (last-params from localStorage)
+        2) param defaultValue
+        3) sensible blank per type
+  - Exposes resetToDefaults() to "restore defaults" button in the drawer.
 -->
 <template>
   <el-form
@@ -20,7 +26,7 @@
       <el-input
         v-if="p.type === 'text'"
         v-model="form[p.name]"
-        :placeholder="p.defaultValue || ''"
+        :placeholder="p.placeholder || p.defaultValue || ''"
         clearable
       />
       <!-- textarea -->
@@ -29,13 +35,13 @@
         v-model="form[p.name]"
         type="textarea"
         :rows="3"
-        :placeholder="p.defaultValue || ''"
+        :placeholder="p.placeholder || p.defaultValue || ''"
       />
       <!-- number -->
       <el-input-number
         v-else-if="p.type === 'number'"
         v-model="form[p.name]"
-        :placeholder="p.defaultValue || ''"
+        :placeholder="p.placeholder || (p.defaultValue ?? '')"
         style="width: 100%"
         controls-position="right"
       />
@@ -43,7 +49,7 @@
       <el-select
         v-else-if="p.type === 'select'"
         v-model="form[p.name]"
-        :placeholder="p.defaultValue ? `默认: ${p.defaultValue}` : '请选择'"
+        :placeholder="p.placeholder || (p.defaultValue ? `默认: ${p.defaultValue}` : '请选择')"
         style="width: 100%"
       >
         <el-option
@@ -70,6 +76,7 @@
       />
       <!-- fallback -->
       <el-input v-else v-model="form[p.name]" />
+      <div v-if="p.helpText" class="sb-param-help">{{ p.helpText }}</div>
     </el-form-item>
 
     <div v-if="!orderedParams.length" class="sb-no-params">
@@ -83,41 +90,46 @@
 import { computed, reactive, ref, watch } from 'vue'
 
 const props = defineProps({
-  params: { type: Array, required: true },         // ScriptParam[]
-  modelValue: { type: Object, required: true }    // { [name]: string }
+  params: { type: Array, required: true },
+  modelValue: { type: Object, required: true },
+  // Optional overrides applied during seed (e.g. last-used params from localStorage).
+  initialValues: { type: Object, default: () => ({}) }
 })
 
 const emit = defineEmits(['update:modelValue'])
 
 const formRef = ref(null)
-
-// Element Plus expects model arrays for el-input-number; we coerce <-> string at the edges.
-// Keys always present in form so v-model stays stable.
 const form = reactive({})
 
+function seedValue(p) {
+  const last = props.initialValues?.[p.name]
+  if (last != null && last !== '') return last
+  if (p.defaultValue != null && p.defaultValue !== '') return p.defaultValue
+  return p.type === 'boolean' ? false : ''
+}
+
+function coerce(p, v) {
+  if (p.type === 'number') {
+    if (v === '' || v == null) return undefined
+    const n = Number(v)
+    return isNaN(n) ? undefined : n
+  }
+  if (p.type === 'boolean') {
+    if (typeof v === 'boolean') return v
+    return v === true || v === 'true' || v === '1'
+  }
+  return v
+}
+
 function rebuild() {
-  // Clear
   for (const k of Object.keys(form)) delete form[k]
-  // Seed with defaults / current value
   for (const p of props.params || []) {
     if (!p.name) continue
-    let v = props.modelValue?.[p.name]
-    if (v == null || v === '') {
-      v = p.defaultValue ?? (p.type === 'boolean' ? 'false' : '')
-    }
-    if (p.type === 'number' && v !== '' && v != null) {
-      // el-input-number likes a Number; we re-stringify on submit
-      const n = Number(v)
-      form[p.name] = isNaN(n) ? undefined : n
-    } else if (p.type === 'boolean') {
-      form[p.name] = (v === true || v === 'true' || v === '1')
-    } else {
-      form[p.name] = v
-    }
+    form[p.name] = coerce(p, seedValue(p))
   }
 }
 rebuild()
-watch(() => [props.params, props.modelValue], rebuild, { deep: true })
+watch(() => [props.params, props.initialValues], rebuild, { deep: true })
 
 // Mirror local form back to parent as plain string map.
 watch(form, (v) => {
@@ -178,12 +190,24 @@ function rulesFor(p) {
 }
 
 defineExpose({
-  validate: () => (formRef.value ? formRef.value.validate() : Promise.resolve())
+  validate: () => (formRef.value ? formRef.value.validate() : Promise.resolve()),
+  resetToDefaults: () => {
+    for (const p of props.params || []) {
+      if (!p.name) continue
+      if (p.defaultValue != null && p.defaultValue !== '') {
+        form[p.name] = coerce(p, p.defaultValue)
+      } else if (p.type === 'boolean') {
+        form[p.name] = false
+      } else {
+        form[p.name] = ''
+      }
+    }
+  }
 })
 </script>
 
 <style scoped>
-.sb-param-form :deep(.el-form-item) { margin-bottom: 16px; }
+.sb-param-form :deep(.el-form-item) { margin-bottom: 14px; }
 .sb-param-form :deep(.el-form-item__label) { font-weight: 500; padding-bottom: 4px; }
 
 .sb-no-params {

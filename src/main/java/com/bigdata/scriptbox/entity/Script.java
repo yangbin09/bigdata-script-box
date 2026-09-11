@@ -17,6 +17,8 @@ public class Script {
     private String scriptPath;
     private Integer timeoutSeconds;
     private Boolean enabled;
+    private Boolean favorite;
+    private Long defaultTenantId;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 
@@ -36,6 +38,10 @@ public class Script {
     public void setTimeoutSeconds(Integer timeoutSeconds) { this.timeoutSeconds = timeoutSeconds; }
     public Boolean getEnabled() { return enabled; }
     public void setEnabled(Boolean enabled) { this.enabled = enabled; }
+    public Boolean getFavorite() { return favorite; }
+    public void setFavorite(Boolean favorite) { this.favorite = favorite; }
+    public Long getDefaultTenantId() { return defaultTenantId; }
+    public void setDefaultTenantId(Long defaultTenantId) { this.defaultTenantId = defaultTenantId; }
     public LocalDateTime getCreateTime() { return createTime; }
     public void setCreateTime(LocalDateTime createTime) { this.createTime = createTime; }
     public LocalDateTime getUpdateTime() { return updateTime; }

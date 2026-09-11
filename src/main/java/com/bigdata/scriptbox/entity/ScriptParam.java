@@ -16,6 +16,8 @@ public class ScriptParam {
     private String options;       // comma-separated for select
     private Boolean required;
     private Integer sortOrder;
+    private String placeholder;
+    private String helpText;
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -35,4 +37,8 @@ public class ScriptParam {
     public void setRequired(Boolean required) { this.required = required; }
     public Integer getSortOrder() { return sortOrder; }
     public void setSortOrder(Integer sortOrder) { this.sortOrder = sortOrder; }
+    public String getPlaceholder() { return placeholder; }
+    public void setPlaceholder(String placeholder) { this.placeholder = placeholder; }
+    public String getHelpText() { return helpText; }
+    public void setHelpText(String helpText) { this.helpText = helpText; }
 }

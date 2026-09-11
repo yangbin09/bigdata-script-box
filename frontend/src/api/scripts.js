@@ -12,6 +12,12 @@ export const deleteScript = (id) =>
 export const setScriptEnabled = (id, enabled) =>
   http.post(`/scripts/${id}/enabled`, null, { params: { enabled } }).then((r) => r.data)
 
+export const setScriptFavorite = (id, favorite) =>
+  http.post(`/scripts/${id}/favorite`, null, { params: { favorite } }).then((r) => r.data)
+
+export const copyScript = (id, suffix) =>
+  http.post(`/scripts/${id}/copy`, null, { params: suffix ? { suffix } : {} }).then((r) => r.data)
+
 export const listParams = (id) =>
   http.get(`/scripts/${id}/params`).then((r) => r.data)
 

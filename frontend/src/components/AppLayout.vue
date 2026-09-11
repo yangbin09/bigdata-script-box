@@ -1,10 +1,18 @@
+<!--
+  AppLayout — sticky topbar with brand, navigation and an environment tag.
+  Width: 1600px max (raised from 1400px so 4-up cards aren't squished on a 27" display).
+  Environment tag pulled from /api/system/info; defaults to "Mock 环境" / "Real 环境".
+-->
 <template>
   <div class="sb-shell">
     <header class="sb-topbar">
       <div class="sb-brand">
         <el-icon :size="18" color="#2563eb"><Tools /></el-icon>
         <span class="sb-brand-text">BigData Script Box</span>
-        <span class="sb-brand-tag">dev tool</span>
+        <span
+          class="sb-env-tag"
+          :class="{ mock: envInfo.mock, real: !envInfo.mock }"
+        >{{ envInfo.mock ? 'MOCK' : 'REAL' }}</span>
       </div>
       <nav class="sb-nav">
         <router-link
@@ -19,8 +27,9 @@
         </router-link>
       </nav>
       <div class="sb-topbar-right">
+        <span class="sb-env-name">{{ envInfo.environmentName }}</span>
         <span class="sb-status-dot" :class="{ live: ready }" />
-        <span class="sb-status-text">{{ ready ? 'ready' : 'loading…' }}</span>
+        <span class="sb-status-text">{{ ready ? '就绪' : '加载中' }}</span>
       </div>
     </header>
     <main class="sb-main">
@@ -30,12 +39,13 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { listTenants } from '../api/tenants'
+import { systemInfo } from '../api/system'
 
 const route = useRoute()
 const ready = ref(false)
+const envInfo = reactive({ mock: true, environmentName: 'Mock 环境' })
 
 const navItems = [
   { path: '/',         label: '执行中心',   icon: 'Promotion' },
@@ -49,10 +59,12 @@ function isActive(p) {
   return route.path === p || route.path.startsWith(p + '/')
 }
 
-// Probe API once on mount — confirms the JAR is up and the proxy works.
+// Probe the system endpoint once on mount — confirms the JAR is up and gives us
+// the mock/real flag + environment name displayed in the topbar tag.
 onMounted(async () => {
   try {
-    await listTenants()
+    const info = await systemInfo()
+    if (info) Object.assign(envInfo, info)
     ready.value = true
   } catch (_) {
     ready.value = false
@@ -92,13 +104,26 @@ onMounted(async () => {
   color: var(--sb-text);
 }
 
-.sb-brand-tag {
-  font-size: 11px;
-  background: #eef2ff;
-  color: #4f46e5;
+.sb-env-tag {
+  font-size: 10.5px;
+  letter-spacing: 0.5px;
   padding: 1px 6px;
   border-radius: 3px;
-  font-weight: 500;
+  font-weight: 700;
+  line-height: 16px;
+  border: 1px solid transparent;
+}
+
+.sb-env-tag.mock {
+  background: #fff7ed;   /* orange-50 */
+  color: #c2410c;       /* orange-700 */
+  border-color: #fed7aa;
+}
+
+.sb-env-tag.real {
+  background: #f0fdf4;   /* green-50 */
+  color: #15803d;       /* green-700 */
+  border-color: #bbf7d0;
 }
 
 .sb-nav {
@@ -133,9 +158,14 @@ onMounted(async () => {
 .sb-topbar-right {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
   font-size: 12px;
   color: var(--sb-text-3);
+}
+
+.sb-env-name {
+  font-weight: 500;
+  color: var(--sb-text-2);
 }
 
 .sb-status-dot {
@@ -152,7 +182,7 @@ onMounted(async () => {
 .sb-main {
   flex: 1;
   padding: 20px 24px;
-  max-width: 1400px;
+  max-width: 1600px;
   width: 100%;
   margin: 0 auto;
   box-sizing: border-box;
