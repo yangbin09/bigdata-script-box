@@ -79,6 +79,7 @@ public class HistoryService {
             r.scriptName = h.getScriptName();
             r.lastStartTime = h.getStartTime();
             r.lastSuccess = Boolean.TRUE.equals(h.getSuccess());
+            r.lastStatus = deriveStatus(h);
             r.lastTenantName = h.getTenantName();
             map.put(h.getScriptId(), r);
             if (map.size() >= limit) break;
@@ -86,11 +87,30 @@ public class HistoryService {
         return new ArrayList<>(map.values());
     }
 
+    /**
+     * Reduce a history row into the canonical short status string used by
+     * the UI. Mirrors statusOfHistory() on the frontend so the recent-card
+     * tags stay consistent with the rest of the table.
+     */
+    private static String deriveStatus(ExecutionHistory h) {
+        if (h == null) return "UNKNOWN";
+        String status = h.getStatus();
+        if ("CANCELLED".equals(status)) return "cancelled";
+        if ("RUNNING".equals(status))   return "running";
+        if (Boolean.TRUE.equals(h.getTimeout())) return "timeout";
+        if (Boolean.TRUE.equals(h.getSuccess())) return "success";
+        return "failed";
+    }
+
     public static class RecentScript {
         public Long id;
         public String scriptName;
         public String lastTenantName;
         public Boolean lastSuccess;
+        // V2: full status string (SUCCESS / FAILED / TIMEOUT / CANCELLED /
+        // RUNNING) so the UI can render the right tag color instead of
+        // collapsing timeout/cancel into "失败".
+        public String lastStatus;
         public LocalDateTime lastStartTime;
     }
 }

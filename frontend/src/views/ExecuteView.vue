@@ -53,7 +53,14 @@
           <div class="sb-recent-head">
             <span class="sb-recent-name">{{ recentDisplayName(r) }}</span>
             <el-tag
-              v-if="r.lastSuccess === true"
+              v-if="r.lastStatus"
+              size="small"
+              :type="recentTagType(r.lastStatus)"
+              disable-transitions
+              effect="plain"
+            >{{ recentLabel(r.lastStatus) }}</el-tag>
+            <el-tag
+              v-else-if="r.lastSuccess === true"
               size="small"
               type="success"
               disable-transitions
@@ -479,6 +486,25 @@ const recentItems = computed(() => {
 function recentDisplayName(r) {
   const s = scripts.value.find((x) => x.id === r.id)
   return s ? (s.displayName || s.name) : (r.scriptName || '')
+}
+
+// V2: full status vocabulary for the recent card tag. Maps the backend's
+// lastStatus (success/timeout/failed/cancelled/running) to the same
+// element-plus tag types used by STATUS_TAG_TYPE elsewhere.
+function recentTagType(s) {
+  return {
+    success:   'success',
+    timeout:   'warning',
+    failed:    'danger',
+    cancelled: 'info',
+    running:   'primary'
+  }[s] || 'info'
+}
+function recentLabel(s) {
+  return {
+    success: '成功', failed: '失败', timeout: '超时',
+    cancelled: '已取消', running: '执行中'
+  }[s] || '—'
 }
 
 function pickInitialTenant(script) {
