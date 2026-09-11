@@ -257,6 +257,11 @@ async function submitKeytab() {
   if (!keytabFile.value) return ElMessage.warning('请选择文件')
   if (!keytabFile.value.name.toLowerCase().endsWith('.keytab'))
     return ElMessage.warning('只接受 .keytab 文件')
+  // Keytabs are tiny (usually < 1 KB). Reject anything larger than 1 MB so a
+  // mis-dropped binary doesn't silently sit on the server.
+  if (keytabFile.value.size > 1024 * 1024) {
+    return ElMessage.warning(`keytab 文件过大（${(keytabFile.value.size / 1024).toFixed(1)} KB > 1 MB），请确认这是正确的文件`)
+  }
   uploading.value = true
   try {
     await uploadKeytab(keytabTarget.value.id, keytabFile.value)
