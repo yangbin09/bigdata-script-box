@@ -79,7 +79,7 @@ public class ProcessRunner {
         Process process = pb.start();
         // 注册到 RunningExecutionRegistry 之前 cancel 拿不到 pid；注册之后任何调用方
         // 都能 cancel(executionId)。registry 不负责启动，只负责跟踪。
-        registry.register(executionId, -1L, -1L, startMs, process);
+        registry.register(executionId, req.scriptId(), req.tenantId(), startMs, process);
 
         // 启动两个 daemon 线程并行 drain stdout / stderr。
         Thread drainOut = drainAsync(process.getInputStream(), req.stdoutPath(), "stdout-" + req.label());

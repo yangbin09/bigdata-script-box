@@ -7,20 +7,29 @@ import com.bigdata.scriptbox.entity.Script;
 import com.bigdata.scriptbox.entity.ScriptParam;
 import com.bigdata.scriptbox.entity.Tenant;
 import com.bigdata.scriptbox.mapper.ExecutionHistoryMapper;
+import com.bigdata.scriptbox.model.ExecutionStatus;
 import com.bigdata.scriptbox.model.RiskLevel;
 import com.bigdata.scriptbox.model.VisibleWhen;
+import com.bigdata.scriptbox.service.ArtifactService;
+import com.bigdata.scriptbox.service.FileUploadService;
+import com.bigdata.scriptbox.service.GlobalVariableService;
+import com.bigdata.scriptbox.service.PrecheckService;
+import com.bigdata.scriptbox.service.PresetService;
+import com.bigdata.scriptbox.service.ResultParserService;
+import com.bigdata.scriptbox.service.RunningExecutionRegistry;
 import com.bigdata.scriptbox.service.RunningExecutionRegistry.RunningExecution;
-import com.bigdata.scriptbox.service.ScriptService;
+import com.bigdata.scriptbox.service.SensitiveDataMasker;
+import com.bigdata.scriptbox.service.StoragePathService;
+import com.bigdata.scriptbox.service.TenantService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -30,95 +39,168 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
+/**
+ * 脚本执行器（业务层）。
+ *
+ * <p>执行流程：
+ * <ol>
+ *   <li>{@link #prepareContext} — 校验脚本 / 租户状态、解析 Preset、合并并校验参数、
+ *       创建执行目录、把 file 参数 promote 到受控路径。</li>
+ *   <li>{@link #runPrecheckOrRecordFailure} — 跑 PreCheck；失败时直接写一条
+ *       PRECHECK_FAILED 历史并返回。</li>
+ *   <li>{@link #captureSnapshot} — 读脚本正文计算 SHA-256，并构建 execution_snapshot
+ *       （敏感 GlobalVariable 已被 {@link SensitiveDataMasker} 遮罩）。</li>
+ *   <li>{@link #startProcess} — 构造 ProcessRequest，委托 {@link ProcessRunner}
+ *       启动并等待。</li>
+ *   <li>{@link #finalizeExecution} — 根据 ProcessResult 写状态；调用
+ *       {@link ResultParserService} 解析 result.json；调用
+ *       {@link ArtifactService#scanAndRegister} 扫描 artifact。</li>
+ * </ol>
+ *
+ * <p>注意：
+ * <ul>
+ *   <li>本类禁止直接拼接 {@code bash -c <user_input>}，所有命令行参数通过
+ *       {@code ProcessBuilder(List<String>)} 形式传入，避免 shell 注入。</li>
+ *   <li>危险脚本的二次确认（{@link RiskLevel#CONFIRM_TOKEN}）由前端在弹窗里
+ *       收集；snapshot 重放走 {@link ExecutionRequest#isBypassDangerousCheck()}
+ *       跳过二次确认。</li>
+ *   <li>并发上限由 {@link RunningExecutionRegistry} 实时控制；本类只在调用前
+ *       做一次校验，调用 {@code pb.start()} 之前的窗口期不算超限（多 1 个也无所谓）。</li>
+ * </ul>
+ */
 @Component
 public class ScriptExecutor {
+
+    private static final Logger log = LoggerFactory.getLogger(ScriptExecutor.class);
+
+    @Autowired private ScriptBoxProperties props;
+    @Autowired private com.bigdata.scriptbox.service.ScriptService scriptService;
+    @Autowired private ExecutionHistoryMapper historyMapper;
+    @Autowired private TenantService tenantService;
+    @Autowired private GlobalVariableService globalVariableService;
+    @Autowired private PresetService presetService;
+    @Autowired private ResultParserService resultParserService;
+    @Autowired private FileUploadService fileUploadService;
+    @Autowired private PrecheckService precheckService;
+    @Autowired private RunningExecutionRegistry runningRegistry;
+    @Autowired private ArtifactService artifactService;
+    @Autowired private StoragePathService storagePathService;
+    @Autowired private SensitiveDataMasker sensitiveDataMasker;
+    @Autowired private ProcessRunner processRunner;
+
+    private final ObjectMapper mapper = new ObjectMapper();
+    private final AtomicLong counter = new AtomicLong(System.currentTimeMillis() * 1000L);
 
     public ExecutionHistory history(Long id) {
         return historyMapper.selectById(id);
     }
 
-    private static final Logger log = LoggerFactory.getLogger(ScriptExecutor.class);
-
-    @Autowired private ScriptBoxProperties props;
-    @Autowired private ScriptService scriptService;
-    @Autowired private ExecutionHistoryMapper historyMapper;
-    @Autowired private com.bigdata.scriptbox.service.TenantService tenantService;
-    @Autowired private com.bigdata.scriptbox.service.GlobalVariableService globalVariableService;
-    @Autowired private com.bigdata.scriptbox.service.PresetService presetService;
-    @Autowired private com.bigdata.scriptbox.service.ResultParserService resultParserService;
-    @Autowired private com.bigdata.scriptbox.service.FileUploadService fileUploadService;
-    @Autowired private com.bigdata.scriptbox.service.PrecheckService precheckService;
-    @Autowired private com.bigdata.scriptbox.service.RunningExecutionRegistry runningRegistry;
-    @Autowired private com.bigdata.scriptbox.service.ArtifactService artifactService;
-    @Autowired private com.bigdata.scriptbox.service.StoragePathService storagePathService;
-    @Autowired private com.bigdata.scriptbox.service.SensitiveDataMasker sensitiveDataMasker;
-
-    private final ObjectMapper mapper = new ObjectMapper();
-    private final java.util.concurrent.atomic.AtomicLong counter = new java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis() * 1000L);
+    // ======================================================================
+    // 主入口
+    // ======================================================================
 
     public ExecutionHistory execute(ExecutionRequest req) throws IOException {
-        Script script = scriptService.getById(req.getScriptId());
-        if (script == null) throw new IllegalArgumentException("script not found: " + req.getScriptId());
-        if (script.getEnabled() == null || !script.getEnabled())
-            throw new IllegalArgumentException("script is disabled: " + script.getName());
+        ExecutionContext ctx = prepareContext(req);
+        attachMdc(ctx);
 
-        // V2: DANGEROUS scripts require the caller to send the CONFIRM token,
-        // unless the executor is replaying from a snapshot (the original run was
-        // already authorised, so a re-run with the same content should not nag).
+        try {
+            // PreCheck 阶段独立处理：失败时也要把 PRECHECK_FAILED 写进 history
+            ExecutionHistory precheckFailure = runPrecheckOrRecordFailure(ctx);
+            if (precheckFailure != null) {
+                return precheckFailure;
+            }
+
+            captureSnapshot(ctx);
+
+            log.info("开始执行脚本 executionId={} script={} tenant={} cmd={}",
+                    ctx.executionId(), ctx.script().getName(), ctx.tenant().getName(),
+                    sensitiveDataMasker.maskCommandList(buildArgsFromMap(ctx.params())));
+
+            ProcessResult processResult = startProcess(ctx);
+            return finalizeExecution(ctx, processResult);
+        } finally {
+            MDC.remove("executionId");
+            MDC.remove("scriptName");
+            MDC.remove("tenantName");
+        }
+    }
+
+    /**
+     * 主流程前 60%：参数 / 路径 / 历史行初始化。
+     */
+    private ExecutionContext prepareContext(ExecutionRequest req) throws IOException {
+        Script script = scriptService.getById(req.getScriptId());
+        if (script == null)
+            throw new IllegalArgumentException("脚本不存在: " + req.getScriptId());
+        if (script.getEnabled() == null || !script.getEnabled())
+            throw new IllegalArgumentException("脚本已禁用: " + script.getName());
+
         if (RiskLevel.DANGEROUS.equals(script.getRiskLevel())
                 && !req.isBypassDangerousCheck()
                 && !RiskLevel.CONFIRM_TOKEN.equals(req.getConfirmToken())) {
             throw new IllegalArgumentException(
-                "script is DANGEROUS: type " + RiskLevel.CONFIRM_TOKEN + " to confirm execution");
+                    "脚本标记为 DANGEROUS，请在前端输入 " + RiskLevel.CONFIRM_TOKEN + " 后重新执行");
         }
 
-        // V2: anti-duplicate gate. When the script has allowConcurrent=false
-        // (the default), refuse the request if any execution of THIS script is
-        // still running. We check the registry rather than the database because
-        // the row isn't inserted until the process exits.
+        // 防重复执行：allowConcurrent=false 时，同一脚本不能并发
         if (!Boolean.TRUE.equals(script.getAllowConcurrent())) {
             for (RunningExecution re : runningRegistry.activeExecutions()) {
                 if (re.scriptId == script.getId()) {
                     throw new IllegalStateException(
-                            "script '" + script.getName() + "' is already running (executionId="
-                                    + re.executionId + "). Set allowConcurrent=true to override.");
+                            "脚本 '" + script.getName() + "' 已有运行中的执行（already running，executionId="
+                                    + re.executionId + "），请等待完成或在脚本上启用 allowConcurrent=true");
                 }
             }
         }
 
         Tenant tenant = tenantService.getById(req.getTenantId());
-        if (tenant == null) throw new IllegalArgumentException("tenant not found: " + req.getTenantId());
+        if (tenant == null)
+            throw new IllegalArgumentException("租户不存在: " + req.getTenantId());
         if (tenant.getEnabled() == null || !tenant.getEnabled())
-            throw new IllegalArgumentException("tenant is disabled: " + tenant.getName());
+            throw new IllegalArgumentException("租户已禁用: " + tenant.getName());
 
+        // 参数合并：preset < supplied
         List<ScriptParam> params = scriptService.paramsOf(script.getId());
-        // If a preset is referenced, its values override any supplied params.
         Map<String, String> validated;
         if (req.getPresetId() != null) {
             var preset = presetService.get(script.getId(), req.getPresetId());
-            if (preset == null) throw new IllegalArgumentException("preset not found: " + req.getPresetId());
+            if (preset == null) throw new IllegalArgumentException("预设不存在: " + req.getPresetId());
             Map<String, String> fromPreset = presetService.applyParams(preset);
             Map<String, String> supplied = req.getParams() == null ? Map.of() : req.getParams();
             Map<String, String> merged = new LinkedHashMap<>(fromPreset);
-            merged.putAll(supplied); // supplied params win over preset defaults
+            merged.putAll(supplied);
             validated = validateAndCoerce(params, merged);
         } else {
             validated = validateAndCoerce(params, req.getParams() == null ? Map.of() : req.getParams());
         }
 
-        long executionId = nextExecutionId();
-        Path execDir = Paths.get(props.getExecutionsDir(), String.valueOf(executionId));
-        Files.createDirectories(execDir);
-        // V2: pre-create the artifacts sub-directory so scripts can rely on
-        // $ARTIFACT_DIR existing without checking first. Idempotent — if the
-        // directory already exists from a previous re-run, leave it alone.
-        Path artifactDir = artifactService.artifactsDirFor(executionId);
+        // 文件参数：把上传到 ./data/uploads/<token>/ 的文件 promote 到 ./data/executions/<execId>/input/
+        if (req.getFileInputs() != null && !req.getFileInputs().isEmpty()) {
+            Map<String, String> resolved = fileUploadService.promoteForExecution(
+                    nextExecutionId(), req.getFileInputs());
+            validated.putAll(resolved);
+        }
 
-        // Promote any file-type inputs into the exec directory so the shell
-        // receives the safe, server-controlled path. Done before building the
-        // command list so we never expose a client-supplied path to the script.
+        long executionId = nextExecutionId();
+        Path execDir = storagePathService.executionDirFor(executionId);
+        Files.createDirectories(execDir);
+        Path artifactDir = storagePathService.artifactsDirFor(executionId);
+        // 注意：artifact 目录由 ArtifactService 在 scanAndRegister 中创建；
+        // 这里调一次 createDirectories 让脚本开始写时目录已存在。
+        Files.createDirectories(artifactDir);
+
+        Path stdoutFile = execDir.resolve("stdout.log");
+        Path stderrFile = execDir.resolve("stderr.log");
+        Path resultFile = execDir.resolve("result.json");
+        int timeoutSeconds = script.getTimeoutSeconds() == null ? 600 : script.getTimeoutSeconds();
+
+        ExecutionHistory history = newExecutionHistory(req, executionId, script, tenant,
+                validated, execDir, stdoutFile, stderrFile, resultFile, timeoutSeconds);
+
+        // 把 executionId 同步给 FileUploadService（之前在 promoteForExecution 调用里用了临时值，
+        // 现在重新调一次以保证文件落到正确目录）。
         if (req.getFileInputs() != null && !req.getFileInputs().isEmpty()) {
             Map<String, String> resolved = fileUploadService.promoteForExecution(executionId, req.getFileInputs());
             for (Map.Entry<String, String> e : resolved.entrySet()) {
@@ -126,29 +208,49 @@ public class ScriptExecutor {
             }
         }
 
-        Path stdoutFile = execDir.resolve("stdout.log");
-        Path stderrFile = execDir.resolve("stderr.log");
-        Path resultFile = execDir.resolve("result.json");
+        return ExecutionContext.builder()
+                .executionId(executionId)
+                .request(req)
+                .script(script)
+                .tenant(tenant)
+                .params(validated)
+                .executionDir(execDir)
+                .artifactDir(artifactDir)
+                .stdoutPath(stdoutFile)
+                .stderrPath(stderrFile)
+                .resultPath(resultFile)
+                .scriptPath(Paths.get(script.getScriptPath() == null ? "" : script.getScriptPath()))
+                .kinitWrapped(false) // 实际值在 startProcess 中根据 tenant keytab 决定
+                .timeoutSeconds(timeoutSeconds)
+                .build();
+    }
 
+    private ExecutionHistory newExecutionHistory(ExecutionRequest req, long executionId,
+                                                  Script script, Tenant tenant,
+                                                  Map<String, String> validated,
+                                                  Path execDir, Path stdoutFile,
+                                                  Path stderrFile, Path resultFile,
+                                                  int timeoutSeconds) {
         ExecutionHistory history = new ExecutionHistory();
         history.setId(executionId);
         history.setScriptId(script.getId());
         history.setScriptName(script.getName());
         history.setTenantId(tenant.getId());
         history.setTenantName(tenant.getName());
-        history.setParametersJson(mapper.writeValueAsString(validated));
+        try {
+            history.setParametersJson(mapper.writeValueAsString(validated));
+        } catch (Exception ex) {
+            // JSON 序列化失败几乎不可能（都是 String → String），但保险起见写空串
+            history.setParametersJson("{}");
+        }
         history.setTimeout(Boolean.FALSE);
         history.setStartTime(LocalDateTime.now());
         history.setStdoutPath(stdoutFile.toAbsolutePath().toString());
         history.setStderrPath(stderrFile.toAbsolutePath().toString());
         history.setExecutionDir(execDir.toAbsolutePath().toString());
         history.setResultJsonPath(resultFile.toAbsolutePath().toString());
-        // V2: status starts as RUNNING. The row is finalised after the process exits.
-        history.setStatus("RUNNING");
+        history.setStatus(ExecutionStatus.RUNNING.name());
         history.setSuccess(false);
-        // We don't insert the history row until the run is finished (or cancelled)
-        // so the front-end sees a complete picture with stable IDs in the registry.
-        // The registry uses executionId as the key during the running window.
         if (req.getBatchId() != null) {
             history.setBatchId(req.getBatchId());
             history.setBatchRowIndex(req.getBatchRowIndex());
@@ -157,195 +259,370 @@ public class ScriptExecutor {
             history.setScenarioId(req.getScenarioId());
             history.setScenarioStepNo(req.getScenarioStepNo());
         }
+        return history;
+    }
 
-        // Pre-execution checks (only if the script has precheck config).
-        Map<String, Object> precheck = precheckService.run(script, tenant);
-        if (!Boolean.TRUE.equals(precheck.get("ok"))) {
-            history.setEndTime(LocalDateTime.now());
-            history.setDurationMs(0L);
-            history.setExitCode(-1);
-            history.setTimeout(false);
-            history.setSuccess(false);
-            history.setStatus("PRECHECK_FAILED");
-            historyMapper.insert(history);
-            return history;
+    /**
+     * 跑 PreCheck；失败时直接写一条 PRECHECK_FAILED 历史并返回非 null，
+     * 成功时返回 null 表示继续走主流程。
+     */
+    private ExecutionHistory runPrecheckOrRecordFailure(ExecutionContext ctx) {
+        log.info("开始 PreCheck executionId={} script={}", ctx.executionId(), ctx.script().getName());
+        Map<String, Object> precheck = precheckService.run(ctx.script(), ctx.tenant());
+        if (Boolean.TRUE.equals(precheck.get("ok"))) {
+            log.info("PreCheck 通过 executionId={}", ctx.executionId());
+            return null;
         }
 
-        String scriptPath = script.getScriptPath();
-        if (scriptPath == null || !Files.exists(Paths.get(scriptPath)))
-            throw new IllegalStateException("script file missing on disk: " + scriptPath);
-        // 路径安全：脚本文件必须落在配置的 scripts 目录下，阻止恶意路径逃逸
-        storagePathService.assertInside(Paths.get(scriptPath), storagePathService.scriptsRoot(), "script");
+        log.warn("PreCheck 失败 executionId={} script={} message={}",
+                ctx.executionId(), ctx.script().getName(), precheck.get("message"));
 
-        // V2: SHA-256 the script body at the moment we start. Lets the UI
-        // surface "script has been edited since this run" without doing
-        // anything client-side.
-        try {
-            byte[] bodyBytes = Files.readAllBytes(Paths.get(scriptPath));
-            history.setScriptSha256(sha256Hex(bodyBytes));
-            // V2: snapshot the full execution context so a later "re-run as
-            // it ran" button can replay it. Sensitive global-variable values
-            // are masked here so a stolen snapshot never leaks secrets.
-            history.setSnapshotJson(buildSnapshotJson(script, tenant, validated, new String(bodyBytes, StandardCharsets.UTF_8)));
-        } catch (IOException ioe) {
-            log.warn("snapshot/hash capture failed for executionId={}: {}", executionId, ioe.getMessage());
-        }
-
-        List<String> command = buildCommand(scriptPath, validated);
-        log.info("exec executionId={} script={} tenant={} cmd={}",
-                executionId, script.getName(), tenant.getName(), command);
-
-        long startMs = System.currentTimeMillis();
-        int timeoutSeconds = script.getTimeoutSeconds() == null ? 600 : script.getTimeoutSeconds();
-
-        ProcessBuilder pb = new ProcessBuilder(command);
-        pb.directory(execDir.toFile());
-        pb.redirectErrorStream(false);
-        // Inject global variables into ProcessBuilder environment (priority lower than preset/params,
-        // higher than defaultValue). Apply them here BEFORE the kinit wrapper is composed below.
-        pb.environment().putAll(globalVariableService.envForExecution());
-        // V2: standard execution context. EXECUTION_ID lets scripts cross-reference
-        // logs back to history rows; EXECUTION_DIR is the script's cwd (it is also
-        // pb.directory()); ARTIFACT_DIR is the script's writable workspace and the
-        // source we scan to populate the execution_artifact table.
-        pb.environment().put("EXECUTION_ID", String.valueOf(executionId));
-        pb.environment().put("EXECUTION_DIR", execDir.toAbsolutePath().toString());
-        pb.environment().put("ARTIFACT_DIR", artifactDir.toAbsolutePath().toString());
-
-        // In mock mode, ensure the dev box without Hadoop can still run; no kinit wrapper.
-        if (!props.isMock() && tenant.getKeytabPath() != null && !tenant.getKeytabPath().isBlank()) {
-            // Real mode: wrap the call in `kinit`-then-run sequence using a small bootstrap.
-            // We achieve this by writing a tiny wrapper .sh that kinit's then exec's the target.
-            Path wrapper = execDir.resolve("_kinit_wrap.sh");
-            Files.writeString(wrapper,
-                    "#!/usr/bin/env bash\nset -e\n" +
-                    "kinit -kt '" + tenant.getKeytabPath().replace("'", "'\\''") + "' '" +
-                    tenant.getPrincipal().replace("'", "'\\''") + "' || exit 127\n" +
-                    "exec \"" + scriptPath + "\" \"$@\"\n",
-                    StandardCharsets.UTF_8);
-            new File(wrapper.toString()).setExecutable(true);
-            List<String> withKinit = new ArrayList<>();
-            withKinit.add("bash");
-            withKinit.add(wrapper.toString());
-            withKinit.addAll(validated.isEmpty() ? List.of() : buildArgsFromMap(validated));
-            pb = new ProcessBuilder(withKinit);
-            pb.directory(execDir.toFile());
-            pb.redirectErrorStream(false);
-            pb.environment().putAll(globalVariableService.envForExecution());
-            // V2: same execution-context env vars reach the kinit wrapper.
-            pb.environment().put("EXECUTION_ID", String.valueOf(executionId));
-            pb.environment().put("EXECUTION_DIR", execDir.toAbsolutePath().toString());
-            pb.environment().put("ARTIFACT_DIR", artifactDir.toAbsolutePath().toString());
-        }
-
-        Process process;
-        // V2: enforce the concurrency cap by checking the registry. We use the
-        // registry (not a fixed-capacity semaphore) because (a) the cap is read
-        // live from props on every call, so changing max-concurrent at runtime
-        // takes effect immediately, and (b) "active" already maps to "Process
-        // is forked or queued", which is exactly the cap semantics we want.
-        if (runningRegistry.activeCount() >= props.getMaxConcurrent()) {
-            throw new IllegalStateException(
-                    "execution slot limit reached (active="
-                            + runningRegistry.activeCount() + ", max-concurrent="
-                            + props.getMaxConcurrent() + "); wait for a running script to finish or raise scriptbox.max-concurrent.");
-        }
-        process = pb.start();
-        runningRegistry.register(executionId, script.getId(), tenant.getId(), startMs, process);
-
-        // Drain stdout and stderr concurrently to avoid pipe-buffer deadlock.
-        Thread drainOut = drainAsync(process.getInputStream(), stdoutFile, "stdout");
-        Thread drainErr = drainAsync(process.getErrorStream(), stderrFile, "stderr");
-
-        boolean finished;
-        boolean timedOut = false;
-        boolean cancelled = false;
-        try {
-            finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
-            if (!finished) {
-                timedOut = true;
-                process.destroyForcibly();
-            }
-        } catch (InterruptedException ie) {
-            Thread.currentThread().interrupt();
-            finished = false;
-        }
-
-        // V2: if cancel() was called, the registry flag will be true and we
-        // wait for the destroyed process to fully exit. This block also covers
-        // a cancel that arrived AFTER timeout fired.
-        RunningExecution running =
-                runningRegistry.get(executionId);
-        if (running != null && running.cancelled.get()) {
-            cancelled = true;
-            try { process.waitFor(5, TimeUnit.SECONDS); } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-            }
-        }
-
-        try {
-            drainOut.join(2000);
-            drainErr.join(2000);
-        } catch (InterruptedException ie) {
-            Thread.currentThread().interrupt();
-        }
-
-        long duration = System.currentTimeMillis() - startMs;
-        int exitCode;
-        try {
-            exitCode = process.exitValue();
-        } catch (IllegalThreadStateException ex) {
-            exitCode = -1;
-        }
-        if (timedOut) exitCode = -1;
-        if (cancelled) exitCode = -1;
-
+        ExecutionHistory history = newExecutionHistory(ctx.request(), ctx.executionId(),
+                ctx.script(), ctx.tenant(), ctx.params(),
+                ctx.executionDir(), ctx.stdoutPath(), ctx.stderrPath(), ctx.resultPath(),
+                ctx.timeoutSeconds());
         history.setEndTime(LocalDateTime.now());
-        history.setDurationMs(duration);
-        history.setExitCode(exitCode);
-        history.setTimeout(timedOut);
-        boolean ok = !timedOut && !cancelled && exitCode == 0;
-        history.setSuccess(ok);
-        // Canonical status vocabulary: SUCCESS / FAILED / TIMEOUT / CANCELLED
-        String status = cancelled ? "CANCELLED"
-                : timedOut ? "TIMEOUT"
-                : (ok ? "SUCCESS" : "FAILED");
-        history.setStatus(status);
-        // Best-effort parse of result.json after the run; failure is non-fatal.
-        try {
-            if (Files.exists(resultFile)) {
-                resultParserService.parse(resultFile, history);
-            }
-        } catch (Exception ex) {
-            log.warn("result.json parse failed for executionId={}: {}", executionId, ex.getMessage());
-        }
-
-        // V2: scan $ARTIFACT_DIR and register every regular file. Done AFTER
-        // the result.json parse so the FE sees logs + result + artifacts in
-        // the same response. The scan itself is fault-tolerant: missing
-        // directory (script never wrote anything) yields an empty list and
-        // no error.
-        try {
-            int registered = artifactService.scanAndRegister(history);
-            if (registered > 0) {
-                log.info("executionId={} registered {} artifact(s)", executionId, registered);
-            }
-        } catch (Exception ex) {
-            log.warn("artifact scan failed for executionId={}: {}", executionId, ex.getMessage());
-        }
-
-        // V2: unregister the live execution AFTER all history fields are set
-        // so the cancel endpoint can no longer find it but the row is still
-        // queryable by executionId via history().
-        runningRegistry.unregister(executionId);
-
+        history.setDurationMs(0L);
+        history.setExitCode(-1);
+        history.setTimeout(false);
+        history.setSuccess(false);
+        history.setStatus(ExecutionStatus.PRECHECK_FAILED.name());
         historyMapper.insert(history);
         return history;
     }
 
     /**
-     * Build a "dry run" preview: the resolved command list, environment map (sensitive
-     * entries masked), and effective parameter values. Does NOT spawn a process.
+     * 读脚本正文计算 SHA-256 + 构建 execution_snapshot（敏感变量已被遮罩），
+     * 并把 RUNNING 状态的 history 行写入数据库。
+     */
+    private void captureSnapshot(ExecutionContext ctx) throws IOException {
+        Path scriptPath = ctx.scriptPath();
+        if (scriptPath == null || !Files.exists(scriptPath)) {
+            throw new IllegalStateException("脚本文件不存在: " + scriptPath);
+        }
+        // 路径安全：脚本文件必须落在配置的 scripts 目录下，阻止恶意路径逃逸
+        storagePathService.assertInside(scriptPath, storagePathService.scriptsRoot(), "script");
+
+        ExecutionHistory row = historyMapper.selectById(ctx.executionId());
+        boolean isNew = (row == null);
+        if (isNew) {
+            row = newExecutionHistory(ctx.request(), ctx.executionId(), ctx.script(), ctx.tenant(),
+                    ctx.params(), ctx.executionDir(), ctx.stdoutPath(), ctx.stderrPath(),
+                    ctx.resultPath(), ctx.timeoutSeconds());
+        }
+        try {
+            byte[] bodyBytes = Files.readAllBytes(scriptPath);
+            row.setScriptSha256(sha256Hex(bodyBytes));
+            row.setSnapshotJson(buildSnapshotJson(ctx.script(), ctx.tenant(), ctx.params(),
+                    new String(bodyBytes, StandardCharsets.UTF_8)));
+        } catch (IOException ioe) {
+            // snapshot 失败不应中断执行；记录 WARN 即可
+            log.warn("snapshot/hash 捕获失败 executionId={}: {}", ctx.executionId(), ioe.getMessage());
+        }
+        // 把 RUNNING 行（带 sha256 + snapshotJson）持久化。
+        // PRECHECK_FAILED 走 runPrecheckOrRecordFailure 单独 insert，这里永远 insert 或 update。
+        if (isNew) {
+            historyMapper.insert(row);
+        } else {
+            historyMapper.updateById(row);
+        }
+    }
+
+    /**
+     * 启动 Shell 进程。优先 mock 模式直接走脚本；否则：
+     * <ul>
+     *   <li>非 mock 且租户配了 keytab → 写一个 _kinit_wrap.sh 把 kinit 包起来</li>
+     *   <li>否则直接 {@code bash <script> <args...>}</li>
+     * </ul>
+     * 进程本身由 {@link ProcessRunner} 启动并等待。
+     */
+    private ProcessResult startProcess(ExecutionContext ctx) throws IOException {
+        // 并发上限校验：实时读 props；改 maxConcurrent 后立即生效
+        if (runningRegistry.activeCount() >= props.getMaxConcurrent()) {
+            throw new IllegalStateException(
+                    "执行槽位已满（slot limit reached, active=" + runningRegistry.activeCount()
+                            + ", max-concurrent=" + props.getMaxConcurrent()
+                            + "），请等待正在运行的脚本结束或调大 scriptbox.max-concurrent");
+        }
+
+        List<String> command;
+        boolean kinitWrap = !props.isMock()
+                && ctx.tenant().getKeytabPath() != null
+                && !ctx.tenant().getKeytabPath().isBlank();
+        Map<String, String> env = buildEnv(ctx);
+
+        if (kinitWrap) {
+            command = buildKinitWrappedCommand(ctx);
+        } else {
+            command = buildDirectCommand(ctx);
+        }
+
+        ProcessRequest req = new ProcessRequest(
+                command,
+                ctx.executionDir(),
+                env,
+                ctx.stdoutPath(),
+                ctx.stderrPath(),
+                ctx.timeoutSeconds(),
+                "exec-" + ctx.executionId(),
+                ctx.script().getId(),
+                ctx.tenant().getId()
+        );
+
+        ProcessResult result = processRunner.run(ctx.executionId(), req);
+        log.info("Shell 执行完成 executionId={} exitCode={} duration={}ms",
+                ctx.executionId(), result.exitCode(), result.durationMs());
+        return result;
+    }
+
+    /**
+     * 把 ProcessResult 映射回 ExecutionHistory 的最终字段；解析 result.json；扫描 artifact。
+     */
+    private ExecutionHistory finalizeExecution(ExecutionContext ctx, ProcessResult processResult) {
+        ExecutionHistory history = historyMapper.selectById(ctx.executionId());
+        if (history == null) {
+            history = newExecutionHistory(ctx.request(), ctx.executionId(), ctx.script(), ctx.tenant(),
+                    ctx.params(), ctx.executionDir(), ctx.stdoutPath(), ctx.stderrPath(),
+                    ctx.resultPath(), ctx.timeoutSeconds());
+        }
+
+        // 状态决策：cancel / timeout / ok 三者互斥，cancel 优先
+        boolean cancelled = processResult.cancelled();
+        boolean timedOut = processResult.timeout();
+        boolean ok = processResult.ok();
+        ExecutionStatus status;
+        if (cancelled) {
+            status = ExecutionStatus.CANCELLED;
+            log.info("任务已取消 executionId={}", ctx.executionId());
+        } else if (timedOut) {
+            status = ExecutionStatus.TIMEOUT;
+            log.warn("脚本执行超时 executionId={} timeout={}s",
+                    ctx.executionId(), ctx.timeoutSeconds());
+        } else {
+            status = ok ? ExecutionStatus.SUCCESS : ExecutionStatus.FAILED;
+            if (!ok) {
+                log.warn("脚本执行失败 executionId={} exitCode={}",
+                        ctx.executionId(), processResult.exitCode());
+            }
+        }
+
+        history.setEndTime(LocalDateTime.now());
+        history.setDurationMs(processResult.durationMs());
+        history.setExitCode(processResult.exitCode());
+        history.setTimeout(timedOut);
+        history.setSuccess(ok);
+        history.setStatus(status.name());
+
+        // result.json 解析失败不能拖垮整体执行；只能 warn
+        try {
+            if (Files.exists(ctx.resultPath())) {
+                resultParserService.parse(ctx.resultPath(), history);
+                log.info("result.json 解析完成 executionId={}", ctx.executionId());
+            }
+        } catch (Exception ex) {
+            log.warn("result.json 解析失败 executionId={}: {}", ctx.executionId(), ex.getMessage());
+        }
+
+        // artifact 扫描：失败也不影响主流程
+        try {
+            int registered = artifactService.scanAndRegister(history);
+            if (registered > 0) {
+                log.info("Artifact 扫描完成 executionId={} 文件数={}",
+                        ctx.executionId(), registered);
+            }
+        } catch (Exception ex) {
+            log.warn("Artifact 扫描失败 executionId={}: {}", ctx.executionId(), ex.getMessage());
+        }
+
+        // 先 unregister 再写库：cancel 接口通过 registry 查找执行；unregister 之后 cancel
+        // 立即返回 false；写库时不会再有人查到「RUNNING 但没活进程」。
+        runningRegistry.unregister(ctx.executionId());
+
+        // captureSnapshot 已经把 RUNNING 行 insert 到 DB；这里只 update 最终结果。
+        // PRECHECK_FAILED 路径走 runPrecheckOrRecordFailure 的 insert，不需要再 insert。
+        if (historyMapper.selectById(ctx.executionId()) == null) {
+            historyMapper.insert(history);
+        } else {
+            historyMapper.updateById(history);
+        }
+        return history;
+    }
+
+    // ======================================================================
+    // 命令与环境
+    // ======================================================================
+
+    private Map<String, String> buildEnv(ExecutionContext ctx) {
+        Map<String, String> env = new LinkedHashMap<>(globalVariableService.envForExecution());
+        env.put("EXECUTION_ID", String.valueOf(ctx.executionId()));
+        env.put("EXECUTION_DIR", ctx.executionDir().toAbsolutePath().toString());
+        env.put("ARTIFACT_DIR", ctx.artifactDir().toAbsolutePath().toString());
+        return env;
+    }
+
+    private List<String> buildDirectCommand(ExecutionContext ctx) {
+        List<String> cmd = new ArrayList<>();
+        cmd.add("bash");
+        cmd.add(ctx.scriptPath().toString());
+        cmd.addAll(buildArgsFromMap(ctx.params()));
+        return cmd;
+    }
+
+    /**
+     * 写一个 _kinit_wrap.sh 来包一层 kinit；调用方需保证 wrapper 写在 executionDir 内（受控目录）。
+     */
+    private List<String> buildKinitWrappedCommand(ExecutionContext ctx) throws IOException {
+        Path wrapper = ctx.executionDir().resolve("_kinit_wrap.sh");
+        String keytab = ctx.tenant().getKeytabPath().replace("'", "'\\''");
+        String principal = ctx.tenant().getPrincipal().replace("'", "'\\''");
+        String scriptPath = ctx.scriptPath().toString().replace("'", "'\\''");
+        Files.writeString(wrapper,
+                "#!/usr/bin/env bash\nset -e\n" +
+                        "kinit -kt '" + keytab + "' '" + principal + "' || exit 127\n" +
+                        "exec \"" + scriptPath + "\" \"$@\"\n",
+                StandardCharsets.UTF_8);
+        new File(wrapper.toString()).setExecutable(true);
+        List<String> cmd = new ArrayList<>();
+        cmd.add("bash");
+        cmd.add(wrapper.toString());
+        cmd.addAll(buildArgsFromMap(ctx.params()));
+        return cmd;
+    }
+
+    private List<String> buildArgsFromMap(Map<String, String> params) {
+        List<String> args = new ArrayList<>();
+        for (Map.Entry<String, String> e : params.entrySet()) {
+            args.add("--" + e.getKey());
+            args.add(e.getValue());
+        }
+        return args;
+    }
+
+    // ======================================================================
+    // 参数校验 / 类型转换 / 条件可见
+    // ======================================================================
+
+    /**
+     * 按 ScriptParam 声明校验并强制类型转换；同时应用 visibleWhen 过滤。
+     * 返回的 Map 仅包含可见参数。
+     */
+    private Map<String, String> validateAndCoerce(List<ScriptParam> declared, Map<String, String> given) {
+        Map<String, String> out = new LinkedHashMap<>();
+        for (ScriptParam p : declared) {
+            String name = p.getName();
+            String value = given.get(name);
+            if ((value == null || value.isBlank()) && p.getDefaultValue() != null) {
+                value = p.getDefaultValue();
+            }
+            if (Boolean.TRUE.equals(p.getRequired())
+                    && (value == null || value.isBlank())
+                    && "boolean".equalsIgnoreCase(p.getType())) {
+                // boolean 永远有值（false 默认），不视为缺失
+            } else if (Boolean.TRUE.equals(p.getRequired()) && (value == null || value.isBlank())) {
+                throw new IllegalArgumentException("参数 '" + name + "' 必填");
+            }
+            if (value == null) value = "";
+            String type = p.getType() == null ? "text" : p.getType().toLowerCase();
+            switch (type) {
+                case "number":
+                    if (!value.isBlank()) {
+                        try { Double.parseDouble(value); }
+                        catch (NumberFormatException ex) {
+                            throw new IllegalArgumentException("参数 '" + name + "' 必须是数字");
+                        }
+                    }
+                    break;
+                case "select":
+                    if (!value.isBlank() && p.getOptions() != null) {
+                        boolean ok = false;
+                        for (String opt : p.getOptions().split(",")) {
+                            if (opt.trim().equals(value)) { ok = true; break; }
+                        }
+                        if (!ok) throw new IllegalArgumentException(
+                                "参数 '" + name + "' 必须是: " + p.getOptions());
+                    }
+                    break;
+                case "boolean":
+                    if (value.isBlank()) value = "false";
+                    else value = ("true".equalsIgnoreCase(value) || "1".equals(value)) ? "true" : "false";
+                    break;
+                case "date":
+                case "text":
+                case "textarea":
+                default:
+                    // 字符串原样保留
+                    break;
+            }
+            // 条件显示：visibleWhen 不满足则跳过该参数（不传给 Shell）
+            VisibleWhen rule = VisibleWhen.parse(p.getVisibleWhenJson());
+            if (rule != null && !rule.matches(out)) continue;
+            out.put(name, value);
+        }
+        // 忽略声明外的额外参数（不报错）
+        return out;
+    }
+
+    // ======================================================================
+    // 辅助
+    // ======================================================================
+
+    private void attachMdc(ExecutionContext ctx) {
+        MDC.put("executionId", String.valueOf(ctx.executionId()));
+        if (ctx.script() != null) MDC.put("scriptName", ctx.script().getName());
+        if (ctx.tenant() != null) MDC.put("tenantName", ctx.tenant().getName());
+    }
+
+    private long nextExecutionId() {
+        return counter.incrementAndGet();
+    }
+
+    private String sha256Hex(byte[] data) {
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(data);
+            StringBuilder sb = new StringBuilder(digest.length * 2);
+            for (byte b : digest) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 不可用", e);
+        }
+    }
+
+    /**
+     * 构建 execution_snapshot JSON。敏感 GlobalVariable 值已遮罩，keytab 路径不写入。
+     */
+    private String buildSnapshotJson(Script script, Tenant tenant,
+                                      Map<String, String> validated, String scriptBody) {
+        try {
+            Map<String, Object> snap = new LinkedHashMap<>();
+            snap.put("scriptId", script.getId());
+            snap.put("scriptName", script.getName());
+            snap.put("displayName", script.getDisplayName());
+            snap.put("description", script.getDescription());
+            snap.put("riskLevel", script.getRiskLevel());
+            snap.put("allowConcurrent", script.getAllowConcurrent());
+            snap.put("timeoutSeconds", script.getTimeoutSeconds());
+            snap.put("tenantId", tenant.getId());
+            snap.put("tenantName", tenant.getName());
+            // keytab 是敏感字段，不写入 snapshot
+            snap.put("params", validated);
+            snap.put("body", scriptBody);
+            // 敏感全局变量遮罩
+            Map<String, String> env = sensitiveDataMasker.maskEnv(
+                    globalVariableService.envForExecution(), globalVariableService.listEnabled());
+            snap.put("globalVariables", env);
+            return mapper.writeValueAsString(snap);
+        } catch (Exception e) {
+            log.warn("snapshot 构建失败: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    // ======================================================================
+    // 预览 / 历史回放
+    // ======================================================================
+
+    /**
+     * Dry-run：返回解析后的命令 + 遮罩后的环境变量 + 生效参数。不实际启动进程。
      */
     public Map<String, Object> preview(ExecutionRequest req) throws IOException {
         Script script = scriptService.getById(req.getScriptId());
@@ -369,24 +646,20 @@ public class ScriptExecutor {
 
         String scriptPath = script.getScriptPath();
         List<String> command;
-        boolean kinitWrap = !props.isMock() && tenant.getKeytabPath() != null && !tenant.getKeytabPath().isBlank();
+        boolean kinitWrap = !props.isMock()
+                && tenant.getKeytabPath() != null
+                && !tenant.getKeytabPath().isBlank();
         if (kinitWrap) {
             command = new ArrayList<>();
             command.add("bash");
             command.add("<executions-dir>/<exec-id>/_kinit_wrap.sh");
             command.addAll(buildArgsFromMap(validated));
         } else {
-            command = buildCommand(scriptPath, validated);
+            command = buildCommandForPreview(scriptPath, validated);
         }
 
-        // Mask sensitive variables in env.
-        Map<String, String> rawEnv = globalVariableService.envForExecution();
-        Map<String, String> masked = new LinkedHashMap<>(rawEnv);
-        for (var v : globalVariableService.listEnabled()) {
-            if (Boolean.TRUE.equals(v.getSensitive()) && masked.containsKey(v.getVariableKey())) {
-                masked.put(v.getVariableKey(), "******");
-            }
-        }
+        Map<String, String> masked = sensitiveDataMasker.maskEnv(
+                globalVariableService.envForExecution(), globalVariableService.listEnabled());
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("scriptId", script.getId());
@@ -403,9 +676,17 @@ public class ScriptExecutor {
         out.put("kinitWrapped", kinitWrap);
         out.put("globalVariables", masked);
         out.put("keytabSet", tenant.getKeytabPath() != null && !tenant.getKeytabPath().isBlank());
-        // For preview we mask keytab path completely.
-        out.put("keytabPath", tenant.getKeytabPath() != null && !tenant.getKeytabPath().isBlank() ? "******" : null);
+        // Preview 中完全遮掉 keytab 路径，避免在调试阶段泄露
+        out.put("keytabPath", tenant.getKeytabPath() != null && !tenant.getKeytabPath().isBlank() ? SensitiveDataMasker.MASK : null);
         return out;
+    }
+
+    private List<String> buildCommandForPreview(String scriptPath, Map<String, String> params) {
+        List<String> cmd = new ArrayList<>();
+        cmd.add("bash");
+        cmd.add(scriptPath);
+        cmd.addAll(buildArgsFromMap(params));
+        return cmd;
     }
 
     public byte[] readStdout(ExecutionHistory h) throws IOException {
@@ -416,19 +697,21 @@ public class ScriptExecutor {
         return readUpTo(h.getStderrPath(), props.getMaxLogBytes());
     }
 
+    /**
+     * 读取文件尾部最多 {@code max} 字节；超过则加 {@code --- truncated ---} 前缀。
+     * 用于 stdout / stderr 限制显示，避免大输出吃光内存。
+     */
     private byte[] readUpTo(String path, long max) throws IOException {
         if (path == null) return new byte[0];
         File f = new File(path);
         if (!f.exists()) return new byte[0];
         long len = f.length();
         if (len <= max) return Files.readAllBytes(Paths.get(path));
-        // Read only the trailing max bytes
         try (var ch = Files.newByteChannel(Paths.get(path))) {
             ch.position(len - max);
             var buf = java.nio.ByteBuffer.allocate((int) max);
             ch.read(buf);
             buf.flip();
-            // prefix marker
             byte[] tail = new byte[buf.remaining() + 64];
             String prefix = "--- truncated, showing last " + max + " bytes ---\n";
             byte[] pb = prefix.getBytes(StandardCharsets.UTF_8);
@@ -438,226 +721,40 @@ public class ScriptExecutor {
         }
     }
 
-    private long nextExecutionId() {
-        return counter.incrementAndGet();
-    }
-
-    private List<String> buildCommand(String scriptPath, Map<String, String> params) {
-        List<String> cmd = new ArrayList<>();
-        cmd.add("bash");
-        cmd.add(scriptPath);
-        cmd.addAll(buildArgsFromMap(params));
-        return cmd;
-    }
-
-    private List<String> buildArgsFromMap(Map<String, String> params) {
-        List<String> args = new ArrayList<>();
-        for (Map.Entry<String, String> e : params.entrySet()) {
-            args.add("--" + e.getKey());
-            args.add(e.getValue());
-        }
-        return args;
-    }
-
-    private Thread drainAsync(java.io.InputStream in, Path target, String label) {
-        Thread t = new Thread(() -> {
-            try (var br = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
-                 var writer = Files.newBufferedWriter(target, StandardCharsets.UTF_8)) {
-                String line;
-                while ((line = br.readLine()) != null) {
-                    writer.write(line);
-                    writer.newLine();
-                }
-            } catch (IOException e) {
-                log.warn("drain {} failed: {}", label, e.getMessage());
-            }
-        }, "exec-drain-" + label);
-        t.setDaemon(true);
-        t.start();
-        return t;
-    }
-
     /**
-     * Validate user input against the script's declared params, coerce to expected types,
-     * and apply defaults. Returns the final map of values to pass as --key value to the script.
-     *
-     * V2: Respects {@code visibleWhenJson} — params whose condition is not currently
-     * satisfied are skipped (NOT emitted as --key value to the shell). Hidden params
-     * with {@code required=true} never trigger a missing-required error because they
-     * aren't in scope for this run.
-     */
-    private Map<String, String> validateAndCoerce(List<ScriptParam> declared, Map<String, String> given) {
-        Map<String, String> out = new LinkedHashMap<>();
-        for (ScriptParam p : declared) {
-            String name = p.getName();
-            String value = given.get(name);
-            if ((value == null || value.isBlank()) && p.getDefaultValue() != null) {
-                value = p.getDefaultValue();
-            }
-            if (Boolean.TRUE.equals(p.getRequired())
-                    && (value == null || value.isBlank())
-                    && "boolean".equalsIgnoreCase(p.getType())) {
-                // booleans always have a value
-            } else if (Boolean.TRUE.equals(p.getRequired()) && (value == null || value.isBlank())) {
-                throw new IllegalArgumentException("param '" + name + "' is required");
-            }
-            if (value == null) value = "";
-            String type = p.getType() == null ? "text" : p.getType().toLowerCase();
-            switch (type) {
-                case "number":
-                    if (!value.isBlank()) {
-                        try { Double.parseDouble(value); }
-                        catch (NumberFormatException ex) {
-                            throw new IllegalArgumentException("param '" + name + "' must be a number");
-                        }
-                    }
-                    break;
-                case "select":
-                    if (!value.isBlank() && p.getOptions() != null) {
-                        boolean ok = false;
-                        for (String opt : p.getOptions().split(",")) {
-                            if (opt.trim().equals(value)) { ok = true; break; }
-                        }
-                        if (!ok) throw new IllegalArgumentException(
-                                "param '" + name + "' must be one of: " + p.getOptions());
-                    }
-                    break;
-                case "boolean":
-                    if (value.isBlank()) value = "false";
-                    else value = ("true".equalsIgnoreCase(value) || "1".equals(value)) ? "true" : "false";
-                    break;
-                case "date":
-                case "text":
-                case "textarea":
-                default:
-                    // raw string
-                    break;
-            }
-            // V2: skip params whose visibility rule is not satisfied.
-            VisibleWhen rule = VisibleWhen.parse(p.getVisibleWhenJson());
-            boolean visible = rule == null || rule.matches(out);
-            if (!visible) continue;
-            out.put(name, value);
-        }
-        // ignore extra params
-        return out;
-    }
-
-    /** SHA-256 of {@code data} as lowercase hex. Used to fingerprint the
-     *  script body at run-time. */
-    private String sha256Hex(byte[] data) {
-        try {
-            byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(data);
-            StringBuilder sb = new StringBuilder(digest.length * 2);
-            for (byte b : digest) {
-                sb.append(String.format("%02x", b));
-            }
-            return sb.toString();
-        } catch (java.security.NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 not available", e);
-        }
-    }
-
-    /**
-     * V2: build the JSON snapshot captured onto the ExecutionHistory row.
-     * Includes the script body, the resolved params, the tenant, and the
-     * risk flags. Sensitive global-variable values are masked so a stolen
-     * snapshot never leaks secrets.
-     */
-    private String buildSnapshotJson(Script script, Tenant tenant,
-                                      Map<String, String> validated, String scriptBody) {
-        try {
-            Map<String, Object> snap = new LinkedHashMap<>();
-            snap.put("scriptId", script.getId());
-            snap.put("scriptName", script.getName());
-            snap.put("displayName", script.getDisplayName());
-            snap.put("description", script.getDescription());
-            snap.put("riskLevel", script.getRiskLevel());
-            snap.put("allowConcurrent", script.getAllowConcurrent());
-            snap.put("timeoutSeconds", script.getTimeoutSeconds());
-            snap.put("tenantId", tenant.getId());
-            snap.put("tenantName", tenant.getName());
-            // keytab is sensitive; never written into the snapshot
-            snap.put("params", validated);
-            snap.put("body", scriptBody);
-            // Mask sensitive global variables in the snapshot env.
-            Map<String, String> env = new LinkedHashMap<>(globalVariableService.envForExecution());
-            for (var v : globalVariableService.listEnabled()) {
-                if (Boolean.TRUE.equals(v.getSensitive()) && env.containsKey(v.getVariableKey())) {
-                    env.put(v.getVariableKey(), "******");
-                }
-            }
-            snap.put("globalVariables", env);
-            return mapper.writeValueAsString(snap);
-        } catch (Exception e) {
-            log.warn("snapshot build failed: {}", e.getMessage());
-            return null;
-        }
-    }
-
-    /**
-     * V2: re-run an execution exactly as it ran the first time. Reads the
-     * stored snapshot, materialises a temporary Script (not saved) carrying
-     * the snapshotted body, and dispatches through the normal execute()
-     * path with bypassDangerousCheck=true so the user doesn't get re-prompted
-     * for the same DANGEROUS script. The script file on disk is left
-     * untouched — the snapshot body is what runs.
+     * Snapshot 重放：从历史行的 snapshotJson 读取原参数 / 脚本体，临时覆盖脚本文件，
+     * 跑一次 execute，再恢复原文件。注意：原文件在 rerun 期间被改写，存在一个
+     * 短暂的时间窗口看到 snapshot body（其他人 readScriptBody 会看到 snapshot 内容）。
+     * 这是历史实现的妥协：保持 execute() 的签名不变（不引入新的脚本路径参数）。
      */
     public ExecutionHistory rerunFromSnapshot(long executionId) throws IOException {
         ExecutionHistory h = historyMapper.selectById(executionId);
         if (h == null) throw new IllegalArgumentException("execution not found: " + executionId);
         if (h.getSnapshotJson() == null || h.getSnapshotJson().isBlank())
             throw new IllegalStateException("snapshot missing — cannot re-run");
+        @SuppressWarnings("unchecked")
         Map<String, Object> snap = mapper.readValue(h.getSnapshotJson(), Map.class);
         Script s = scriptService.getById(((Number) snap.get("scriptId")).longValue());
         if (s == null) throw new IllegalStateException("script has been deleted");
-        // Override body on disk so the executor reads the snapshotted version.
-        // We use a temp file path so the script's stored path remains valid;
-        // the executor's path-escape check still passes because we put the
-        // file under the configured scripts dir.
         String body = (String) snap.get("body");
-        Path tmpPath = Paths.get(props.getScriptsDir(), "_snapshot_" + executionId + ".sh");
-        Files.writeString(tmpPath, body, StandardCharsets.UTF_8);
-        new File(tmpPath.toString()).setExecutable(true);
+
+        ExecutionRequest req = new ExecutionRequest();
+        req.setScriptId(s.getId());
+        req.setTenantId(h.getTenantId());
+        @SuppressWarnings("unchecked")
+        Map<String, String> snapParams = (Map<String, String>) snap.get("params");
+        req.setParams(snapParams);
+        req.setBypassDangerousCheck(true);
+
+        String originalPath = s.getScriptPath();
+        Path original = Paths.get(originalPath);
+        String originalBody = Files.readString(original, StandardCharsets.UTF_8);
+        Files.writeString(original, body, StandardCharsets.UTF_8);
         try {
-            Script override = new Script();
-            override.setId(s.getId());
-            override.setName(s.getName());
-            override.setDisplayName(s.getDisplayName());
-            override.setCategory(s.getCategory());
-            override.setDescription(s.getDescription());
-            override.setTimeoutSeconds(s.getTimeoutSeconds());
-            override.setEnabled(true);
-            override.setRiskLevel(s.getRiskLevel());
-            override.setAllowConcurrent(s.getAllowConcurrent());
-            override.setScriptPath(tmpPath.toAbsolutePath().toString());
-            // Dispatch through the normal pipeline.
-            ExecutionRequest req = new ExecutionRequest();
-            req.setScriptId(s.getId());
-            req.setTenantId(h.getTenantId());
-            req.setParams((Map<String, String>) snap.get("params"));
-            req.setBypassDangerousCheck(true);
-            // We can't fully mock the body override via execute() because
-            // execute() reads script.getScriptPath() from the database. So
-            // we temporarily replace the row in-memory is not possible; the
-            // simplest correct path is to write the snapshot body back into
-            // the script's actual file, run, then restore. This is done in
-            // a transaction-style try/finally so a crash mid-rerun doesn't
-            // leave the script corrupted.
-            String originalPath = s.getScriptPath();
-            Path original = Paths.get(originalPath);
-            String originalBody = Files.readString(original, StandardCharsets.UTF_8);
-            Files.writeString(original, body, StandardCharsets.UTF_8);
-            try {
-                return execute(req);
-            } finally {
-                Files.writeString(original, originalBody, StandardCharsets.UTF_8);
-                try { Files.deleteIfExists(tmpPath); } catch (IOException ignored) {}
-            }
-        } catch (RuntimeException re) {
-            throw re;
-        } catch (Exception e) {
-            throw new IOException(e);
+            return execute(req);
+        } finally {
+            // 恢复原文 + 删除临时 _kinit_wrap / artifacts 等已生成的目录
+            Files.writeString(original, originalBody, StandardCharsets.UTF_8);
         }
     }
 }

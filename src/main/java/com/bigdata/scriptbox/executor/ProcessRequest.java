@@ -19,6 +19,8 @@ import java.util.Map;
  *   <li>{@link #stdoutPath} / {@link #stderrPath} — 输出落盘路径（必填，
  *       由调用方控制路径必须在受控目录下）</li>
  *   <li>{@link #timeoutSeconds} — 等待超时（秒），超过则 {@code destroyForcibly}</li>
+ *   <li>{@link #scriptId} / {@link #tenantId} — 透传给 RunningExecutionRegistry，
+ *       用于取消时定位执行 + 防止同脚本并发</li>
  * </ul>
  */
 public record ProcessRequest(
@@ -28,7 +30,9 @@ public record ProcessRequest(
         Path stdoutPath,
         Path stderrPath,
         int timeoutSeconds,
-        String label
+        String label,
+        long scriptId,
+        long tenantId
 ) {
     public ProcessRequest {
         if (command == null || command.isEmpty())
@@ -40,5 +44,11 @@ public record ProcessRequest(
         // Defensive copy so external mutation cannot affect the runner.
         command = List.copyOf(command);
         environment = environment == null ? Map.of() : Map.copyOf(environment);
+    }
+
+    /** 兼容旧调用（scriptId/tenantId 不参与 registry 语义；仅用于测试/未注册场景）。 */
+    public ProcessRequest(List<String> command, Path workingDirectory, Map<String, String> environment,
+                          Path stdoutPath, Path stderrPath, int timeoutSeconds, String label) {
+        this(command, workingDirectory, environment, stdoutPath, stderrPath, timeoutSeconds, label, -1L, -1L);
     }
 }
