@@ -301,6 +301,14 @@ const artifactsLoading = ref(false)
 async function refresh() {
   loading.value = true
   try {
+    // Silently swap if user picked from > to, otherwise the API silently
+    // returns nothing and the table looks broken.
+    if (dateFrom.value && dateTo.value && dateFrom.value > dateTo.value) {
+      const tmp = dateFrom.value
+      dateFrom.value = dateTo.value
+      dateTo.value = tmp
+      ElMessage.info('日期范围已自动调整为：' + dateFrom.value + ' 至 ' + dateTo.value)
+    }
     const params = { limit: 200 }
     if (status.value) params.status = status.value
     if (scriptId.value) params.scriptId = scriptId.value
