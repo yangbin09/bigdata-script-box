@@ -161,7 +161,10 @@ public class ExecutionController {
         ExecutionHistory h = executor.history(id);
         if (h == null) return ApiResponse.error("history not found");
         Map<String, Object> data = resultParserService.readStructured(h);
-        if (data == null) return ApiResponse.error("result.json not found");
+        // V2: missing result.json is a normal "script didn't write one" state,
+        // not an error. Return code=0 with data=null so the front-end renders
+        // its "未生成 result.json" placeholder instead of an error toast. Real
+        // failures (file system errors, parse errors) still surface as exceptions.
         return ApiResponse.ok(data);
     }
 
