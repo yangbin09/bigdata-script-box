@@ -94,7 +94,7 @@
           <span class="muted">{{ row.tenantName || '—' }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="结果" width="160" align="left">
+      <el-table-column label="结果" width="110" align="left">
         <template #default="{ row }">
           <el-tag
             size="small" :type="tagType(row)" disable-transitions effect="plain"
