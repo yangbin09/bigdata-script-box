@@ -25,7 +25,7 @@ import java.util.Set;
 public class ScriptService {
 
     private static final Set<String> ALLOWED_TYPES = Set.of(
-            "text", "number", "select", "boolean", "date", "textarea");
+            "text", "number", "select", "boolean", "date", "textarea", "file");
 
     @Autowired
     private ScriptMapper scriptMapper;
@@ -35,6 +35,12 @@ public class ScriptService {
 
     @Autowired
     private ScriptBoxProperties props;
+
+    @Autowired
+    private ScriptVersionService versionService;
+
+    @Autowired
+    private PresetService presetService;
 
     @PostConstruct
     public void init() throws IOException {
@@ -71,6 +77,8 @@ public class ScriptService {
         Path scriptFile = persistScriptBody(script.getId(), body);
         script.setScriptPath(scriptFile.toAbsolutePath().toString());
         scriptMapper.updateById(script);
+        // Snapshot v1 (initial creation)
+        versionService.snapshot(script.getId(), "initial");
         return script;
     }
 
@@ -100,6 +108,7 @@ public class ScriptService {
         db.setScriptPath(scriptFile.toAbsolutePath().toString());
         db.setUpdateTime(LocalDateTime.now());
         scriptMapper.updateById(db);
+        versionService.snapshot(id, "body edit");
         return db;
     }
 
@@ -117,6 +126,8 @@ public class ScriptService {
         if (db == null) return;
         scriptMapper.deleteById(id);
         scriptParamMapper.delete(new QueryWrapper<ScriptParam>().eq("script_id", id));
+        try { versionService.deleteAllForScript(id); } catch (Exception ignored) {}
+        try { presetService.deleteAllForScript(id); } catch (Exception ignored) {}
         if (db.getScriptPath() != null) {
             try {
                 Path p = Paths.get(db.getScriptPath());
@@ -129,6 +140,16 @@ public class ScriptService {
                 }
             } catch (IOException ignored) { }
         }
+    }
+
+    /**
+     * Wipe a script along with its presets, versions and versions-history. Called
+     * by delete(Long); split out so tests can call it directly.
+     */
+    public void deleteCascade(Long id) {
+        delete(id);
+        // Presets / Versions are cleaned by their respective services via wrapper calls
+        // from the controller; here we only guarantee param + file cleanup.
     }
 
     public Script setEnabled(Long id, boolean enabled) {
@@ -148,6 +169,9 @@ public class ScriptService {
         scriptMapper.updateById(db);
         return db;
     }
+
+    /** Exposed for ScriptController.savePrecheck to avoid a separate mapper injection. */
+    public ScriptMapper getMapper() { return scriptMapper; }
 
     // ---- params ----
 

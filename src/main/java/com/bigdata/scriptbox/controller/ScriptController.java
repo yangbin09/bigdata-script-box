@@ -172,4 +172,40 @@ public class ScriptController {
                                                        @RequestBody List<ScriptParam> params) {
         return ApiResponse.ok(scriptService.replaceParams(id, params));
     }
+
+    /** Save pre-execution check config as a JSON string on the Script row. */
+    @PutMapping("/{id}/precheck")
+    public ApiResponse<Script> savePrecheck(@PathVariable Long id,
+                                            @RequestBody Map<String, Object> body) {
+        Script s = scriptService.getById(id);
+        if (s == null) return ApiResponse.error("script not found");
+        // Accept either {"config": {...}} or {"precheckConfigJson": "..."}.
+        Object cfg = body.get("config");
+        if (cfg == null) cfg = body.get("precheckConfigJson");
+        String json;
+        if (cfg instanceof String s2) {
+            json = s2;
+        } else if (cfg instanceof java.util.Map<?, ?> map) {
+            try {
+                json = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(map);
+            } catch (Exception ex) {
+                return ApiResponse.error("invalid config: " + ex.getMessage());
+            }
+        } else {
+            json = null;
+        }
+        s.setPrecheckConfigJson(json);
+        s.setUpdateTime(java.time.LocalDateTime.now());
+        scriptService.getMapper().updateById(s);
+        return ApiResponse.ok(s);
+    }
+
+    @GetMapping("/{id}/precheck")
+    public ApiResponse<Map<String, Object>> getPrecheck(@PathVariable Long id) {
+        Script s = scriptService.getById(id);
+        if (s == null) return ApiResponse.error("script not found");
+        Map<String, Object> out = new HashMap<>();
+        out.put("precheckConfigJson", s.getPrecheckConfigJson());
+        return ApiResponse.ok(out);
+    }
 }

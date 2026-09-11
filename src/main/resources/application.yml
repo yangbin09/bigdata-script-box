@@ -45,6 +45,7 @@ scriptbox:
   executions-dir: ./data/executions
   max-log-bytes: 1048576           # 1MB limit per page render
   max-script-bytes: 1048576        # 1MB script upload limit
+  max-input-file-bytes: 10485760   # 10MB script parameter file upload limit
 
 bigdata:
   environment-name: Mock 环境      # shown in the topbar tag

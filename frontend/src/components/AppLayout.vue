@@ -51,7 +51,9 @@ const navItems = [
   { path: '/',         label: '执行中心',   icon: 'Promotion' },
   { path: '/scripts',  label: '脚本管理',   icon: 'Document' },
   { path: '/tenants',  label: '租户管理',   icon: 'User' },
-  { path: '/history',  label: '执行历史',   icon: 'Clock' }
+  { path: '/scenarios', label: '场景',      icon: 'Connection' },
+  { path: '/history',  label: '执行历史',   icon: 'Clock' },
+  { path: '/settings', label: '设置',      icon: 'Setting' }
 ]
 
 function isActive(p) {

@@ -66,3 +66,71 @@ CREATE TABLE IF NOT EXISTS execution_history (
     end_time        TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_history_start_time ON execution_history(start_time);
+
+-- V1.5 additions (all backward-compatible ADD COLUMN IF NOT EXISTS) ----
+
+ALTER TABLE execution_history ADD COLUMN IF NOT EXISTS batch_id VARCHAR(64);
+ALTER TABLE execution_history ADD COLUMN IF NOT EXISTS batch_row_index INT;
+ALTER TABLE execution_history ADD COLUMN IF NOT EXISTS scenario_id BIGINT;
+ALTER TABLE execution_history ADD COLUMN IF NOT EXISTS scenario_step_no INT;
+ALTER TABLE execution_history ADD COLUMN IF NOT EXISTS result_json_path VARCHAR(512);
+ALTER TABLE execution_history ADD COLUMN IF NOT EXISTS status VARCHAR(32);
+ALTER TABLE execution_history ADD COLUMN IF NOT EXISTS result_json TEXT;
+CREATE INDEX IF NOT EXISTS idx_history_batch_id ON execution_history(batch_id);
+CREATE INDEX IF NOT EXISTS idx_history_status ON execution_history(status);
+
+ALTER TABLE script ADD COLUMN IF NOT EXISTS precheck_config_json VARCHAR(4096);
+
+CREATE TABLE IF NOT EXISTS script_preset (
+    id           BIGINT AUTO_INCREMENT PRIMARY KEY,
+    script_id    BIGINT NOT NULL,
+    name         VARCHAR(128) NOT NULL,
+    params_json  VARCHAR(4096),
+    description  VARCHAR(1024),
+    create_time  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    update_time  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_preset_script_id ON script_preset(script_id);
+
+CREATE TABLE IF NOT EXISTS script_version (
+    id             BIGINT AUTO_INCREMENT PRIMARY KEY,
+    script_id      BIGINT NOT NULL,
+    version_no     INT NOT NULL,
+    script_content TEXT NOT NULL,
+    remark         VARCHAR(1024),
+    created_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_version_script_id ON script_version(script_id, version_no);
+
+CREATE TABLE IF NOT EXISTS global_variable (
+    id              BIGINT AUTO_INCREMENT PRIMARY KEY,
+    variable_key    VARCHAR(128) NOT NULL,
+    variable_value  VARCHAR(2048),
+    description     VARCHAR(1024),
+    sensitive       BOOLEAN NOT NULL DEFAULT FALSE,
+    enabled         BOOLEAN NOT NULL DEFAULT TRUE,
+    create_time     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    update_time     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_global_var_key ON global_variable(variable_key);
+
+CREATE TABLE IF NOT EXISTS scenario (
+    id            BIGINT AUTO_INCREMENT PRIMARY KEY,
+    name          VARCHAR(128) NOT NULL,
+    description   VARCHAR(1024),
+    category      VARCHAR(128),
+    enabled       BOOLEAN NOT NULL DEFAULT TRUE,
+    create_time   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    update_time   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS scenario_step (
+    id                   BIGINT AUTO_INCREMENT PRIMARY KEY,
+    scenario_id          BIGINT NOT NULL,
+    step_no              INT NOT NULL,
+    script_id            BIGINT NOT NULL,
+    preset_id            BIGINT,
+    continue_on_failure  BOOLEAN NOT NULL DEFAULT FALSE,
+    create_time          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_step_scenario_id ON scenario_step(scenario_id, step_no);

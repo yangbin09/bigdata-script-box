@@ -166,11 +166,72 @@
           </div>
 
           <div class="sb-form-section">
+            <div class="sb-form-section-label">
+              参数方案 <span class="muted">(可选，覆盖默认参数)</span>
+            </div>
+            <el-select
+              v-model="presetId"
+              :disabled="running"
+              clearable
+              placeholder="不指定 (使用默认参数)"
+              style="width: 100%"
+              @change="applyPresetToForm"
+            >
+              <el-option
+                v-for="p in presets"
+                :key="p.id"
+                :label="p.name"
+                :value="p.id"
+              />
+            </el-select>
+          </div>
+
+          <div class="sb-form-section">
             <ParamForm
               ref="formRef"
               :params="activeParams"
               :initial-values="lastParamsForScript"
               v-model="formValues"
+            />
+          </div>
+
+          <!-- 文件参数 -->
+          <div
+            v-if="fileParamNames.length"
+            class="sb-form-section"
+          >
+            <div class="sb-form-section-label">文件参数</div>
+            <div v-for="p in fileParamNames" :key="p" class="sb-file-row">
+              <div class="sb-file-row-label">{{ p }}</div>
+              <el-upload
+                :auto-upload="true"
+                :show-file-list="false"
+                :http-request="(opts) => uploadFileFor(opts.file, p)"
+                :before-upload="(f) => beforeUploadFile(f, p)"
+                accept="*"
+              >
+                <el-button size="small" :icon="UploadFilled">选择文件</el-button>
+              </el-upload>
+              <span v-if="fileInputs[p]" class="sb-file-name">
+                {{ fileInputs[p].originalName }} ({{ formatBytes(fileInputs[p].bytes) }})
+              </span>
+              <el-button v-else size="small" link type="info" disabled>未上传</el-button>
+            </div>
+          </div>
+
+          <!-- 批量执行 -->
+          <div class="sb-form-section">
+            <div class="sb-form-section-label">
+              <el-checkbox v-model="batchMode" :disabled="running">批量执行</el-checkbox>
+              <span class="muted" style="margin-left: 8px">每行 JSON：{"参数": "值"}</span>
+            </div>
+            <el-input
+              v-if="batchMode"
+              v-model="batchRowsText"
+              type="textarea"
+              :rows="5"
+              placeholder='例如：&#10;{"database": "dev"}&#10;{"database": "prod"}'
+              :disabled="running"
             />
           </div>
         </div>
@@ -193,6 +254,7 @@
           <template v-if="!resultHistory">
             <el-button :disabled="running" @click="resetDefaults">恢复默认参数</el-button>
             <div class="right">
+              <el-button @click="openPreview" :disabled="running" :loading="previewing">预览</el-button>
               <el-button @click="closeDrawer" :disabled="running">取消</el-button>
               <el-button
                 type="primary"
@@ -200,7 +262,7 @@
                 :loading="running"
                 :disabled="!tenantId"
                 @click="runScript"
-              >{{ running ? `执行中… ${elapsed}s` : '执行脚本' }}</el-button>
+              >{{ running ? `执行中… ${elapsed}s` : (batchMode ? '批量执行' : '执行脚本') }}</el-button>
             </div>
           </template>
           <!-- 结果页 footer -->
@@ -214,6 +276,79 @@
         </div>
       </template>
     </el-drawer>
+
+    <!-- 预览 Drawer -->
+    <el-drawer
+      v-model="previewOpen"
+      title="执行预览 (Dry Run)"
+      direction="rtl"
+      size="560px"
+      :show-close="false"
+      class="sb-exec-drawer"
+    >
+      <template #header>
+        <div class="sb-drawer-header">
+          <div class="sb-drawer-title">执行预览 — {{ activeScript?.displayName || activeScript?.name }}</div>
+          <el-button text :icon="Close" @click="previewOpen = false" />
+        </div>
+      </template>
+      <template v-if="previewData">
+        <h4 class="sb-test-section-title">命令</h4>
+        <pre class="sb-log sb-cmd">{{ previewData.command.join(' ') }}</pre>
+        <h4 class="sb-test-section-title">参数 (--key value)</h4>
+        <pre class="sb-log">{{ JSON.stringify(previewData.params, null, 2) }}</pre>
+        <h4 class="sb-test-section-title">环境变量 (敏感已脱敏)</h4>
+        <pre class="sb-log">{{ JSON.stringify(previewData.globalVariables, null, 2) }}</pre>
+        <div class="sb-preview-meta">
+          <div><span class="muted">租户：</span>{{ previewData.tenantName }}</div>
+          <div><span class="muted">principal：</span>{{ previewData.principal || '—' }}</div>
+          <div><span class="muted">超时：</span>{{ previewData.timeoutSeconds }} 秒</div>
+          <div><span class="muted">kinit 包装：</span>{{ previewData.kinitWrapped ? '是' : '否' }}</div>
+          <div><span class="muted">keytab：</span>{{ previewData.keytabPath || '未配置' }}</div>
+        </div>
+      </template>
+      <template v-else>
+        <div v-loading="previewing" style="height: 80px" />
+      </template>
+    </el-drawer>
+
+    <!-- 批量执行结果 Drawer -->
+    <el-drawer
+      v-model="batchResultOpen"
+      :title="`批量执行结果 — ${batchResult?.batchId || ''}`"
+      direction="rtl"
+      size="640px"
+      :show-close="false"
+      class="sb-exec-drawer"
+    >
+      <template v-if="batchResult">
+        <div class="sb-status-card ok">
+          <div class="sb-status-headline">成功 {{ batchResult.succeeded }} / 失败 {{ batchResult.failed }} / 总 {{ batchResult.total }}</div>
+        </div>
+        <el-table :data="batchRowsForTable" class="sb-card" stripe>
+          <el-table-column label="#" width="60">
+            <template #default="{ $index }">#{{ $index + 1 }}</template>
+          </el-table-column>
+          <el-table-column label="脚本" prop="scriptName" min-width="200" />
+          <el-table-column label="租户" prop="tenantName" min-width="120" />
+          <el-table-column label="结果" width="100">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.success ? 'success' : 'danger'" disable-transitions effect="plain">
+                {{ row.status }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="耗时" width="100" align="right">
+            <template #default="{ row }">{{ row.durationMs || 0 }} ms</template>
+          </el-table-column>
+          <el-table-column label="history" width="100" align="right">
+            <template #default="{ row }">
+              <span class="mono">{{ row.id }}</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </template>
+    </el-drawer>
   </div>
 </template>
 
@@ -222,13 +357,14 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Refresh, Search, VideoPlay, Loading, Close, ArrowRight, ArrowDown,
-  EditPen, RefreshRight
+  EditPen, RefreshRight, UploadFilled
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { listScripts, getScript, setScriptFavorite } from '../api/scripts'
 import { listTenants } from '../api/tenants'
 import { execute, readStdout, readStderr } from '../api/executions'
 import { recentScripts } from '../api/history'
+import { listPresets, dryRun, uploadFile, runBatch, getBatch } from '../api/extras'
 import ScriptCard from '../components/ScriptCard.vue'
 import ParamForm from '../components/ParamForm.vue'
 import ExecutionResultPanel from '../components/ExecutionResultPanel.vue'
@@ -255,6 +391,19 @@ const formRef = ref(null)
 const running = ref(false)
 const elapsed = ref(0)
 let elapsedTimer = null
+
+// V1.5: preset, file inputs, dry-run preview, batch
+const presets = ref([])
+const presetId = ref(null)
+const fileInputs = reactive({})          // paramName -> {serverPath, originalName, bytes}
+const previewOpen = ref(false)
+const previewData = ref(null)
+const previewing = ref(false)
+const batchMode = ref(false)
+const batchRowsText = ref('')
+const batchResult = ref(null)
+const batchResultOpen = ref(false)
+const batchRowsForTable = ref([])
 
 // Result state
 const resultHistory = ref(null)
@@ -394,16 +543,119 @@ async function openDrawer(s) {
   resultStdout.value = ''
   resultStderr.value = ''
   elapsed.value = 0
+  presetId.value = null
+  batchMode.value = false
+  batchRowsText.value = ''
+  batchResult.value = null
+  for (const k of Object.keys(fileInputs)) delete fileInputs[k]
   try {
-    const detail = await getScript(s.id)
+    const [detail, ps] = await Promise.all([
+      getScript(s.id),
+      listPresets(s.id).catch(() => [])
+    ])
     activeParams.value = detail?.params || []
+    presets.value = ps || []
   } catch {
     activeParams.value = []
+    presets.value = []
   }
-  // Seed defaults (handled inside ParamForm via initialValues)
   formValues.value = {}
   tenantId.value = pickInitialTenant(s)
   drawerOpen.value = true
+}
+
+const fileParamNames = computed(() =>
+  (activeParams.value || []).filter((p) => p.type === 'file').map((p) => p.name)
+)
+
+async function applyPresetToForm(pid) {
+  if (!pid) return
+  const p = presets.value.find((x) => x.id === pid)
+  if (!p) return
+  let parsed = {}
+  try { parsed = p.paramsJson ? JSON.parse(p.paramsJson) : {} } catch {}
+  const next = { ...formValues.value }
+  for (const [k, v] of Object.entries(parsed)) next[k] = v == null ? '' : String(v)
+  formValues.value = next
+}
+
+function beforeUploadFile(file) {
+  if (file.size > 10 * 1024 * 1024) {
+    ElMessage.error('文件超过 10MB 上限')
+    return false
+  }
+  return true
+}
+
+async function uploadFileFor(file, paramName) {
+  try {
+    const res = await uploadFile(file)
+    fileInputs[paramName] = {
+      serverPath: res.path,
+      originalName: file.name,
+      bytes: file.size
+    }
+    ElMessage.success(`${paramName} 上传完成`)
+  } catch (e) {
+    // interceptor already toasted
+  }
+}
+
+function formatBytes(n) {
+  if (!n) return '0 B'
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
+}
+
+async function openPreview() {
+  previewing.value = true
+  previewData.value = null
+  previewOpen.value = true
+  try {
+    const params = {}
+    for (const [k, v] of Object.entries(formValues.value)) {
+      if (v === '' || v == null) continue
+      params[k] = String(v)
+    }
+    previewData.value = await dryRun({
+      scriptId: activeScript.value.id,
+      tenantId: tenantId.value,
+      params,
+      presetId: presetId.value
+    })
+  } catch {
+    previewOpen.value = false
+  } finally {
+    previewing.value = false
+  }
+}
+
+function collectParams() {
+  const out = {}
+  for (const [k, v] of Object.entries(formValues.value)) {
+    if (v === '' || v == null) continue
+    if (fileInputs[k]) { out[k] = fileInputs[k].serverPath; continue }
+    out[k] = String(v)
+  }
+  return out
+}
+
+function parseBatchRows() {
+  const out = []
+  const text = (batchRowsText.value || '').trim()
+  if (!text) return out
+  for (const line of text.split(/\r?\n/)) {
+    const t = line.trim()
+    if (!t) continue
+    try {
+      const o = JSON.parse(t)
+      if (o && typeof o === 'object') out.push(o)
+    } catch {
+      ElMessage.warning(`无法解析行：${t.slice(0, 60)}`)
+    }
+  }
+  return out
 }
 
 function closeDrawer() {
@@ -441,20 +693,60 @@ async function runScript() {
   if (elapsedTimer) clearInterval(elapsedTimer)
   elapsedTimer = setInterval(() => { elapsed.value += 1 }, 1000)
 
-  const params = {}
-  for (const [k, v] of Object.entries(formValues.value)) {
-    if (v === '' || v == null) continue
-    params[k] = String(v)
+  const params = collectParams()
+  // Persist last params (key/value form, server path mapped)
+  const persistParams = { ...params }
+  for (const [k, v] of Object.entries(persistParams)) {
+    if (fileInputs[k]) persistParams[k] = fileInputs[k].serverPath
   }
+  setItem(LAST_TENANT_KEY, tenantId.value)
+  const all = getItem(LAST_PARAMS_KEY, {}) || {}
+  all[activeScript.value.id] = persistParams
+  setItem(LAST_PARAMS_KEY, all)
+
+  // If batch mode, parse rows and call /batches/execute instead.
+  if (batchMode.value) {
+    try {
+      const rows = parseBatchRows()
+      if (!rows.length) {
+        ElMessage.warning('未解析到任何批次行')
+        running.value = false
+        return
+      }
+      const fileInputsMap = {}
+      for (const [k, v] of Object.entries(fileInputs)) fileInputsMap[k] = v.serverPath
+      const sum = await runBatch({
+        scriptId: activeScript.value.id,
+        tenantId: tenantId.value,
+        presetId: presetId.value,
+        rows
+      })
+      // Refresh details for each row's history id
+      batchResult.value = sum
+      const detailList = await getBatch(sum.batchId).catch(() => sum.historyIds.map((id) => ({ id, scriptName: activeScript.value.displayName, tenantName: '', success: null, status: '—' })))
+      batchRowsForTable.value = detailList || []
+      batchResultOpen.value = true
+      recentScripts(6).then((r) => { recentList.value = r || [] }).catch(() => {})
+    } catch (_) { /* interceptor surfaced */ }
+    finally {
+      running.value = false
+      if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null }
+    }
+    return
+  }
+
   try {
-    const history = await execute(activeScript.value.id, tenantId.value, params)
+    const payload = {
+      scriptId: activeScript.value.id,
+      tenantId: tenantId.value,
+      params,
+      presetId: presetId.value,
+      fileInputs: Object.fromEntries(
+        Object.entries(fileInputs).map(([k, v]) => [k, v.serverPath])
+      )
+    }
+    const history = await execute(payload)
     resultHistory.value = history
-    // Persist: last tenant + last params
-    setItem(LAST_TENANT_KEY, tenantId.value)
-    const all = getItem(LAST_PARAMS_KEY, {}) || {}
-    all[activeScript.value.id] = params
-    setItem(LAST_PARAMS_KEY, all)
-    // Fetch logs in parallel; both may be empty for trivial scripts.
     try {
       const [so, se] = await Promise.all([
         readStdout(history.id).catch(() => ''),
@@ -466,7 +758,6 @@ async function runScript() {
       resultStdout.value = ''
       resultStderr.value = ''
     }
-    // Refresh recent scripts in the background so the "最近使用" block updates
     recentScripts(6).then((r) => { recentList.value = r || [] }).catch(() => {})
   } catch (_) {
     // axios interceptor already toasted
@@ -555,5 +846,39 @@ onMounted(async () => {
   font-weight: 500;
   margin-bottom: 6px;
   color: var(--sb-text);
+}
+
+.sb-file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 13px;
+  border-bottom: 1px dashed var(--sb-border);
+}
+.sb-file-row:last-child { border-bottom: 0; }
+.sb-file-row-label {
+  font-weight: 500;
+  min-width: 100px;
+}
+.sb-file-name {
+  color: var(--sb-text-3);
+  font-family: var(--sb-mono);
+  font-size: 12px;
+  flex: 1;
+}
+
+.sb-cmd {
+  background: #fafafa;
+  font-size: 12px;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+.sb-preview-meta {
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--sb-text-2);
+  display: grid;
+  gap: 4px;
 }
 </style>

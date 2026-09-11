@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.bigdata.scriptbox.mapper.ScriptPresetMapper">
+
+    <resultMap id="BaseResultMap" type="com.bigdata.scriptbox.entity.ScriptPreset">
+        <id     column="id"            property="id"/>
+        <result column="script_id"     property="scriptId"/>
+        <result column="name"          property="name"/>
+        <result column="params_json"   property="paramsJson"/>
+        <result column="description"   property="description"/>
+        <result column="create_time"   property="createTime"/>
+        <result column="update_time"   property="updateTime"/>
+    </resultMap>
+
+    <select id="selectByScriptId" resultMap="BaseResultMap">
+        SELECT id, script_id, name, params_json, description, create_time, update_time
+        FROM script_preset
+        WHERE script_id = #{scriptId}
+        ORDER BY id ASC
+    </select>
+
+</mapper>

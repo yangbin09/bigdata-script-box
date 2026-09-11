@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.bigdata.scriptbox.mapper.ExecutionHistoryMapper">
+
+    <select id="selectByBatchId" resultType="com.bigdata.scriptbox.entity.ExecutionHistory">
+        SELECT * FROM execution_history
+        WHERE batch_id = #{batchId}
+        ORDER BY COALESCE(batch_row_index, 0) ASC, start_time ASC
+    </select>
+
+</mapper>

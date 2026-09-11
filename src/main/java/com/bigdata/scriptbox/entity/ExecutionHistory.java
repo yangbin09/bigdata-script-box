@@ -25,6 +25,17 @@ public class ExecutionHistory {
     private LocalDateTime startTime;
     private LocalDateTime endTime;
 
+    // V1.5 additions
+    private String batchId;
+    private Integer batchRowIndex;
+    private Long scenarioId;
+    private Integer scenarioStepNo;
+    private String resultJsonPath;
+    /** Canonical vocabulary: SUCCESS / FAILED / TIMEOUT / PRECHECK_FAILED */
+    private String status;
+    /** Captured result.json payload as raw JSON string (or null). */
+    private String resultJson;
+
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
     public Long getScriptId() { return scriptId; }
@@ -55,4 +66,19 @@ public class ExecutionHistory {
     public void setStartTime(LocalDateTime startTime) { this.startTime = startTime; }
     public LocalDateTime getEndTime() { return endTime; }
     public void setEndTime(LocalDateTime endTime) { this.endTime = endTime; }
+
+    public String getBatchId() { return batchId; }
+    public void setBatchId(String batchId) { this.batchId = batchId; }
+    public Integer getBatchRowIndex() { return batchRowIndex; }
+    public void setBatchRowIndex(Integer batchRowIndex) { this.batchRowIndex = batchRowIndex; }
+    public Long getScenarioId() { return scenarioId; }
+    public void setScenarioId(Long scenarioId) { this.scenarioId = scenarioId; }
+    public Integer getScenarioStepNo() { return scenarioStepNo; }
+    public void setScenarioStepNo(Integer scenarioStepNo) { this.scenarioStepNo = scenarioStepNo; }
+    public String getResultJsonPath() { return resultJsonPath; }
+    public void setResultJsonPath(String resultJsonPath) { this.resultJsonPath = resultJsonPath; }
+    public String getStatus() { return status; }
+    public void setStatus(String status) { this.status = status; }
+    public String getResultJson() { return resultJson; }
+    public void setResultJson(String resultJson) { this.resultJson = resultJson; }
 }

@@ -13,6 +13,14 @@
       </div>
       <div>
         <el-button :icon="Refresh" plain @click="refresh" :loading="loading">刷新</el-button>
+        <el-upload
+          :show-file-list="false"
+          :auto-upload="false"
+          :on-change="onImportFile"
+          accept=".zip"
+        >
+          <el-button plain :icon="UploadFilled">导入 .zip</el-button>
+        </el-upload>
         <el-button type="primary" :icon="Plus" @click="openCreate">新增脚本</el-button>
       </div>
     </div>
@@ -77,6 +85,7 @@
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item command="copy">{{ row.favorite ? '复制' : '复制' }}</el-dropdown-item>
+                <el-dropdown-item command="export">导出 .zip</el-dropdown-item>
                 <el-dropdown-item command="toggle">
                   {{ row.enabled === false ? '启用' : '禁用' }}
                 </el-dropdown-item>
@@ -144,7 +153,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  Plus, Star, StarFilled, Refresh, VideoPlay, MoreFilled
+  Plus, Star, StarFilled, Refresh, VideoPlay, MoreFilled, UploadFilled
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -152,6 +161,7 @@ import {
   setScriptEnabled, setScriptFavorite,
   copyScript, listParams
 } from '../api/scripts'
+import { exportScript, importScript } from '../api/extras'
 import { formatDateTime } from '../utils/format'
 
 const router = useRouter()
@@ -239,8 +249,41 @@ async function onMore(cmd, row) {
       await refresh()
       break
     }
+    case 'export': await doExport(row); break
     case 'toggle': await toggleEnabled(row); break
     case 'delete': await confirmDelete(row); break
+  }
+}
+
+async function doExport(row) {
+  try {
+    const blob = await exportScript(row.id)
+    const url = URL.createObjectURL(new Blob([blob], { type: 'application/zip' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${row.name}-${row.id}.zip`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    ElMessage.success('已导出')
+  } catch (e) {
+    // surfaced
+  }
+}
+
+async function onImportFile(file) {
+  if (!file) return
+  if (!file.name.toLowerCase().endsWith('.zip')) {
+    ElMessage.error('只接受 .zip 包')
+    return
+  }
+  try {
+    const res = await importScript(file.raw || file)
+    ElMessage.success(`已导入「${res.name}」`)
+    await refresh()
+  } catch (e) {
+    // surfaced
   }
 }
 

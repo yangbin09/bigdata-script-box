@@ -6,7 +6,9 @@ const routes = [
   { path: '/scripts',      name: 'scripts',  component: () => import('./views/ScriptsView.vue') },
   { path: '/scripts/edit', name: 'script-edit', component: () => import('./views/ScriptEditView.vue') },
   { path: '/tenants',      name: 'tenants',  component: () => import('./views/TenantsView.vue') },
-  { path: '/history',      name: 'history',  component: () => import('./views/HistoryView.vue') }
+  { path: '/history',      name: 'history',  component: () => import('./views/HistoryView.vue') },
+  { path: '/scenarios',    name: 'scenarios', component: () => import('./views/ScenariosView.vue') },
+  { path: '/settings',     name: 'settings', component: () => import('./views/SettingsView.vue') }
 ]
 
 export default createRouter({

@@ -13,6 +13,7 @@ public class ScriptBoxProperties {
     private String executionsDir = "./data/executions";
     private long maxLogBytes = 1048576L;
     private long maxScriptBytes = 1048576L;
+    private long maxInputFileBytes = 10485760L; // 10 MB
 
     public boolean isMock() { return mock; }
     public void setMock(boolean mock) { this.mock = mock; }
@@ -28,4 +29,6 @@ public class ScriptBoxProperties {
     public void setMaxLogBytes(long maxLogBytes) { this.maxLogBytes = maxLogBytes; }
     public long getMaxScriptBytes() { return maxScriptBytes; }
     public void setMaxScriptBytes(long maxScriptBytes) { this.maxScriptBytes = maxScriptBytes; }
+    public long getMaxInputFileBytes() { return maxInputFileBytes; }
+    public void setMaxInputFileBytes(long maxInputFileBytes) { this.maxInputFileBytes = maxInputFileBytes; }
 }

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.bigdata.scriptbox.mapper.ScriptVersionMapper">
+
+    <resultMap id="BaseResultMap" type="com.bigdata.scriptbox.entity.ScriptVersion">
+        <id     column="id"             property="id"/>
+        <result column="script_id"      property="scriptId"/>
+        <result column="version_no"     property="versionNo"/>
+        <result column="script_content" property="scriptContent"/>
+        <result column="remark"         property="remark"/>
+        <result column="created_at"     property="createdAt"/>
+    </resultMap>
+
+    <select id="selectByScriptId" resultMap="BaseResultMap">
+        SELECT id, script_id, version_no, script_content, remark, created_at
+        FROM script_version
+        WHERE script_id = #{scriptId}
+        ORDER BY version_no DESC
+    </select>
+
+    <select id="selectMaxVersion" resultMap="BaseResultMap">
+        SELECT id, script_id, version_no, script_content, remark, created_at
+        FROM script_version
+        WHERE script_id = #{scriptId}
+        ORDER BY version_no DESC
+        LIMIT 1
+    </select>
+
+</mapper>
