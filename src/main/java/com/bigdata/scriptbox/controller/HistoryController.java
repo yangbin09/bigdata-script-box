@@ -23,14 +23,22 @@ public class HistoryController {
      *   tenantId     — filter by tenant
      *   status       — success | failed | timeout | cancelled (maps to the unified labels)
      *   keyword      — substring match against scriptName / tenantName / stdout / stderr
+     *   from         — yyyy-MM-dd (inclusive lower bound on start_time)
+     *   to           — yyyy-MM-dd (exclusive upper bound on start_time, ie to=2026-01-15 keeps 1/14)
      */
     @GetMapping
     public ApiResponse<List<ExecutionHistory>> list(@RequestParam(defaultValue = "100") int limit,
                                                     @RequestParam(required = false) Long scriptId,
                                                     @RequestParam(required = false) Long tenantId,
                                                     @RequestParam(required = false) String status,
-                                                    @RequestParam(required = false) String keyword) {
-        return ApiResponse.ok(historyService.listFiltered(limit, scriptId, tenantId, status, keyword));
+                                                    @RequestParam(required = false) String keyword,
+                                                    @RequestParam(required = false)
+                                                    @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE)
+                                                    java.time.LocalDate from,
+                                                    @RequestParam(required = false)
+                                                    @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE)
+                                                    java.time.LocalDate to) {
+        return ApiResponse.ok(historyService.listFiltered(limit, scriptId, tenantId, status, keyword, from, to));
     }
 
     @GetMapping("/{id}")

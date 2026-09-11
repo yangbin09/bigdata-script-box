@@ -25,11 +25,13 @@ public class HistoryService {
 
     /**
      * Filtered query: by scriptId, tenantId, status (success/failed/timeout), keyword (substring
-     * against script/tenant name), all combined with AND. Status is the canonical short name
-     * used by the unified status vocabulary.
+     * against script/tenant name), date range (start_time inclusive on the lower bound, exclusive
+     * on the upper bound to keep the daily partitioning clean), all combined with AND. Status is
+     * the canonical short name used by the unified status vocabulary.
      */
     public List<ExecutionHistory> listFiltered(int limit, Long scriptId, Long tenantId,
-                                                String status, String keyword) {
+                                                String status, String keyword,
+                                                java.time.LocalDate from, java.time.LocalDate to) {
         QueryWrapper<ExecutionHistory> q = new QueryWrapper<ExecutionHistory>()
                 .orderByDesc("id")
                 .last("LIMIT " + Math.max(1, Math.min(limit, 500)));
@@ -46,6 +48,8 @@ public class HistoryService {
                 default -> { /* ignore unknown status */ }
             }
         }
+        if (from != null) q.ge("start_time", from.atStartOfDay());
+        if (to != null) q.lt("start_time", to.plusDays(1).atStartOfDay());
         if (keyword != null && !keyword.isBlank()) {
             String like = "%" + keyword.trim() + "%";
             q.and(w -> w.like("script_name", like).or().like("tenant_name", like));

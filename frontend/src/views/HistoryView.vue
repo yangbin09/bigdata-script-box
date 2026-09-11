@@ -54,6 +54,23 @@
           @keyup.enter="refresh"
           @clear="refresh"
         />
+        <!-- V2: date-range filter. from is inclusive, to is exclusive.
+             Quick chips: 今天 / 近7天 / 近30天 to skip the calendar. -->
+        <el-date-picker
+          v-model="dateFrom" type="date" value-format="YYYY-MM-DD"
+          placeholder="开始日期" style="width: 140px" clearable
+          @change="refresh" />
+        <span class="muted">~</span>
+        <el-date-picker
+          v-model="dateTo" type="date" value-format="YYYY-MM-DD"
+          placeholder="结束日期" style="width: 140px" clearable
+          @change="refresh" />
+        <el-button-group size="small">
+          <el-button @click="quickDateRange(1)">今天</el-button>
+          <el-button @click="quickDateRange(7)">近7天</el-button>
+          <el-button @click="quickDateRange(30)">近30天</el-button>
+          <el-button @click="resetDateRange">重置</el-button>
+        </el-button-group>
         <el-button type="primary" plain @click="refresh">应用</el-button>
       </div>
     </div>
@@ -259,6 +276,10 @@ const status = ref('')
 const scriptId = ref(null)
 const tenantId = ref(null)
 const keyword = ref('')
+// V2: optional date-range filter — yyyy-MM-dd strings; the backend treats
+// `from` as inclusive and `to` as exclusive (the day after the last kept day).
+const dateFrom = ref('')
+const dateTo = ref('')
 
 const detailOpen = ref(false)
 const current = ref(null)
@@ -283,8 +304,25 @@ async function refresh() {
     if (scriptId.value) params.scriptId = scriptId.value
     if (tenantId.value) params.tenantId = tenantId.value
     if (keyword.value && keyword.value.trim()) params.keyword = keyword.value.trim()
+    if (dateFrom.value) params.from = dateFrom.value
+    if (dateTo.value) params.to = dateTo.value
     rows.value = (await listHistory(params)) || []
   } finally { loading.value = false }
+}
+
+function resetDateRange() {
+  dateFrom.value = ''
+  dateTo.value = ''
+}
+
+function quickDateRange(days) {
+  // yyyy-MM-dd helper for el-date-picker value-format="YYYY-MM-DD".
+  const today = new Date()
+  const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  const past = new Date(today)
+  past.setDate(past.getDate() - (days - 1))
+  dateFrom.value = fmt(past)
+  dateTo.value = fmt(today)
 }
 
 function statusOf(h) { return statusOfHistory(h) }

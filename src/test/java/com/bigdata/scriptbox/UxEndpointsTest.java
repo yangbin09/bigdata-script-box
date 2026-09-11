@@ -142,14 +142,14 @@ class UxEndpointsTest extends BaseIntegrationTest {
         rbad.setParams(new LinkedHashMap<>());
         executor.execute(rbad);
 
-        ApiResponse<List<ExecutionHistory>> okResp = historyController.list(100, null, null, "success", null);
+        ApiResponse<List<ExecutionHistory>> okResp = historyController.list(100, null, null, "success", null, null, null);
         assertEquals(0, okResp.getCode());
         assertEquals(1, okResp.getData().size());
 
-        ApiResponse<List<ExecutionHistory>> failResp = historyController.list(100, null, null, "failed", null);
+        ApiResponse<List<ExecutionHistory>> failResp = historyController.list(100, null, null, "failed", null, null, null);
         assertEquals(1, failResp.getData().size());
 
-        ApiResponse<List<ExecutionHistory>> allResp = historyController.list(100, null, null, null, null);
+        ApiResponse<List<ExecutionHistory>> allResp = historyController.list(100, null, null, null, null, null, null);
         assertEquals(2, allResp.getData().size());
     }
 
@@ -162,9 +162,9 @@ class UxEndpointsTest extends BaseIntegrationTest {
         req.setParams(new LinkedHashMap<>());
         executor.execute(req);
 
-        ApiResponse<List<ExecutionHistory>> hit = historyController.list(100, null, null, null, "kw");
+        ApiResponse<List<ExecutionHistory>> hit = historyController.list(100, null, null, null, "kw", null, null);
         assertEquals(1, hit.getData().size());
-        ApiResponse<List<ExecutionHistory>> miss = historyController.list(100, null, null, null, "zzz");
+        ApiResponse<List<ExecutionHistory>> miss = historyController.list(100, null, null, null, "zzz", null, null);
         assertEquals(0, miss.getData().size());
     }
 
