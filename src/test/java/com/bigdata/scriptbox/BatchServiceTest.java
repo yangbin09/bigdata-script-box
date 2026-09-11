@@ -57,16 +57,16 @@ class BatchServiceTest extends BaseIntegrationTest {
                         Map.of("greeting", "hello"),
                         Map.of("greeting", "world"),
                         Map.of("greeting", "again")));
-        assertEquals(3, sum.total);
-        assertEquals(3, sum.historyIds.size());
-        assertEquals(3, sum.succeeded);
-        assertEquals(0, sum.failed);
-        assertNotNull(sum.batchId);
+        assertEquals(3, sum.total());
+        assertEquals(3, sum.historyIds().size());
+        assertEquals(3, sum.succeeded());
+        assertEquals(0, sum.failed());
+        assertNotNull(sum.batchId());
 
-        List<ExecutionHistory> rows = batchService.findByBatch(sum.batchId);
+        List<ExecutionHistory> rows = batchService.findByBatch(sum.batchId());
         assertEquals(3, rows.size());
         for (ExecutionHistory h : rows) {
-            assertEquals(sum.batchId, h.getBatchId());
+            assertEquals(sum.batchId(), h.getBatchId());
             assertTrue(h.getSuccess());
             assertEquals("SUCCESS", h.getStatus());
         }
@@ -87,7 +87,7 @@ class BatchServiceTest extends BaseIntegrationTest {
         Long tid = seedTenant();
         BatchService.BatchSummary sum = batchService.runSequential(sid, tid, null,
                 List.of(Map.of("greeting", "a")));
-        var rows = batchService.summarize(batchService.findByBatch(sum.batchId));
+        var rows = batchService.summarize(batchService.findByBatch(sum.batchId()));
         assertEquals(1, rows.size());
         var row = rows.get(0);
         assertTrue(row.containsKey("scriptName"));

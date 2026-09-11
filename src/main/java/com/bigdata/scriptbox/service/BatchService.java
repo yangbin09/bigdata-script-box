@@ -46,12 +46,29 @@ public class BatchService {
     private final AtomicLong batchCounter = new AtomicLong(System.currentTimeMillis() * 1000L);
 
     /** 批量执行汇总（成功 / 失败 / 涉及到的 executionId 列表）。 */
-    public static class BatchSummary {
-        public String batchId;
-        public int total;
-        public int succeeded;
-        public int failed;
-        public List<Long> historyIds = new ArrayList<>();
+    public record BatchSummary(
+            String batchId,
+            int total,
+            int succeeded,
+            int failed,
+            List<Long> historyIds
+    ) {
+        /**
+         * 累积式构造器：调用方逐行 add 成功 / 失败计数 / historyId，最后一次性 build。
+         */
+        public static class Builder {
+            private String batchId;
+            private int total;
+            private int succeeded;
+            private int failed;
+            private final List<Long> historyIds = new ArrayList<>();
+
+            public Builder batchId(String v) { this.batchId = v; return this; }
+            public Builder total(int v) { this.total = v; return this; }
+            public synchronized Builder addSuccess(long historyId) { this.succeeded++; this.historyIds.add(historyId); return this; }
+            public synchronized Builder addFailure() { this.failed++; return this; }
+            public synchronized BatchSummary build() { return new BatchSummary(batchId, total, succeeded, failed, List.copyOf(historyIds)); }
+        }
     }
 
     /**
@@ -73,9 +90,9 @@ public class BatchService {
                 "too many rows: " + rows.size() + " > " + MAX_ROWS);
 
         String batchId = "batch-" + batchCounter.incrementAndGet();
-        BatchSummary summary = new BatchSummary();
-        summary.batchId = batchId;
-        summary.total = rows.size();
+        BatchSummary.Builder builder = new BatchSummary.Builder()
+                .batchId(batchId)
+                .total(rows.size());
 
         log.info("batch: 顺序执行开始 batchId={} scriptId={} rows={}", batchId, scriptId, rows.size());
         for (int i = 0; i < rows.size(); i++) {
@@ -90,15 +107,16 @@ public class BatchService {
             req.setConfirmToken(confirmToken);
             try {
                 ExecutionHistory h = executor.execute(req);
-                summary.historyIds.add(h.getId());
-                if (Boolean.TRUE.equals(h.getSuccess())) summary.succeeded++;
-                else summary.failed++;
+                if (Boolean.TRUE.equals(h.getSuccess())) builder.addSuccess(h.getId());
+                else builder.addFailure();
             } catch (Exception ex) {
                 log.warn("batch {} row {} failed: {}", batchId, i, ex.getMessage());
-                summary.failed++;
+                builder.addFailure();
             }
         }
-        log.info("batch: 顺序执行完成 batchId={} succeeded={} failed={}", batchId, summary.succeeded, summary.failed);
+        BatchSummary summary = builder.build();
+        log.info("batch: 顺序执行完成 batchId={} succeeded={} failed={}",
+                batchId, summary.succeeded(), summary.failed());
         return summary;
     }
 
@@ -128,9 +146,9 @@ public class BatchService {
                     t.setDaemon(true);
                     return t;
                 });
-        BatchSummary summary = new BatchSummary();
-        summary.batchId = batchId;
-        summary.total = rows.size();
+        BatchSummary.Builder builder = new BatchSummary.Builder()
+                .batchId(batchId)
+                .total(rows.size());
 
         log.info("batch: 并行执行开始 batchId={} scriptId={} rows={} concurrency={}",
                 batchId, scriptId, rows.size(), concurrency);
@@ -150,18 +168,11 @@ public class BatchService {
                     req.setConfirmToken(confirmToken);
                     try {
                         ExecutionHistory h = executor.execute(req);
-                        // historyIds + succeeded/failed 必须在同一把锁内更新，避免
-                        // 出现"succeeded 计数加了但 historyIds 没加"的不一致状态。
-                        synchronized (summary) {
-                            summary.historyIds.add(h.getId());
-                            if (Boolean.TRUE.equals(h.getSuccess())) summary.succeeded++;
-                            else summary.failed++;
-                        }
+                        if (Boolean.TRUE.equals(h.getSuccess())) builder.addSuccess(h.getId());
+                        else builder.addFailure();
                     } catch (Exception ex) {
                         log.warn("batch {} row {} failed: {}", batchId, idx, ex.getMessage());
-                        synchronized (summary) {
-                            summary.failed++;
-                        }
+                        builder.addFailure();
                     }
                 }));
             }
@@ -181,8 +192,9 @@ public class BatchService {
         } finally {
             pool.shutdownNow();
         }
+        BatchSummary summary = builder.build();
         log.info("batch: 并行执行完成 batchId={} succeeded={} failed={}",
-                batchId, summary.succeeded, summary.failed);
+                batchId, summary.succeeded(), summary.failed());
         return summary;
     }
 
