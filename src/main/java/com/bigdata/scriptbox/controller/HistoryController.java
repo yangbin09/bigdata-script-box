@@ -21,7 +21,7 @@ public class HistoryController {
      *   limit        — cap on rows (1..500, default 100)
      *   scriptId     — filter by script
      *   tenantId     — filter by tenant
-     *   status       — success | failed | timeout (maps to the unified labels)
+     *   status       — success | failed | timeout | cancelled (maps to the unified labels)
      *   keyword      — substring match against scriptName / tenantName / stdout / stderr
      */
     @GetMapping

@@ -9,6 +9,7 @@ import com.bigdata.scriptbox.entity.Tenant;
 import com.bigdata.scriptbox.mapper.ExecutionHistoryMapper;
 import com.bigdata.scriptbox.model.RiskLevel;
 import com.bigdata.scriptbox.model.VisibleWhen;
+import com.bigdata.scriptbox.service.RunningExecutionRegistry.RunningExecution;
 import com.bigdata.scriptbox.service.ScriptService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -49,6 +50,7 @@ public class ScriptExecutor {
     @Autowired private com.bigdata.scriptbox.service.ResultParserService resultParserService;
     @Autowired private com.bigdata.scriptbox.service.FileUploadService fileUploadService;
     @Autowired private com.bigdata.scriptbox.service.PrecheckService precheckService;
+    @Autowired private com.bigdata.scriptbox.service.RunningExecutionRegistry runningRegistry;
 
     private final ObjectMapper mapper = new ObjectMapper();
     private final java.util.concurrent.atomic.AtomicLong counter = new java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis() * 1000L);
@@ -108,6 +110,7 @@ public class ScriptExecutor {
         Path resultFile = execDir.resolve("result.json");
 
         ExecutionHistory history = new ExecutionHistory();
+        history.setId(executionId);
         history.setScriptId(script.getId());
         history.setScriptName(script.getName());
         history.setTenantId(tenant.getId());
@@ -119,6 +122,12 @@ public class ScriptExecutor {
         history.setStderrPath(stderrFile.toAbsolutePath().toString());
         history.setExecutionDir(execDir.toAbsolutePath().toString());
         history.setResultJsonPath(resultFile.toAbsolutePath().toString());
+        // V2: status starts as RUNNING. The row is finalised after the process exits.
+        history.setStatus("RUNNING");
+        history.setSuccess(false);
+        // We don't insert the history row until the run is finished (or cancelled)
+        // so the front-end sees a complete picture with stable IDs in the registry.
+        // The registry uses executionId as the key during the running window.
         if (req.getBatchId() != null) {
             history.setBatchId(req.getBatchId());
             history.setBatchRowIndex(req.getBatchRowIndex());
@@ -184,6 +193,7 @@ public class ScriptExecutor {
         }
 
         Process process = pb.start();
+        runningRegistry.register(executionId, script.getId(), tenant.getId(), startMs, process);
 
         // Drain stdout and stderr concurrently to avoid pipe-buffer deadlock.
         Thread drainOut = drainAsync(process.getInputStream(), stdoutFile, "stdout");
@@ -191,15 +201,28 @@ public class ScriptExecutor {
 
         boolean finished;
         boolean timedOut = false;
+        boolean cancelled = false;
         try {
             finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+            if (!finished) {
+                timedOut = true;
+                process.destroyForcibly();
+            }
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
             finished = false;
         }
-        if (!finished) {
-            timedOut = true;
-            process.destroyForcibly();
+
+        // V2: if cancel() was called, the registry flag will be true and we
+        // wait for the destroyed process to fully exit. This block also covers
+        // a cancel that arrived AFTER timeout fired.
+        RunningExecution running =
+                runningRegistry.get(executionId);
+        if (running != null && running.cancelled.get()) {
+            cancelled = true;
+            try { process.waitFor(5, TimeUnit.SECONDS); } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            }
         }
 
         try {
@@ -217,15 +240,18 @@ public class ScriptExecutor {
             exitCode = -1;
         }
         if (timedOut) exitCode = -1;
+        if (cancelled) exitCode = -1;
 
         history.setEndTime(LocalDateTime.now());
         history.setDurationMs(duration);
         history.setExitCode(exitCode);
         history.setTimeout(timedOut);
-        boolean ok = !timedOut && exitCode == 0;
+        boolean ok = !timedOut && !cancelled && exitCode == 0;
         history.setSuccess(ok);
-        // Canonical status vocabulary: SUCCESS / FAILED / TIMEOUT
-        String status = timedOut ? "TIMEOUT" : (ok ? "SUCCESS" : "FAILED");
+        // Canonical status vocabulary: SUCCESS / FAILED / TIMEOUT / CANCELLED
+        String status = cancelled ? "CANCELLED"
+                : timedOut ? "TIMEOUT"
+                : (ok ? "SUCCESS" : "FAILED");
         history.setStatus(status);
         // Best-effort parse of result.json after the run; failure is non-fatal.
         try {
@@ -235,6 +261,11 @@ public class ScriptExecutor {
         } catch (Exception ex) {
             log.warn("result.json parse failed for executionId={}: {}", executionId, ex.getMessage());
         }
+
+        // V2: unregister the live execution AFTER all history fields are set
+        // so the cancel endpoint can no longer find it but the row is still
+        // queryable by executionId via history().
+        runningRegistry.unregister(executionId);
 
         historyMapper.insert(history);
         return history;

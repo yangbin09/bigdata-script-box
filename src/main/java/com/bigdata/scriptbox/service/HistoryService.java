@@ -37,9 +37,12 @@ public class HistoryService {
         if (tenantId != null) q.eq("tenant_id", tenantId);
         if (status != null && !status.isBlank()) {
             switch (status.toLowerCase()) {
-                case "success" -> q.eq("success", true).eq("timeout", false);
-                case "failed"  -> q.eq("success", false).eq("timeout", false);
-                case "timeout" -> q.eq("timeout", true);
+                case "success"   -> q.eq("success", true).eq("timeout", false);
+                case "failed"    -> q.eq("success", false).eq("timeout", false);
+                case "timeout"   -> q.eq("timeout", true);
+                // V2: CANCELLED is the canonical status string written by the
+                // executor when the cancel endpoint flips the registry flag.
+                case "cancelled" -> q.eq("status", "CANCELLED");
                 default -> { /* ignore unknown status */ }
             }
         }

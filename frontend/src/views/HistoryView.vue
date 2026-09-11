@@ -30,6 +30,7 @@
           <el-radio-button value="success">成功</el-radio-button>
           <el-radio-button value="failed">失败</el-radio-button>
           <el-radio-button value="timeout">超时</el-radio-button>
+          <el-radio-button value="cancelled">已取消</el-radio-button>
         </el-radio-group>
       </div>
       <div class="sb-filter-row">

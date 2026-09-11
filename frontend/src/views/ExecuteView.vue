@@ -262,6 +262,17 @@
             <div class="right">
               <el-button @click="openPreview" :disabled="running" :loading="previewing">预览</el-button>
               <el-button @click="closeDrawer" :disabled="running">取消</el-button>
+              <!-- V2: cancel button appears only while a script is running.
+                   Sends POST /executions/{id}/cancel for the running execution
+                   that matches the active script + tenant pair. -->
+              <el-button
+                v-if="running"
+                type="danger"
+                plain
+                :loading="cancelling"
+                :icon="CircleClose"
+                @click="cancelRunning"
+              >取消执行</el-button>
               <el-button
                 type="primary"
                 :icon="running ? Loading : VideoPlay"
@@ -362,13 +373,13 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  Refresh, Search, VideoPlay, Loading, Close, ArrowRight, ArrowDown,
+  Refresh, Search, VideoPlay, Loading, Close, ArrowRight, ArrowDown, CircleClose,
   EditPen, RefreshRight, UploadFilled
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { listScripts, getScript, setScriptFavorite } from '../api/scripts'
 import { listTenants } from '../api/tenants'
-import { execute, readStdout, readStderr } from '../api/executions'
+import { execute, readStdout, readStderr, cancelExecution, activeExecutions } from '../api/executions'
 import { recentScripts } from '../api/history'
 import { listPresets, dryRun, uploadFile, runBatch, getBatch } from '../api/extras'
 import ScriptCard from '../components/ScriptCard.vue'
@@ -398,6 +409,7 @@ const formRef = ref(null)
 const running = ref(false)
 const elapsed = ref(0)
 let elapsedTimer = null
+const cancelling = ref(false)  // V2: true while a cancel request is in-flight
 
 // V1.5: preset, file inputs, dry-run preview, batch
 const presets = ref([])
@@ -807,6 +819,32 @@ async function rerunFromResult() {
   // Re-run with the same params from the just-finished history (these are
   // exactly what was persisted to localStorage).
   await runScript()
+}
+
+// V2: cancel the execution the user is currently waiting on. We don't know
+// the executionId from the front-end (the original POST is blocked waiting
+// for the backend), so we look it up via /active filtered by script+tenant.
+async function cancelRunning() {
+  if (!running.value || cancelling.value) return
+  const scriptId = activeScript.value?.id
+  const tId = tenantId.value
+  if (!scriptId || !tId) return
+  cancelling.value = true
+  try {
+    const list = await activeExecutions(scriptId, tId).catch(() => [])
+    if (!list || !list.length) {
+      ElMessage.info('当前没有正在运行的执行（可能已结束）')
+      return
+    }
+    for (const e of list) {
+      try { await cancelExecution(e.id) } catch (_) { /* keep going */ }
+    }
+    ElMessage.success(`已发送取消信号（${list.length} 个执行）`)
+  } catch (_) {
+    // axios interceptor already toasted
+  } finally {
+    cancelling.value = false
+  }
 }
 
 async function toggleFavorite(s, val) {
