@@ -44,6 +44,9 @@ public class ScriptService {
     @Autowired
     private PresetService presetService;
 
+    @Autowired
+    private SyntaxCheckService syntaxCheckService;
+
     @PostConstruct
     public void init() throws IOException {
         Files.createDirectories(Paths.get(props.getScriptsDir()));
@@ -79,6 +82,15 @@ public class ScriptService {
 
         String body = readScriptFile(file);
 
+        // V2: enforce bash -n syntax check on the supplied body. We surface
+        // every error in the IllegalArgumentException so the FE can show them
+        // without leaking stack traces.
+        SyntaxCheckService.SyntaxResult sr = syntaxCheckService.check(body);
+        if (!sr.ok) {
+            throw new IllegalArgumentException(
+                    "syntax check failed: " + String.join(" | ", sr.errors));
+        }
+
         LocalDateTime now = LocalDateTime.now();
         script.setCreateTime(now);
         script.setUpdateTime(now);
@@ -101,6 +113,13 @@ public class ScriptService {
 
         if (file != null && !file.isEmpty()) {
             String body = readScriptFile(file);
+            // V2: bash -n on edit too — uploading a new .sh via update must
+            // not silently accept a broken file.
+            SyntaxCheckService.SyntaxResult sr = syntaxCheckService.check(body);
+            if (!sr.ok) {
+                throw new IllegalArgumentException(
+                        "syntax check failed: " + String.join(" | ", sr.errors));
+            }
             Path scriptFile = persistScriptBody(db.getId(), body);
             script.setScriptPath(scriptFile.toAbsolutePath().toString());
         } else {
@@ -124,6 +143,13 @@ public class ScriptService {
     public Script saveScriptBody(Long id, String body) throws IOException {
         Script db = scriptMapper.selectById(id);
         if (db == null) throw new IllegalArgumentException("script not found: " + id);
+        // V2: bash -n on body edit. Refuse to persist unparseable scripts so
+        // a typo can't render the script unrunnable until a human notices.
+        SyntaxCheckService.SyntaxResult sr = syntaxCheckService.check(body);
+        if (!sr.ok) {
+            throw new IllegalArgumentException(
+                    "syntax check failed: " + String.join(" | ", sr.errors));
+        }
         Path scriptFile = persistScriptBody(id, body);
         db.setScriptPath(scriptFile.toAbsolutePath().toString());
         db.setUpdateTime(LocalDateTime.now());
@@ -192,6 +218,16 @@ public class ScriptService {
 
     /** Exposed for ScriptController.savePrecheck to avoid a separate mapper injection. */
     public ScriptMapper getMapper() { return scriptMapper; }
+
+    /**
+     * V2: run bash -n on a body without persisting anything. The editor calls this
+     * to surface problems as the user types. The same gate fires on the actual
+     * save — this method just probes. Returns a structured SyntaxResult so the
+     * FE can render errors and warnings inline; it never throws on bad syntax.
+     */
+    public SyntaxCheckService.SyntaxResult preflightSyntax(String body) {
+        return syntaxCheckService.check(body);
+    }
 
     // ---- params ----
 

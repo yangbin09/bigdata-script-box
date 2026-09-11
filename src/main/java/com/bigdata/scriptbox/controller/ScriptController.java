@@ -143,6 +143,16 @@ public class ScriptController {
         return ApiResponse.ok(scriptService.saveScriptBody(id, content));
     }
 
+    /** V2: preflight syntax check. The editor can call this as the user
+     *  types to surface problems without committing. The same bash -n
+     *  gate fires on the actual save — this endpoint is just a probe. */
+    @PostMapping(value = "/syntax-check", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ApiResponse<Map<String, Object>> syntaxCheck(@RequestBody Map<String, String> body) {
+        String content = body.get("body");
+        if (content == null) return ApiResponse.error("body field is required");
+        return ApiResponse.ok(scriptService.preflightSyntax(content).toMap());
+    }
+
     @GetMapping(value = "/{id}/body", produces = MediaType.TEXT_PLAIN_VALUE)
     public ResponseEntity<byte[]> getBody(@PathVariable Long id) throws IOException {
         String body = scriptService.readScriptBody(id);
