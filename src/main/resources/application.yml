@@ -1,0 +1,55 @@
+server:
+  port: 80
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true
+
+spring:
+  application:
+    name: script-box
+  datasource:
+    url: jdbc:h2:file:./data/db/scriptbox;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+  thymeleaf:
+    cache: false
+    encoding: UTF-8
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:db/schema.sql
+      continue-on-error: false
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 12MB
+
+mybatis-plus:
+  mapper-locations: classpath*:mappers/**/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
+  global-config:
+    db-config:
+      id-type: AUTO
+      logic-delete-field: null
+
+scriptbox:
+  mock: true                       # dev server has no Kerberos / Hadoop; mock everything
+  data-dir: ./data                 # tenant keytabs, scripts, executions
+  scripts-dir: ./data/scripts      # uploaded shell scripts
+  keytabs-dir: ./data/keytabs      # uploaded keytab files
+  executions-dir: ./data/executions
+  max-log-bytes: 1048576           # 1MB limit per page render
+  max-script-bytes: 1048576        # 1MB script upload limit
+
+logging:
+  level:
+    root: INFO
+    com.bigdata.scriptbox: INFO

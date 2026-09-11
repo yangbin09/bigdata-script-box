@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments :: head('脚本编辑')}"></head>
+<body>
+<nav th:replace="~{fragments :: navbar}"></nav>
+<div class="container-fluid">
+    <div class="row">
+        <div th:replace="~{fragments :: sidebar('scripts')}"></div>
+        <main class="col-md-10 py-3">
+            <h4 id="title">新增脚本</h4>
+            <input type="hidden" id="script-id"/>
+            <div class="row">
+                <div class="col-md-5">
+                    <h6 class="mt-2">基本信息</h6>
+                    <div class="mb-2"><label class="form-label small">名称（唯一）*</label>
+                        <input class="form-control form-control-sm" id="f-name"/></div>
+                    <div class="mb-2"><label class="form-label small">显示名</label>
+                        <input class="form-control form-control-sm" id="f-displayName"/></div>
+                    <div class="mb-2"><label class="form-label small">分类</label>
+                        <input class="form-control form-control-sm" id="f-category" placeholder="Hudi / Flink / Hive / ..."/></div>
+                    <div class="mb-2"><label class="form-label small">描述</label>
+                        <textarea class="form-control form-control-sm" id="f-desc" rows="2"></textarea></div>
+                    <div class="mb-2"><label class="form-label small">Timeout（秒）</label>
+                        <input class="form-control form-control-sm" id="f-timeout" type="number" value="600"/></div>
+                    <div class="mb-2"><label class="form-label small">启用</label>
+                        <select id="f-enabled" class="form-select form-select-sm">
+                            <option value="true">启用</option><option value="false">禁用</option>
+                        </select></div>
+                    <div class="mb-2" id="file-block">
+                        <label class="form-label small">脚本文件 (.sh) *</label>
+                        <input type="file" id="f-file" class="form-control form-control-sm" accept=".sh"/>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-primary btn-sm" id="btn-save">保存</button>
+                        <a class="btn btn-secondary btn-sm" href="/scripts">返回</a>
+                    </div>
+                </div>
+                <div class="col-md-7">
+                    <h6 class="mt-2">脚本内容（在线编辑）</h6>
+                    <div id="editor-block" class="d-none">
+                        <textarea id="f-body" class="form-control" rows="18" style="font-family: ui-monospace, monospace; font-size: 12px;"></textarea>
+                        <button class="btn btn-sm btn-outline-primary mt-1" id="btn-save-body">保存脚本内容</button>
+                        <span class="text-muted small ms-2" id="body-status"></span>
+                    </div>
+                </div>
+            </div>
+
+            <hr class="my-3"/>
+            <div id="params-block" class="d-none">
+                <h6>动态参数（自动生成执行表单）</h6>
+                <p class="small text-muted">type 可选：text / number / select / boolean / date / textarea。修改后点击「保存参数」即可生效。</p>
+                <table class="table table-sm bg-white">
+                    <thead><tr>
+                        <th>name *</th><th>label</th><th>type *</th><th>默认值</th><th>options(select)</th>
+                        <th>必填</th><th>顺序</th><th></th>
+                    </tr></thead>
+                    <tbody id="param-rows"></tbody>
+                </table>
+                <button class="btn btn-sm btn-outline-secondary" id="btn-add-param">+ 增加参数</button>
+                <button class="btn btn-sm btn-primary" id="btn-save-params">保存参数</button>
+            </div>
+        </main>
+    </div>
+</div>
+
+<script src="/webjars/bootstrap/js/bootstrap.bundle.min.js"></script>
+<script>
+    function esc(s){return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+    const TYPES = ['text','number','select','boolean','date','textarea'];
+    function newRow(p) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td><input class="form-control form-control-sm" name="name" value="${esc(p.name||'')}"/></td>
+          <td><input class="form-control form-control-sm" name="label" value="${esc(p.label||'')}"/></td>
+          <td><select class="form-select form-select-sm" name="type">${TYPES.map(t=>`<option ${t===(p.type||'text')?'selected':''}>${t}</option>`).join('')}</select></td>
+          <td><input class="form-control form-control-sm" name="defaultValue" value="${esc(p.defaultValue||'')}"/></td>
+          <td><input class="form-control form-control-sm" name="options" value="${esc(p.options||'')}" placeholder="a,b,c"/></td>
+          <td><input type="checkbox" name="required" ${p.required?'checked':''}/></td>
+          <td><input type="number" class="form-control form-control-sm" name="sortOrder" value="${p.sortOrder||0}"/></td>
+          <td><button class="btn btn-sm btn-outline-danger" onclick="this.closest('tr').remove()">×</button></td>`;
+        return tr;
+    }
+    function collect() {
+        const rows = [];
+        document.querySelectorAll('#param-rows tr').forEach(tr => {
+            const get = n => tr.querySelector(`[name="${n}"]`).value;
+            const cb = tr.querySelector('[name="required"]');
+            rows.push({
+                name: get('name'),
+                label: get('label'),
+                type: get('type'),
+                defaultValue: get('defaultValue'),
+                options: get('options'),
+                required: cb.checked,
+                sortOrder: parseInt(get('sortOrder'), 10) || 0
+            });
+        });
+        return rows;
+    }
+    async function loadExisting(id) {
+        document.getElementById('title').textContent = '编辑脚本 #' + id;
+        document.getElementById('script-id').value = id;
+        document.getElementById('file-block').classList.add('d-none');
+        document.getElementById('editor-block').classList.remove('d-none');
+        document.getElementById('params-block').classList.remove('d-none');
+        const r = await fetch('/api/scripts/' + id);
+        const j = await r.json();
+        const s = j.data.script;
+        document.getElementById('f-name').value = s.name;
+        document.getElementById('f-displayName').value = s.displayName || '';
+        document.getElementById('f-category').value = s.category || '';
+        document.getElementById('f-desc').value = s.description || '';
+        document.getElementById('f-timeout').value = s.timeoutSeconds;
+        document.getElementById('f-enabled').value = s.enabled ? 'true' : 'false';
+        document.getElementById('f-body').value = j.data.body;
+        (j.data.params || []).forEach(p => document.getElementById('param-rows').appendChild(newRow(p)));
+    }
+    document.getElementById('btn-add-param').addEventListener('click', () => {
+        document.getElementById('param-rows').appendChild(newRow({}));
+    });
+    document.getElementById('btn-save-body').addEventListener('click', async () => {
+        const id = document.getElementById('script-id').value;
+        if (!id) return;
+        const body = document.getElementById('f-body').value;
+        const r = await fetch('/api/scripts/' + id + '/body', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ body })
+        });
+        const j = await r.json();
+        document.getElementById('body-status').textContent = j.code === 0 ? '已保存' : ('失败：' + j.message);
+    });
+    document.getElementById('btn-save-params').addEventListener('click', async () => {
+        const id = document.getElementById('script-id').value;
+        if (!id) return alert('请先保存脚本');
+        const rows = collect();
+        const r = await fetch('/api/scripts/' + id + '/params', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(rows)
+        });
+        const j = await r.json();
+        alert(j.code === 0 ? '参数已保存' : '失败：' + j.message);
+    });
+    document.getElementById('btn-save').addEventListener('click', async () => {
+        const id = document.getElementById('script-id').value;
+        const fd = new FormData();
+        fd.append('name', document.getElementById('f-name').value);
+        fd.append('displayName', document.getElementById('f-displayName').value);
+        fd.append('category', document.getElementById('f-category').value);
+        fd.append('description', document.getElementById('f-desc').value);
+        fd.append('timeoutSeconds', document.getElementById('f-timeout').value);
+        fd.append('enabled', document.getElementById('f-enabled').value);
+        const file = document.getElementById('f-file').files[0];
+        if (!id) {
+            if (!file) return alert('请选择脚本文件');
+            fd.append('file', file);
+            const r = await fetch('/api/scripts', { method: 'POST', body: fd });
+            const j = await r.json();
+            if (j.code !== 0) return alert(j.message);
+            location.href = '/scripts/edit?id=' + j.data.id;
+        } else {
+            if (file) fd.append('file', file);
+            const r = await fetch('/api/scripts/' + id, { method: 'PUT', body: fd });
+            const j = await r.json();
+            if (j.code !== 0) return alert(j.message);
+            alert('已保存');
+            loadExisting(id);
+        }
+    });
+    const qs = new URLSearchParams(location.search);
+    const id = qs.get('id');
+    if (id) loadExisting(id);
+</script>
+</body>
+</html>

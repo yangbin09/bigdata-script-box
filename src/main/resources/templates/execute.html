@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments :: head('执行中心')}"></head>
+<body>
+<nav th:replace="~{fragments :: navbar}"></nav>
+<div class="container-fluid">
+    <div class="row">
+        <div th:replace="~{fragments :: sidebar('execute')}"></div>
+        <main class="col-md-10 py-3">
+            <h4>执行中心</h4>
+            <p class="text-muted small">按分类显示所有已启用脚本。点击卡片进入执行页（表单自动由脚本参数生成）。</p>
+            <div id="script-categories">加载中…</div>
+
+            <hr class="my-4"/>
+            <h5>选择租户</h5>
+            <select id="tenant-select" class="form-select form-select-sm" style="max-width:360px">
+                <option value="">加载中…</option>
+            </select>
+
+            <hr class="my-4"/>
+            <div id="exec-panel" class="d-none">
+                <h5>脚本：<span id="exec-script-name"></span></h5>
+                <form id="exec-form" class="row g-2"></form>
+                <div class="mt-3">
+                    <button class="btn btn-primary" id="exec-run">执行</button>
+                    <button class="btn btn-secondary" id="exec-reset">重置</button>
+                </div>
+                <div class="mt-4 d-none" id="exec-result">
+                    <div class="alert alert-info py-2 small mb-2">
+                        exit=<span id="exec-exit"></span> · duration=<span id="exec-duration"></span> ms · timeout=<span id="exec-timeout"></span>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="text-muted small mb-1">stdout</div>
+                            <pre class="log-box" id="exec-stdout"></pre>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="text-muted small mb-1">stderr</div>
+                            <pre class="log-box" id="exec-stderr"></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+</div>
+
+<script>
+    (function () {
+        const state = { scripts: [], tenants: [], current: null };
+
+        function render() {
+            const grouped = {};
+            state.scripts.forEach(s => {
+                const c = s.category || '未分类';
+                (grouped[c] = grouped[c] || []).push(s);
+            });
+            const cats = Object.keys(grouped).sort();
+            const root = document.getElementById('script-categories');
+            if (cats.length === 0) {
+                root.innerHTML = '<div class="alert alert-warning">还没有脚本，请先在「脚本管理」中新增。</div>';
+                return;
+            }
+            let html = '';
+            cats.forEach(cat => {
+                html += `<h6 class="mt-3 text-muted">${cat}</h6><div class="row">`;
+                grouped[cat].forEach(s => {
+                    const cls = s.enabled ? 'border-primary' : 'border-secondary';
+                    html += `
+                      <div class="col-md-3 mb-2">
+                        <div class="card script-card ${cls}" data-id="${s.id}">
+                          <div class="card-body py-2">
+                            <div class="fw-bold">${s.displayName || s.name}</div>
+                            <div class="small text-muted">${s.description || ''}</div>
+                            <div class="small mt-1">
+                              <span class="badge bg-secondary badge-cat">${s.name}</span>
+                              <span class="badge bg-info text-dark badge-cat">timeout ${s.timeoutSeconds}s</span>
+                              ${s.enabled ? '' : '<span class="badge bg-warning text-dark">已禁用</span>'}
+                            </div>
+                          </div>
+                        </div>
+                      </div>`;
+                });
+                html += '</div>';
+            });
+            root.innerHTML = html;
+            document.querySelectorAll('.script-card').forEach(card => {
+                card.addEventListener('click', () => openScript(parseInt(card.dataset.id, 10)));
+            });
+        }
+
+        function renderTenants() {
+            const sel = document.getElementById('tenant-select');
+            sel.innerHTML = '<option value="">-- 请选择租户 --</option>' +
+                state.tenants.filter(t => t.enabled)
+                    .map(t => `<option value="${t.id}">${t.name} (${t.principal || 'no principal'})</option>`).join('');
+        }
+
+        async function openScript(id) {
+            const r = await fetch(`/api/scripts/${id}`);
+            const j = await r.json();
+            if (j.code !== 0) return alert(j.message);
+            const { script, params } = j.data;
+            state.current = { script, params };
+            document.getElementById('exec-script-name').textContent = `${script.displayName || script.name} (${script.name})`;
+            const form = document.getElementById('exec-form');
+            form.innerHTML = '';
+            params.forEach(p => form.appendChild(buildField(p)));
+            document.getElementById('exec-result').classList.add('d-none');
+            document.getElementById('exec-panel').classList.remove('d-none');
+            window.scrollTo({ top: document.getElementById('exec-panel').offsetTop, behavior: 'smooth' });
+        }
+
+        function buildField(p) {
+            const col = document.createElement('div');
+            col.className = 'col-md-4';
+            const id = 'f_' + p.name;
+            let inputHtml = '';
+            const labelHtml = `<label class="form-label small">${p.label || p.name}${p.required ? ' <span class="text-danger">*</span>' : ''}</label>`;
+            const type = (p.type || 'text').toLowerCase();
+            if (type === 'select') {
+                const opts = (p.options || '').split(',').map(s => s.trim()).filter(Boolean);
+                inputHtml = `<select class="form-select form-select-sm" id="${id}" name="${p.name}">
+                    ${opts.map(o => `<option value="${o}" ${o===p.defaultValue?'selected':''}>${o}</option>`).join('')}
+                </select>`;
+            } else if (type === 'boolean') {
+                inputHtml = `<select class="form-select form-select-sm" id="${id}" name="${p.name}">
+                    <option value="false" ${p.defaultValue==='true'?'':'selected'}>false</option>
+                    <option value="true" ${p.defaultValue==='true'?'selected':''}>true</option>
+                </select>`;
+            } else if (type === 'textarea') {
+                inputHtml = `<textarea class="form-control form-control-sm" id="${id}" name="${p.name}" rows="3">${escapeHtml(p.defaultValue||'')}</textarea>`;
+            } else if (type === 'number') {
+                inputHtml = `<input type="number" class="form-control form-control-sm" id="${id}" name="${p.name}" value="${escapeHtml(p.defaultValue||'')}"/>`;
+            } else if (type === 'date') {
+                inputHtml = `<input type="date" class="form-control form-control-sm" id="${id}" name="${p.name}" value="${escapeHtml(p.defaultValue||'')}"/>`;
+            } else {
+                inputHtml = `<input type="text" class="form-control form-control-sm" id="${id}" name="${p.name}" value="${escapeHtml(p.defaultValue||'')}"/>`;
+            }
+            col.innerHTML = labelHtml + inputHtml;
+            return col;
+        }
+
+        function escapeHtml(s) {
+            return (s == null ? '' : String(s))
+                .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+        }
+
+        async function runExec() {
+            if (!state.current) return;
+            const tenantId = parseInt(document.getElementById('tenant-select').value, 10);
+            if (!tenantId) return alert('请先选择租户');
+            const params = {};
+            document.querySelectorAll('#exec-form [name]').forEach(el => {
+                params[el.name] = el.value;
+            });
+            const r = await fetch('/api/executions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ scriptId: state.current.script.id, tenantId, params })
+            });
+            const j = await r.json();
+            if (j.code !== 0) { alert(j.message); return; }
+            const h = j.data;
+            document.getElementById('exec-exit').textContent = h.exitCode;
+            document.getElementById('exec-duration').textContent = h.durationMs;
+            document.getElementById('exec-timeout').textContent = h.timeout;
+            document.getElementById('exec-stdout').textContent = '加载中…';
+            document.getElementById('exec-stderr').textContent = '加载中…';
+            document.getElementById('exec-result').classList.remove('d-none');
+            const [so, se] = await Promise.all([
+                fetch(`/api/executions/${h.id}/stdout`).then(r => r.text()),
+                fetch(`/api/executions/${h.id}/stderr`).then(r => r.text())
+            ]);
+            document.getElementById('exec-stdout').textContent = so;
+            document.getElementById('exec-stderr').textContent = se;
+        }
+
+        document.getElementById('exec-run').addEventListener('click', runExec);
+        document.getElementById('exec-reset').addEventListener('click', () => {
+            document.querySelectorAll('#exec-form [name]').forEach(el => {
+                const p = state.current.params.find(x => x.name === el.name);
+                if (p) el.value = p.defaultValue || '';
+            });
+        });
+
+        async function init() {
+            const [s, t] = await Promise.all([
+                fetch('/api/scripts').then(r => r.json()),
+                fetch('/api/tenants').then(r => r.json())
+            ]);
+            state.scripts = s.data || [];
+            state.tenants = t.data || [];
+            render();
+            renderTenants();
+        }
+        init();
+    })();
+</script>
+</body>
+</html>

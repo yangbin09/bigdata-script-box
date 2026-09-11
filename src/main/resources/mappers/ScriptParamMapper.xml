@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.bigdata.scriptbox.mapper.ScriptParamMapper">
+
+    <resultMap id="BaseResultMap" type="com.bigdata.scriptbox.entity.ScriptParam">
+        <id     column="id"            property="id"/>
+        <result column="script_id"     property="scriptId"/>
+        <result column="name"          property="name"/>
+        <result column="label"         property="label"/>
+        <result column="type"          property="type"/>
+        <result column="default_value" property="defaultValue"/>
+        <result column="options"       property="options"/>
+        <result column="required"      property="required"/>
+        <result column="sort_order"    property="sortOrder"/>
+    </resultMap>
+
+    <select id="selectByScriptId" resultMap="BaseResultMap">
+        SELECT id, script_id, name, label, type, default_value, options, required, sort_order
+        FROM script_param
+        WHERE script_id = #{scriptId}
+        ORDER BY sort_order ASC, id ASC
+    </select>
+
+</mapper>
