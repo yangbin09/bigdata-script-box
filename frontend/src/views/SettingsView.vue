@@ -17,6 +17,9 @@
           <el-button type="primary" :icon="Plus" @click="openCreate">新增变量</el-button>
         </div>
         <el-table :data="rows" v-loading="loading" class="sb-card" stripe>
+          <template #empty>
+            <el-empty description="还没有全局变量。点击「新增变量」创建可在脚本中引用的 ${VAR_KEY} 占位符。" />
+          </template>
           <el-table-column label="key" min-width="180">
             <template #default="{ row }">
               <span class="mono">{{ row.variableKey }}</span>
