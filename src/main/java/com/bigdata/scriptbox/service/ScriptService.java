@@ -7,6 +7,7 @@ import com.bigdata.scriptbox.entity.ScriptParam;
 import com.bigdata.scriptbox.mapper.ScriptMapper;
 import com.bigdata.scriptbox.mapper.ScriptParamMapper;
 import com.bigdata.scriptbox.model.RiskLevel;
+import com.bigdata.scriptbox.model.VisibleWhen;
 import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -197,6 +198,12 @@ public class ScriptService {
     @Transactional
     public List<ScriptParam> replaceParams(Long scriptId, List<ScriptParam> params) {
         scriptParamMapper.delete(new QueryWrapper<ScriptParam>().eq("script_id", scriptId));
+        // Pre-validate visibleWhenJson so we can complain with a precise message
+        // *before* any row is touched. Collect names for the cross-reference check.
+        java.util.Set<String> declaredNames = new java.util.HashSet<>();
+        for (ScriptParam p : params) {
+            if (p.getName() != null && !p.getName().isBlank()) declaredNames.add(p.getName().trim());
+        }
         int order = 0;
         for (ScriptParam p : params) {
             if (p.getName() == null || p.getName().isBlank())
@@ -206,12 +213,45 @@ public class ScriptService {
             p.setScriptId(scriptId);
             if (p.getSortOrder() == null) p.setSortOrder(order++);
             if (p.getRequired() == null) p.setRequired(Boolean.FALSE);
+            // V2: validate conditional rule shape; reject referencing unknown params
+            // at save time so the operator sees the error immediately instead of
+            // seeing "broken UI" later.
+            if (p.getVisibleWhenJson() != null && !p.getVisibleWhenJson().isBlank()) {
+                VisibleWhen rule = VisibleWhen.parse(p.getVisibleWhenJson());
+                if (rule == null || rule.getParam() == null) {
+                    throw new IllegalArgumentException(
+                        "invalid visibleWhenJson for param '" + p.getName() + "': " + p.getVisibleWhenJson());
+                }
+                if (!declaredNames.contains(rule.getParam())) {
+                    throw new IllegalArgumentException(
+                        "visibleWhen for param '" + p.getName() + "' references unknown param '"
+                        + rule.getParam() + "'");
+                }
+            }
             scriptParamMapper.insert(p);
         }
         return paramsOf(scriptId);
     }
 
     // ---- internal ----
+
+    /**
+     * V2: Returns the subset of declared params whose visibleWhen rule is currently
+     * satisfied by {@code resolvedValues}. {@code resolvedValues} should be the
+     * current parameter snapshot (defaults + supplied values) of the same script.
+     * Hidden params are NEVER passed to the executor even if the client supplied
+     * a value — the executor drops them again as a defense-in-depth measure.
+     */
+    public List<ScriptParam> filterVisible(List<ScriptParam> declared, java.util.Map<String, String> resolvedValues) {
+        java.util.List<ScriptParam> out = new java.util.ArrayList<>();
+        for (ScriptParam p : declared) {
+            VisibleWhen rule = VisibleWhen.parse(p.getVisibleWhenJson());
+            if (rule == null || rule.matches(resolvedValues)) {
+                out.add(p);
+            }
+        }
+        return out;
+    }
 
     private String readScriptFile(MultipartFile file) throws IOException {
         if (file == null || file.isEmpty())

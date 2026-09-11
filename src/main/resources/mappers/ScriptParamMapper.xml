@@ -14,10 +14,11 @@
         <result column="sort_order"    property="sortOrder"/>
         <result column="placeholder"   property="placeholder"/>
         <result column="help_text"     property="helpText"/>
+        <result column="visible_when_json" property="visibleWhenJson"/>
     </resultMap>
 
     <select id="selectByScriptId" resultMap="BaseResultMap">
-        SELECT id, script_id, name, label, type, default_value, options, required, sort_order, placeholder, help_text
+        SELECT id, script_id, name, label, type, default_value, options, required, sort_order, placeholder, help_text, visible_when_json
         FROM script_param
         WHERE script_id = #{scriptId}
         ORDER BY sort_order ASC, id ASC

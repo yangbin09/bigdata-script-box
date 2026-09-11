@@ -8,6 +8,7 @@ import com.bigdata.scriptbox.entity.ScriptParam;
 import com.bigdata.scriptbox.entity.Tenant;
 import com.bigdata.scriptbox.mapper.ExecutionHistoryMapper;
 import com.bigdata.scriptbox.model.RiskLevel;
+import com.bigdata.scriptbox.model.VisibleWhen;
 import com.bigdata.scriptbox.service.ScriptService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -376,6 +377,11 @@ public class ScriptExecutor {
     /**
      * Validate user input against the script's declared params, coerce to expected types,
      * and apply defaults. Returns the final map of values to pass as --key value to the script.
+     *
+     * V2: Respects {@code visibleWhenJson} — params whose condition is not currently
+     * satisfied are skipped (NOT emitted as --key value to the shell). Hidden params
+     * with {@code required=true} never trigger a missing-required error because they
+     * aren't in scope for this run.
      */
     private Map<String, String> validateAndCoerce(List<ScriptParam> declared, Map<String, String> given) {
         Map<String, String> out = new LinkedHashMap<>();
@@ -424,6 +430,10 @@ public class ScriptExecutor {
                     // raw string
                     break;
             }
+            // V2: skip params whose visibility rule is not satisfied.
+            VisibleWhen rule = VisibleWhen.parse(p.getVisibleWhenJson());
+            boolean visible = rule == null || rule.matches(out);
+            if (!visible) continue;
             out.put(name, value);
         }
         // ignore extra params

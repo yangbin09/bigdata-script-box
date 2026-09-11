@@ -18,6 +18,10 @@ public class ScriptParam {
     private Integer sortOrder;
     private String placeholder;
     private String helpText;
+    /** V2: a single conditional rule controlling whether this param is shown.
+     *  Shape: {"param":"env","operator":"equals|notEquals","value":"prod"}.
+     *  Null/empty means "always visible". Stored as JSON text. */
+    private String visibleWhenJson;
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -41,4 +45,6 @@ public class ScriptParam {
     public void setPlaceholder(String placeholder) { this.placeholder = placeholder; }
     public String getHelpText() { return helpText; }
     public void setHelpText(String helpText) { this.helpText = helpText; }
+    public String getVisibleWhenJson() { return visibleWhenJson; }
+    public void setVisibleWhenJson(String visibleWhenJson) { this.visibleWhenJson = visibleWhenJson; }
 }

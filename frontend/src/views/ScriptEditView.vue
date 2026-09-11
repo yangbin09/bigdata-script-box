@@ -157,6 +157,18 @@
                   <el-form-item label="helpText">
                     <el-input v-model="p.helpText" placeholder="字段下方说明" />
                   </el-form-item>
+                  <el-form-item label="显示条件 (visibleWhenJson)" :class="{ 'sb-param-full': true }">
+                    <el-input v-model="p.visibleWhenJson"
+                      type="textarea" :rows="2" class="mono"
+                      placeholder='例如: {"param":"env","operator":"equals","value":"prod"}' />
+                    <div v-if="p.visibleWhenJson && visibleWhenError(p)" class="sb-visibility-warn">
+                      <el-icon><WarningFilled /></el-icon>
+                      <span>{{ visibleWhenError(p) }}</span>
+                    </div>
+                    <div v-else-if="p.visibleWhenJson" class="sb-visibility-hint muted">
+                      留空 = 总是显示。引用其他参数时使用 equals / notEquals。
+                    </div>
+                  </el-form-item>
                 </div>
               </el-form>
             </div>
@@ -354,7 +366,8 @@ async function load() {
       ...p,
       required: !!p.required,
       placeholder: p.placeholder || '',
-      helpText: p.helpText || ''
+      helpText: p.helpText || '',
+      visibleWhenJson: p.visibleWhenJson || ''
     }))
     precheckJson.value = detail.script.precheckConfigJson || ''
     tenants.value = ts || []
@@ -367,12 +380,26 @@ function addParam() {
   params.value.push({
     name: '', label: '', type: 'text', defaultValue: '',
     options: '', required: false, sortOrder: params.value.length,
-    placeholder: '', helpText: ''
+    placeholder: '', helpText: '', visibleWhenJson: ''
   })
 }
 function removeParam(i) { params.value.splice(i, 1) }
 function moveUp(i) { if (i <= 0) return; const a = params.value[i - 1]; params.value[i - 1] = params.value[i]; params.value[i] = a }
 function moveDown(i) { if (i >= params.value.length - 1) return; const a = params.value[i + 1]; params.value[i + 1] = params.value[i]; params.value[i] = a }
+
+function visibleWhenError(p) {
+  const raw = (p.visibleWhenJson || '').trim()
+  if (!raw) return null
+  let rule
+  try { rule = JSON.parse(raw) } catch { return 'visibleWhenJson 不是合法 JSON' }
+  if (!rule || typeof rule !== 'object') return 'visibleWhenJson 必须是 JSON 对象'
+  if (!rule.param || typeof rule.param !== 'string') return '缺少 param 字段（要引用的参数名）'
+  const op = rule.operator
+  if (op !== 'equals' && op !== 'notEquals') return `operator 必须是 equals 或 notEquals（当前: ${op || '(空)'}）`
+  const declared = new Set(params.value.map((q) => q.name).filter(Boolean))
+  if (!declared.has(rule.param)) return `引用了未声明的参数 "${rule.param}"`
+  return null
+}
 
 async function saveAll(thenExecute) {
   if (!script.value) return
@@ -394,7 +421,15 @@ async function saveAll(thenExecute) {
     await saveBody(script.value.id, body.value)
     const cleaned = params.value
       .filter((p) => p.name && p.name.trim())
-      .map((p, i) => ({ ...p, sortOrder: i, required: !!p.required }))
+      .map((p, i) => {
+        const trimmed = (p.visibleWhenJson || '').trim()
+        return {
+          ...p,
+          sortOrder: i,
+          required: !!p.required,
+          visibleWhenJson: trimmed === '' ? null : trimmed
+        }
+      })
     await replaceParams(script.value.id, cleaned)
     ElMessage.success('已保存')
     await load()
@@ -572,6 +607,18 @@ watch(() => route.query.id, load)
   border-radius: 3px;
   font-family: var(--sb-mono);
 }
+
+.sb-param-full { grid-column: 1 / -1; }
+
+.sb-visibility-warn {
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--sb-danger);
+  font-size: 12px;
+}
+.sb-visibility-hint { margin-top: 4px; font-size: 12px; }
 
 .sb-preset-row {
   display: flex;

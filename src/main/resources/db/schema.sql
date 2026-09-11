@@ -85,6 +85,9 @@ ALTER TABLE script ADD COLUMN IF NOT EXISTS precheck_config_json VARCHAR(4096);
 ALTER TABLE script ADD COLUMN IF NOT EXISTS risk_level VARCHAR(16) NOT NULL DEFAULT 'READ_ONLY';
 ALTER TABLE script ADD COLUMN IF NOT EXISTS allow_concurrent BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- V2 Reliability additions (Phase 2: conditional parameters) ----
+ALTER TABLE script_param ADD COLUMN IF NOT EXISTS visible_when_json VARCHAR(512);
+
 CREATE TABLE IF NOT EXISTS script_preset (
     id           BIGINT AUTO_INCREMENT PRIMARY KEY,
     script_id    BIGINT NOT NULL,

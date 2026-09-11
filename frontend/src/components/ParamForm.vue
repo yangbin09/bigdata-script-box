@@ -2,6 +2,10 @@
   ParamForm — dynamic form for ScriptParam[].
   - Coerces number/boolean to the right runtime type, mirrors back as plain string map.
   - Supports placeholder + helpText (added in the v2 ScriptParam schema).
+  - V2: conditional visibility — each param may carry visibleWhenJson. Hidden params
+        are not rendered AND not emitted in update:modelValue. The form re-evaluates
+        visibility on every value change, so picking a parent select immediately
+        shows/hides dependents.
   - Seed value precedence (highest first):
         1) initialValues (last-params from localStorage)
         2) param defaultValue
@@ -16,7 +20,7 @@
     class="sb-param-form"
   >
     <el-form-item
-      v-for="p in orderedParams"
+      v-for="p in visibleParams"
       :key="p.name"
       :label="paramLabel(p)"
       :prop="p.name"
@@ -79,9 +83,9 @@
       <div v-if="p.helpText" class="sb-param-help">{{ p.helpText }}</div>
     </el-form-item>
 
-    <div v-if="!orderedParams.length" class="sb-no-params">
+    <div v-if="!visibleParams.length" class="sb-no-params">
       <el-icon><InfoFilled /></el-icon>
-      此脚本无需参数，点击「执行」直接运行。
+      此脚本当前没有可见参数，点击「执行」直接运行。
     </div>
   </el-form>
 </template>
@@ -131,10 +135,13 @@ function rebuild() {
 rebuild()
 watch(() => [props.params, props.initialValues], rebuild, { deep: true })
 
-// Mirror local form back to parent as plain string map.
+// Mirror local form back to parent as plain string map. Hidden params are
+// excluded: we never publish a value the user couldn't see.
 watch(form, (v) => {
   const out = {}
+  const hidden = hiddenNameSet.value
   for (const [k, val] of Object.entries(v)) {
+    if (hidden.has(k)) continue
     if (val === undefined || val === null) { out[k] = ''; continue }
     out[k] = String(val)
   }
@@ -144,6 +151,70 @@ watch(form, (v) => {
 const orderedParams = computed(() =>
   [...(props.params || [])].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
 )
+
+// V2: parse visibleWhenJson for each declared param, then filter using current form.
+const parsedVisibility = computed(() => {
+  const m = new Map()  // name -> { visible: boolean, invalid: boolean, reason?: string }
+  for (const p of orderedParams.value) {
+    if (!p.name) continue
+    const raw = (p.visibleWhenJson || '').trim()
+    if (!raw) { m.set(p.name, { visible: true, invalid: false }); continue }
+    let rule
+    try { rule = JSON.parse(raw) } catch { m.set(p.name, { visible: true, invalid: true, reason: 'visibleWhenJson 不是合法 JSON' }); continue }
+    if (!rule || typeof rule !== 'object') { m.set(p.name, { visible: true, invalid: true, reason: 'visibleWhenJson 不是对象' }); continue }
+    const ref = (rule.param || '').trim()
+    const op = String(rule.operator || '').trim()
+    const val = rule.value == null ? '' : String(rule.value)
+    if (!ref) { m.set(p.name, { visible: true, invalid: true, reason: 'visibleWhenJson 缺少 param 字段' }); continue }
+    if (op !== 'equals' && op !== 'notEquals') { m.set(p.name, { visible: true, invalid: true, reason: `operator 不支持: ${op || '(空)'}` }); continue }
+    const current = form[ref]
+    const cur = current == null ? '' : String(current)
+    const eq = cur === val
+    const visible = op === 'equals' ? eq : !eq
+    m.set(p.name, { visible, invalid: false, ref })
+  }
+  return m
+})
+
+const visibleParams = computed(() =>
+  orderedParams.value.filter((p) => {
+    const info = parsedVisibility.value.get(p.name)
+    return !info || info.visible !== false
+  })
+)
+
+const hiddenNameSet = computed(() => {
+  const s = new Set()
+  for (const [n, info] of parsedVisibility.value.entries()) {
+    if (info.visible === false) s.add(n)
+  }
+  return s
+})
+
+// Helpers for the drawer: which params are hidden right now (used by the
+// "复位默认值" button and for debug chips in the execute drawer).
+defineExpose({
+  validate: () => (formRef.value ? formRef.value.validate() : Promise.resolve()),
+  resetToDefaults: () => {
+    for (const p of props.params || []) {
+      if (!p.name) continue
+      if (p.defaultValue != null && p.defaultValue !== '') {
+        form[p.name] = coerce(p, p.defaultValue)
+      } else if (p.type === 'boolean') {
+        form[p.name] = false
+      } else {
+        form[p.name] = ''
+      }
+    }
+  },
+  hiddenParams: () => {
+    const out = []
+    for (const [n, info] of parsedVisibility.value.entries()) {
+      if (info.visible === false) out.push(n)
+    }
+    return out
+  }
+})
 
 function paramLabel(p) {
   let s = p.label || p.name
@@ -188,22 +259,6 @@ function rulesFor(p) {
   }
   return r
 }
-
-defineExpose({
-  validate: () => (formRef.value ? formRef.value.validate() : Promise.resolve()),
-  resetToDefaults: () => {
-    for (const p of props.params || []) {
-      if (!p.name) continue
-      if (p.defaultValue != null && p.defaultValue !== '') {
-        form[p.name] = coerce(p, p.defaultValue)
-      } else if (p.type === 'boolean') {
-        form[p.name] = false
-      } else {
-        form[p.name] = ''
-      }
-    }
-  }
-})
 </script>
 
 <style scoped>
