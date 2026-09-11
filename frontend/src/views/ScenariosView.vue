@@ -178,9 +178,16 @@
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="history" width="100" align="right">
+          <el-table-column label="history" width="120" align="right">
             <template #default="{ row }">
-              <span class="mono">{{ row.historyId || '-' }}</span>
+              <router-link
+                v-if="row.historyId"
+                :to="{ name: 'history' }"
+                class="mono sb-link"
+                target="_blank"
+                title="在「执行历史」中查看这次运行的明细"
+              >#{{ row.historyId }} ↗</router-link>
+              <span v-else class="muted">—</span>
             </template>
           </el-table-column>
         </el-table>
@@ -403,4 +410,6 @@ onMounted(async () => {
 .sb-status-headline { font-size: 14px; }
 .sb-status-sub { font-size: 12px; color: var(--sb-text-3); font-weight: 400; }
 .sb-name-main { font-weight: 600; }
+.sb-link { color: var(--el-color-primary); text-decoration: none; }
+.sb-link:hover { text-decoration: underline; }
 </style>
