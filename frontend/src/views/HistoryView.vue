@@ -71,6 +71,7 @@
           <el-button @click="quickDateRange(30)">近30天</el-button>
           <el-button @click="resetDateRange">重置</el-button>
         </el-button-group>
+        <el-button @click="resetAllFilters">全部清空</el-button>
         <el-button type="primary" plain @click="refresh">应用</el-button>
       </div>
     </div>
@@ -312,6 +313,16 @@ async function refresh() {
 }
 
 function resetDateRange() {
+  dateFrom.value = ''
+  dateTo.value = ''
+  refresh()
+}
+
+function resetAllFilters() {
+  status.value = ''
+  scriptId.value = null
+  tenantId.value = null
+  keyword.value = ''
   dateFrom.value = ''
   dateTo.value = ''
   refresh()
