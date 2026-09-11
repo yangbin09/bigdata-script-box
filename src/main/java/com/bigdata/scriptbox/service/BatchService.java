@@ -129,37 +129,52 @@ public class BatchService {
         log.info("batch: 并行执行开始 batchId={} scriptId={} rows={} concurrency={}",
                 batchId, scriptId, rows.size(), concurrency);
         List<Future<?>> futures = new ArrayList<>();
-        for (int i = 0; i < rows.size(); i++) {
-            final int idx = i;
-            final Map<String, String> row = rows.get(i);
-            futures.add(pool.submit(() -> {
-                ExecutionRequest req = new ExecutionRequest();
-                req.setScriptId(scriptId);
-                req.setTenantId(tenantId);
-                req.setPresetId(presetId);
-                req.setParams(row);
-                req.setBatchId(batchId);
-                req.setBatchRowIndex(idx);
-                req.setConfirmToken(confirmToken);
+        try {
+            for (int i = 0; i < rows.size(); i++) {
+                final int idx = i;
+                final Map<String, String> row = rows.get(i);
+                futures.add(pool.submit(() -> {
+                    ExecutionRequest req = new ExecutionRequest();
+                    req.setScriptId(scriptId);
+                    req.setTenantId(tenantId);
+                    req.setPresetId(presetId);
+                    req.setParams(row);
+                    req.setBatchId(batchId);
+                    req.setBatchRowIndex(idx);
+                    req.setConfirmToken(confirmToken);
+                    try {
+                        ExecutionHistory h = executor.execute(req);
+                        // historyIds + succeeded/failed 必须在同一把锁内更新，避免
+                        // 出现"succeeded 计数加了但 historyIds 没加"的不一致状态。
+                        synchronized (summary) {
+                            summary.historyIds.add(h.getId());
+                            if (Boolean.TRUE.equals(h.getSuccess())) summary.succeeded++;
+                            else summary.failed++;
+                        }
+                    } catch (Exception ex) {
+                        log.warn("batch {} row {} failed: {}", batchId, idx, ex.getMessage());
+                        synchronized (summary) {
+                            summary.failed++;
+                        }
+                    }
+                }));
+            }
+            // 等待所有 worker 结束：每个 worker 内部已 try/catch，f.get() 主要作用是
+            // 阻塞等完成。即便 worker 抛了未预期异常（理论上 worker body 已尽量收口），
+            // 这里也要记录而不是默默吞掉；InterruptedException 需要恢复中断标志。
+            for (Future<?> f : futures) {
                 try {
-                    ExecutionHistory h = executor.execute(req);
-                    synchronized (summary.historyIds) {
-                        summary.historyIds.add(h.getId());
-                        if (Boolean.TRUE.equals(h.getSuccess())) summary.succeeded++;
-                        else summary.failed++;
-                    }
+                    f.get();
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    log.warn("batch {} await 中断", batchId);
                 } catch (Exception ex) {
-                    log.warn("batch {} row {} failed: {}", batchId, idx, ex.getMessage());
-                    synchronized (summary) {
-                        summary.failed++;
-                    }
+                    log.error("batch {} worker 未捕获异常: {}", batchId, ex.getMessage(), ex);
                 }
-            }));
+            }
+        } finally {
+            pool.shutdownNow();
         }
-        for (Future<?> f : futures) {
-            try { f.get(); } catch (Exception ignored) {}
-        }
-        pool.shutdownNow();
         log.info("batch: 并行执行完成 batchId={} succeeded={} failed={}",
                 batchId, summary.succeeded, summary.failed);
         return summary;
