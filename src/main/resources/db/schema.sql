@@ -193,3 +193,22 @@ CREATE TABLE IF NOT EXISTS script_template (
     update_time     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_template_code ON script_template(code);
+
+-- V2: per-execution artifact registry. The script can write anything under
+-- $ARTIFACT_DIR during its run; we scan that directory after the run
+-- completes and register each regular file as a row here. name is the
+-- relative path inside the execution directory (always
+-- "artifacts/<filename>"); path is the absolute on-disk path; size_bytes
+-- is the file size at scan time; sha256 is the hex digest used to
+-- de-duplicate on re-scan; mime_type is best-effort.
+CREATE TABLE IF NOT EXISTS execution_artifact (
+    id              BIGINT AUTO_INCREMENT PRIMARY KEY,
+    execution_id    BIGINT NOT NULL,
+    name            VARCHAR(512) NOT NULL,
+    path            VARCHAR(1024) NOT NULL,
+    size_bytes      BIGINT NOT NULL DEFAULT 0,
+    sha256          VARCHAR(128),
+    mime_type       VARCHAR(128),
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_artifact_exec ON execution_artifact(execution_id);

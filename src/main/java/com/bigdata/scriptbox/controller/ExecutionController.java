@@ -20,6 +20,7 @@ public class ExecutionController {
     @Autowired private ScriptExecutor executor;
     @Autowired private com.bigdata.scriptbox.service.ResultParserService resultParserService;
     @Autowired private RunningExecutionRegistry runningRegistry;
+    @Autowired private com.bigdata.scriptbox.service.ArtifactService artifactService;
 
     @PostMapping
     public ApiResponse<ExecutionHistory> run(@RequestBody ExecutionRequest req) {
@@ -162,5 +163,50 @@ public class ExecutionController {
         Map<String, Object> data = resultParserService.readStructured(h);
         if (data == null) return ApiResponse.error("result.json not found");
         return ApiResponse.ok(data);
+    }
+
+    /**
+     * V2: list the artifacts (files under $ARTIFACT_DIR) registered for an
+     * execution. Returns an empty list when the script wrote nothing.
+     */
+    @GetMapping("/{id}/artifacts")
+    public ApiResponse<java.util.List<Map<String, Object>>> artifacts(@PathVariable Long id) {
+        ExecutionHistory h = executor.history(id);
+        if (h == null) return ApiResponse.error("history not found");
+        return ApiResponse.ok(artifactService.listView(id));
+    }
+
+    /**
+     * V2: download a single artifact. The {@code name} parameter accepts the
+     * row's primary key (e.g. {@code 42}) or the artifact's relative name
+     * (e.g. {@code report.csv} or {@code artifacts/report.csv}). All
+     * filesystem paths are resolved through ArtifactService.resolveSafe(),
+     * which rejects traversal and absolute-path attempts.
+     */
+    @GetMapping("/{id}/artifacts/{name}")
+    public ResponseEntity<byte[]> downloadArtifact(@PathVariable Long id,
+                                                   @PathVariable String name) throws IOException {
+        ExecutionHistory h = executor.history(id);
+        if (h == null) return ResponseEntity.notFound().build();
+        var resolved = artifactService.resolveSafe(id, name);
+        if (resolved == null) return ResponseEntity.notFound().build();
+        byte[] body = java.nio.file.Files.readAllBytes(resolved.onDisk);
+        return ResponseEntity.ok()
+                .contentType(resolved.meta.getMimeType() != null
+                        ? org.springframework.http.MediaType.parseMediaType(resolved.meta.getMimeType())
+                        : org.springframework.http.MediaType.APPLICATION_OCTET_STREAM)
+                .header("Content-Disposition",
+                        "attachment; filename=\"" + safeFilename(resolved.meta.getName()) + "\"")
+                .body(body);
+    }
+
+    /** Strip directory parts and quotes from a stored artifact name so the
+     *  Content-Disposition header can never be tricked into emitting CR/LF. */
+    private String safeFilename(String name) {
+        if (name == null || name.isBlank()) return "artifact";
+        int slash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
+        String base = slash >= 0 ? name.substring(slash + 1) : name;
+        // Strip control chars and quotes which would break the header.
+        return base.replaceAll("[\\r\\n\\\"\\\\]", "_");
     }
 }

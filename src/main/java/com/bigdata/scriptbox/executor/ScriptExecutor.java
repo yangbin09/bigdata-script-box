@@ -51,6 +51,7 @@ public class ScriptExecutor {
     @Autowired private com.bigdata.scriptbox.service.FileUploadService fileUploadService;
     @Autowired private com.bigdata.scriptbox.service.PrecheckService precheckService;
     @Autowired private com.bigdata.scriptbox.service.RunningExecutionRegistry runningRegistry;
+    @Autowired private com.bigdata.scriptbox.service.ArtifactService artifactService;
 
     private final ObjectMapper mapper = new ObjectMapper();
     private final java.util.concurrent.atomic.AtomicLong counter = new java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis() * 1000L);
@@ -108,6 +109,10 @@ public class ScriptExecutor {
         long executionId = nextExecutionId();
         Path execDir = Paths.get(props.getExecutionsDir(), String.valueOf(executionId));
         Files.createDirectories(execDir);
+        // V2: pre-create the artifacts sub-directory so scripts can rely on
+        // $ARTIFACT_DIR existing without checking first. Idempotent — if the
+        // directory already exists from a previous re-run, leave it alone.
+        Path artifactDir = artifactService.artifactsDirFor(executionId);
 
         // Promote any file-type inputs into the exec directory so the shell
         // receives the safe, server-controlled path. Done before building the
@@ -197,6 +202,13 @@ public class ScriptExecutor {
         // Inject global variables into ProcessBuilder environment (priority lower than preset/params,
         // higher than defaultValue). Apply them here BEFORE the kinit wrapper is composed below.
         pb.environment().putAll(globalVariableService.envForExecution());
+        // V2: standard execution context. EXECUTION_ID lets scripts cross-reference
+        // logs back to history rows; EXECUTION_DIR is the script's cwd (it is also
+        // pb.directory()); ARTIFACT_DIR is the script's writable workspace and the
+        // source we scan to populate the execution_artifact table.
+        pb.environment().put("EXECUTION_ID", String.valueOf(executionId));
+        pb.environment().put("EXECUTION_DIR", execDir.toAbsolutePath().toString());
+        pb.environment().put("ARTIFACT_DIR", artifactDir.toAbsolutePath().toString());
 
         // In mock mode, ensure the dev box without Hadoop can still run; no kinit wrapper.
         if (!props.isMock() && tenant.getKeytabPath() != null && !tenant.getKeytabPath().isBlank()) {
@@ -218,6 +230,10 @@ public class ScriptExecutor {
             pb.directory(execDir.toFile());
             pb.redirectErrorStream(false);
             pb.environment().putAll(globalVariableService.envForExecution());
+            // V2: same execution-context env vars reach the kinit wrapper.
+            pb.environment().put("EXECUTION_ID", String.valueOf(executionId));
+            pb.environment().put("EXECUTION_DIR", execDir.toAbsolutePath().toString());
+            pb.environment().put("ARTIFACT_DIR", artifactDir.toAbsolutePath().toString());
         }
 
         Process process;
@@ -300,6 +316,20 @@ public class ScriptExecutor {
             }
         } catch (Exception ex) {
             log.warn("result.json parse failed for executionId={}: {}", executionId, ex.getMessage());
+        }
+
+        // V2: scan $ARTIFACT_DIR and register every regular file. Done AFTER
+        // the result.json parse so the FE sees logs + result + artifacts in
+        // the same response. The scan itself is fault-tolerant: missing
+        // directory (script never wrote anything) yields an empty list and
+        // no error.
+        try {
+            int registered = artifactService.scanAndRegister(history);
+            if (registered > 0) {
+                log.info("executionId={} registered {} artifact(s)", executionId, registered);
+            }
+        } catch (Exception ex) {
+            log.warn("artifact scan failed for executionId={}: {}", executionId, ex.getMessage());
         }
 
         // V2: unregister the live execution AFTER all history fields are set
