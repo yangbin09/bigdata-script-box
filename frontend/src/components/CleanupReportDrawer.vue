@@ -113,6 +113,7 @@
 <script setup>
 import { computed } from 'vue'
 import { Close } from '@element-plus/icons-vue'
+import { formatBytes, formatTimestamp } from '../utils/format'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -147,17 +148,8 @@ const rows = computed(() => {
   ]
 })
 
-function fmtBytes(n) {
-  if (!n || n <= 0) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let v = n; let i = 0
-  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++ }
-  return `${v.toFixed(v >= 10 ? 0 : 2)} ${units[i]}`
-}
-function formatTime(s) {
-  if (!s) return '—'
-  return String(s).replace('T', ' ').substring(0, 19)
-}
+const fmtBytes = formatBytes
+const formatTime = formatTimestamp
 </script>
 
 <style scoped>

@@ -182,7 +182,7 @@ import {
   previewCleanup, getSettings, updateSettings,
   listCleanupHistory
 } from '../api/admin'
-import { formatBytes } from '../utils/format'
+import { formatBytes, formatTimestamp } from '../utils/format'
 import CleanupPreviewDrawer from './CleanupPreviewDrawer.vue'
 import CleanupConfirmDialog from './CleanupConfirmDialog.vue'
 import CleanupReportDrawer from './CleanupReportDrawer.vue'
@@ -199,11 +199,7 @@ const reportDrawerOpen = ref(false)
 const lastReport = ref(null)
 const history = ref([])
 
-function formatTime(s) {
-  if (!s) return '—'
-  // H2 stores LocalDateTime without TZ; treat as local.
-  return String(s).replace('T', ' ').substring(0, 19)
-}
+const formatTime = formatTimestamp
 
 function resultLabel(r) {
   if (r === 'SUCCESS') return '成功'
