@@ -44,3 +44,12 @@ export function formatBytes(n) {
   while (v >= 1024 && i < units.length - 1) { v /= 1024; i++ }
   return `${v.toFixed(v < 10 ? 2 : 1)} ${units[i]}`
 }
+
+// Format an ISO timestamp string or epoch ms into a sortable "yyyy-MM-dd HH:mm:ss"
+// string. Used by cleanup previews where the backend hands back ISO strings
+// rather than the LocalDateTime array that formatDateTime() handles.
+export function formatTimestamp(s) {
+  if (!s) return '—'
+  if (typeof s === 'number') return new Date(s).toISOString().replace('T', ' ').substring(0, 19)
+  return String(s).replace('T', ' ').substring(0, 19)
+}
