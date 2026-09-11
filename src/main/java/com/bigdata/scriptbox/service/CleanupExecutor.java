@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.bigdata.scriptbox.entity.ExecutionArtifact;
 import com.bigdata.scriptbox.mapper.ExecutionArtifactMapper;
 import com.bigdata.scriptbox.mapper.ExecutionHistoryMapper;
+import com.bigdata.scriptbox.util.FileSystemUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -15,7 +16,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Stream;
 
 /**
  * V2: 手动清理流的"删除侧"。接收 {@link PreviewStore.CleanupPreview} 快照，
@@ -192,8 +192,8 @@ public class CleanupExecutor {
                 if (runningRegistry.get(execId) != null) return -1;
             } catch (NumberFormatException ignored) { /* 非数字目录名，跳过 id 检查 */ }
 
-            long bytes = directorySize(real);
-            deleteRecursively(real);
+            long bytes = FileSystemUtils.directorySize(real);
+            FileSystemUtils.deleteRecursively(real);
             return bytes;
         } catch (IOException ioe) {
             log.warn("cleanup: deleteExecutionDir({}) failed: {}", path, ioe.getMessage());
@@ -224,90 +224,17 @@ public class CleanupExecutor {
     }
 
     /**
-     * 递归统计目录大小（跳过软链接）。
-     *
-     * <p>关键点：
-     * <ol>
-     *   <li>{@code Files.walk(dir)} 默认会跟随符号链接，可能导致死循环（自引用环）
-     *       或越界读不该读的文件。这里显式传 {@link LinkOption#NOFOLLOW_LINKS}，
-     *       等价于 shell 的 {@code -P}：只看真实文件，不展开链接。</li>
-     *   <li>单文件失败不应让整个目录大小统计返回 0；只跳过坏文件并记 WARN。</li>
-     * </ol>
+     * 递归统计目录大小（跳过软链接）—— 委托 {@link FileSystemUtils#directorySize(Path)}。
      */
     private long directorySize(Path dir) {
-        long total = 0;
-        // Files.walk 默认不跟随符号链接；每个路径再用 isSymbolicLink 兜底排除，
-        // 避免攻击者构造自引用软链接导致 walk 死循环。
-        try (Stream<Path> stream = Files.walk(dir)) {
-            for (Path p : (Iterable<Path>) stream::iterator) {
-                try {
-                    if (Files.isSymbolicLink(p)) continue;
-                    if (Files.isRegularFile(p)) {
-                        total += Files.size(p);
-                    }
-                } catch (IOException ioe) {
-                    log.warn("cleanup: 统计文件大小失败 path={}: {}", p, ioe.getMessage());
-                }
-            }
-        } catch (IOException ioe) {
-            log.warn("cleanup: 遍历目录失败 dir={}: {}", dir, ioe.getMessage());
-        }
-        return total;
+        return FileSystemUtils.directorySize(dir);
     }
 
     /**
-     * 递归删除目录（叶子在前，目录最后删）。
-     *
-     * <p>用 {@link java.nio.file.FileVisitor} 实现 depth-first 删除：
-     * 先删每个文件，再删目录。这是 JDK 推荐的递归删除写法，避免老代码
-     * 用 path 字符串长度排序（{@code "/a/bc".length() == "/ab/c".length()}）
-     * 导致父目录被先于子文件删除而失败的问题。
-     *
-     * <p>同样显式 {@link LinkOption#NOFOLLOW_LINKS}：不展开软链接，调用方
-     * 已经在 deleteExecutionDir 里把软链接路径过滤掉了，这里再保一层。
-     *
-     * <p>单文件删除失败只记 WARN，不让整批删除半途而废；返回 void，由
-     * {@link #deleteExecutionDir} 仍按"全成功"返回字节数。
+     * 递归删除 —— 委托 {@link FileSystemUtils#deleteRecursively(Path)}。
      */
     private void deleteRecursively(Path p) throws IOException {
-        if (!Files.exists(p)) return;
-        if (Files.isSymbolicLink(p)) {
-            // 软链接直接删文件（不递归），不会跟到 link 目标
-            try { Files.delete(p); } catch (IOException ioe) {
-                log.warn("cleanup: 删除软链接失败 path={}: {}", p, ioe.getMessage());
-            }
-            return;
-        }
-        java.nio.file.FileVisitor<Path> visitor = new java.nio.file.SimpleFileVisitor<>() {
-            @Override
-            public java.nio.file.FileVisitResult visitFile(Path file, java.nio.file.attribute.BasicFileAttributes attrs) {
-                try {
-                    Files.delete(file);
-                } catch (IOException ioe) {
-                    log.warn("cleanup: 删除文件失败 path={}: {}", file, ioe.getMessage());
-                }
-                return java.nio.file.FileVisitResult.CONTINUE;
-            }
-
-            @Override
-            public java.nio.file.FileVisitResult visitFileFailed(Path file, IOException exc) {
-                log.warn("cleanup: 访问失败 path={}: {}", file, exc.getMessage());
-                return java.nio.file.FileVisitResult.CONTINUE;
-            }
-
-            @Override
-            public java.nio.file.FileVisitResult postVisitDirectory(Path dir, IOException exc) {
-                try {
-                    Files.delete(dir);
-                } catch (IOException ioe) {
-                    log.warn("cleanup: 删除目录失败 path={}: {}", dir, ioe.getMessage());
-                }
-                return java.nio.file.FileVisitResult.CONTINUE;
-            }
-        };
-        // walkFileTree 默认不跟随符号链接，与 Files.walk 行为一致；
-        // deleteExecutionDir 已先过滤掉软链接根路径，这里再保一层。
-        java.nio.file.Files.walkFileTree(p, visitor);
+        FileSystemUtils.deleteRecursively(p);
     }
 
     /** 把跳过原因压成一行日志。 */

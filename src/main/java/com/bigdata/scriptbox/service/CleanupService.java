@@ -11,6 +11,7 @@ import com.bigdata.scriptbox.service.PreviewStore.CandidateOutcome;
 import com.bigdata.scriptbox.service.PreviewStore.CleanupPreview;
 import com.bigdata.scriptbox.service.PreviewStore.ControlledPaths;
 import com.bigdata.scriptbox.service.PreviewStore.Totals;
+import com.bigdata.scriptbox.util.FileSystemUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -276,7 +277,7 @@ public class CleanupService {
     private CandidateOutcome makeExecutionCandidate(Path child, Path root) {
         CandidateOutcome c = new CandidateOutcome();
         c.path = child.toAbsolutePath().normalize().toString();
-        try { c.sizeBytes = directorySize(child); } catch (IOException ignored) {}
+        c.sizeBytes = directorySize(child);
         try {
             c.mtimeMs = Files.getLastModifiedTime(child, LinkOption.NOFOLLOW_LINKS).toMillis();
         } catch (IOException ignored) {}
@@ -299,17 +300,9 @@ public class CleanupService {
         return c;
     }
 
-    /** 递归统计目录大小（不含软链接）。 */
-    private long directorySize(Path dir) throws IOException {
-        long total = 0;
-        try (Stream<Path> stream = Files.walk(dir)) {
-            for (Path p : (Iterable<Path>) stream::iterator) {
-                if (Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS)) {
-                    try { total += Files.size(p); } catch (IOException ignored) {}
-                }
-            }
-        }
-        return total;
+    /** 递归统计目录大小（不含软链接）—— 委托 {@link FileSystemUtils#directorySize(Path)}。 */
+    private long directorySize(Path dir) {
+        return FileSystemUtils.directorySize(dir);
     }
 
     /** 尝试把目录名解析为 executionId；解析失败返回 null。 */
