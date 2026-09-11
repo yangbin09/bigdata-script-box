@@ -16,6 +16,9 @@
     </div>
 
     <el-table :data="rows" v-loading="loading" class="sb-card" stripe>
+      <template #empty>
+        <el-empty description="还没有租户。点击右上角「新增租户」开始。" />
+      </template>
       <el-table-column label="ID" width="60" prop="id" />
       <el-table-column label="名称" min-width="140">
         <template #default="{ row }">

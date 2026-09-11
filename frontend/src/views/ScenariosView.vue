@@ -13,6 +13,9 @@
     </div>
 
     <el-table :data="rows" v-loading="loading" class="sb-card" stripe>
+      <template #empty>
+        <el-empty description="还没有场景。点击右上角「新增场景」把多个脚本按顺序串起来。" />
+      </template>
       <el-table-column label="ID" width="60" prop="id" />
       <el-table-column label="名称" min-width="180">
         <template #default="{ row }">

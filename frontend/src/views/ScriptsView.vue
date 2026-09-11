@@ -27,6 +27,9 @@
     </div>
 
     <el-table :data="rows" v-loading="loading" class="sb-card" stripe>
+      <template #empty>
+        <el-empty description="还没有脚本。点击右上角「新增脚本」或「从模板创建」开始。" />
+      </template>
       <el-table-column label="名称" min-width="200">
         <template #default="{ row }">
           <div class="sb-name-cell">
