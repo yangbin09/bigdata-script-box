@@ -1,50 +1,56 @@
 package com.bigdata.scriptbox.service;
 
-import com.bigdata.scriptbox.config.ScriptBoxProperties;
 import com.bigdata.scriptbox.entity.Script;
 import com.bigdata.scriptbox.entity.Tenant;
+import com.bigdata.scriptbox.service.precheck.PrecheckStrategy;
+import com.bigdata.scriptbox.service.precheck.PrecheckStrategyRegistry;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * Pre-execution environment checks. Reads JSON config from
- * Script.precheckConfigJson and runs a series of checks before launching the
- * actual script. Each check returns {ok, message} and is independent.
+ * 执行前环境检查。
  *
- * Supported keys in the JSON:
- *   {
- *     "kerberos":              true|false,
- *     "commands":   ["spark-sql", ...],
- *     "files":      ["/opt/client/bigdata_env", ...],
- *     "writableDirectories": ["/tmp/bigdata-script-box", ...]
- *   }
+ * <p>读取 {@code Script.precheckConfigJson}（JSON 格式），针对每类检查委托给
+ * 实现了 {@link PrecheckStrategy} 的 Spring Bean。Service 自身不写任何
+ * 检查逻辑，只负责解析配置、遍历策略、汇总结果。
  *
- * Any missing / unknown key is silently ignored, so an empty config means
- * "no checks". Scripts with no precheck config skip this phase entirely.
+ * <p>支持的 JSON 字段（由各 Strategy 自行声明 type）：
+ * <pre>{@code
+ * {
+ *   "kerberos": true,
+ *   "commands": ["spark-sql", "hdfs"],
+ *   "files": ["/opt/client/bigdata_env"],
+ *   "writableDirectories": ["/tmp/bigdata-script-box"]
+ * }
+ * }</pre>
+ *
+ * <p>未知 / 缺失字段静默忽略；空配置等同「无 PreCheck」。
+ *
+ * <p>如何新增检查类型：实现 {@link PrecheckStrategy} 接口即可，
+ * 本类无需改动。
  */
 @Service
 public class PrecheckService {
 
     private static final Logger log = LoggerFactory.getLogger(PrecheckService.class);
 
-    @Autowired private ScriptBoxProperties props;
+    private final PrecheckStrategyRegistry registry;
     private final ObjectMapper mapper = new ObjectMapper();
 
+    public PrecheckService(PrecheckStrategyRegistry registry) {
+        this.registry = registry;
+    }
+
     public static class CheckResult {
-        public String name;       // "Kerberos", "command:spark-sql", "file:..."
+        public String name;       // 显示名，例如 "Kerberos" / "command:spark-sql" / "file:/opt/client/bigdata_env"
         public boolean ok;
         public String message;
         public CheckResult() {}
@@ -65,6 +71,8 @@ public class PrecheckService {
             summary.put("message", "no precheck configured");
             return summary;
         }
+
+        // 解析顶层 JSON；只要解析失败整体判失败
         Map<String, Object> cfg;
         try {
             cfg = mapper.readValue(script.getPrecheckConfigJson(),
@@ -76,108 +84,48 @@ public class PrecheckService {
             return summary;
         }
 
-        // Kerberos
-        if (Boolean.TRUE.equals(cfg.get("kerberos"))) {
-            CheckResult r = checkKerberos(tenant);
-            results.add(toMap(r));
-            if (!r.ok) allOk = false;
+        for (String type : registry.knownTypes()) {
+            // 仅在配置里显式出现的 type 才执行
+            if (!cfg.containsKey(type)) continue;
+            for (PrecheckStrategy strategy : registry.byType(type)) {
+                List<String> items;
+                try {
+                    items = strategy.items(script, tenant);
+                } catch (Exception ex) {
+                    log.warn("precheck: 策略 {} 取项目列表失败: {}", type, ex.getMessage());
+                    continue;
+                }
+                for (String item : items) {
+                    PrecheckStrategy.CheckOutcome outcome;
+                    try {
+                        outcome = strategy.check(item, script, tenant);
+                    } catch (Exception ex) {
+                        // 策略抛异常 → 视为单次失败，不影响其他检查
+                        log.warn("precheck: 策略 {} 检查 {} 失败: {}", type, item, ex.getMessage());
+                        results.add(toMap(type + ":" + item, false, "策略异常: " + ex.getMessage()));
+                        allOk = false;
+                        continue;
+                    }
+                    String displayName = (type.equals("kerberos"))
+                            ? "Kerberos"
+                            : (type + ":" + (outcome.item() == null ? "" : outcome.item()));
+                    results.add(toMap(displayName, outcome.ok(), outcome.message()));
+                    if (!outcome.ok()) allOk = false;
+                }
+            }
         }
-        // Commands exist on PATH (or absolute path)
-        @SuppressWarnings("unchecked")
-        List<String> commands = (List<String>) cfg.getOrDefault("commands", List.of());
-        for (String cmd : commands) {
-            CheckResult r = checkCommand(cmd);
-            results.add(toMap(r));
-            if (!r.ok) allOk = false;
-        }
-        // Files exist
-        @SuppressWarnings("unchecked")
-        List<String> files = (List<String>) cfg.getOrDefault("files", List.of());
-        for (String f : files) {
-            CheckResult r = checkFile(f);
-            results.add(toMap(r));
-            if (!r.ok) allOk = false;
-        }
-        // Directories writable
-        @SuppressWarnings("unchecked")
-        List<String> dirs = (List<String>) cfg.getOrDefault("writableDirectories", List.of());
-        for (String d : dirs) {
-            CheckResult r = checkWritableDir(d);
-            results.add(toMap(r));
-            if (!r.ok) allOk = false;
-        }
+
         summary.put("ok", allOk);
         summary.put("skipped", false);
         summary.put("message", allOk ? "all checks passed" : "one or more checks failed");
         return summary;
     }
 
-    private static Map<String, Object> toMap(CheckResult r) {
+    private static Map<String, Object> toMap(String name, boolean ok, String message) {
         Map<String, Object> m = new LinkedHashMap<>();
-        m.put("name", r.name);
-        m.put("ok", r.ok);
-        m.put("message", r.message);
+        m.put("name", name);
+        m.put("ok", ok);
+        m.put("message", message);
         return m;
-    }
-
-    private CheckResult checkKerberos(Tenant tenant) {
-        if (tenant == null) return new CheckResult("Kerberos", false, "tenant not set");
-        if (!Boolean.TRUE.equals(tenant.getEnabled()))
-            return new CheckResult("Kerberos", false, "tenant disabled: " + tenant.getName());
-        if (tenant.getPrincipal() == null || tenant.getPrincipal().isBlank())
-            return new CheckResult("Kerberos", false, "tenant has no principal");
-        if (!props.isMock()) {
-            if (tenant.getKeytabPath() == null || tenant.getKeytabPath().isBlank())
-                return new CheckResult("Kerberos", false, "keytab not configured");
-            if (!Files.exists(Paths.get(tenant.getKeytabPath())))
-                return new CheckResult("Kerberos", false, "keytab file missing");
-        }
-        return new CheckResult("Kerberos", true, "tenant=" + tenant.getName() + " principal=" + tenant.getPrincipal());
-    }
-
-    private CheckResult checkCommand(String cmd) {
-        if (cmd == null || cmd.isBlank())
-            return new CheckResult("command:<empty>", false, "empty command name");
-        // Absolute path: just check exists + executable
-        Path p = Paths.get(cmd);
-        if (p.isAbsolute()) {
-            if (Files.exists(p) && Files.isExecutable(p))
-                return new CheckResult("command:" + cmd, true, "absolute path exists and executable");
-            return new CheckResult("command:" + cmd, false, "not executable");
-        }
-        // Walk PATH
-        String pathEnv = System.getenv("PATH");
-        if (pathEnv == null) pathEnv = "/usr/local/bin:/usr/bin:/bin";
-        for (String dir : pathEnv.split(":")) {
-            Path candidate = Paths.get(dir, cmd);
-            if (Files.exists(candidate) && Files.isExecutable(candidate))
-                return new CheckResult("command:" + cmd, true, "found in " + dir);
-        }
-        return new CheckResult("command:" + cmd, false, "not found in PATH");
-    }
-
-    private CheckResult checkFile(String f) {
-        if (f == null || f.isBlank())
-            return new CheckResult("file:<empty>", false, "empty path");
-        Path p = Paths.get(f);
-        if (!Files.exists(p))
-            return new CheckResult("file:" + f, false, "file does not exist");
-        return new CheckResult("file:" + f, true, "exists");
-    }
-
-    private CheckResult checkWritableDir(String d) {
-        if (d == null || d.isBlank())
-            return new CheckResult("dir:<empty>", false, "empty path");
-        Path p = Paths.get(d);
-        try {
-            if (!Files.exists(p)) Files.createDirectories(p);
-        } catch (IOException ex) {
-            return new CheckResult("dir:" + d, false, "cannot create: " + ex.getMessage());
-        }
-        if (!Files.isDirectory(p))
-            return new CheckResult("dir:" + d, false, "not a directory");
-        if (!Files.isWritable(p))
-            return new CheckResult("dir:" + d, false, "not writable");
-        return new CheckResult("dir:" + d, true, "writable");
     }
 }
