@@ -23,6 +23,12 @@ public class Script {
     private LocalDateTime updateTime;
     /** JSON config of pre-execution checks: kerberos/commands/files/writable dirs. */
     private String precheckConfigJson;
+    /** V2: risk level — READ_ONLY (default) / WRITE / DANGEROUS. DANGEROUS requires
+     *  user to type CONFIRM before execution. Persisted as VARCHAR(16). */
+    private String riskLevel;
+    /** V2: when true, multiple executions of the same script+tenant may run concurrently.
+     *  Default false means a duplicate (scriptId, tenantId) running row blocks new runs. */
+    private Boolean allowConcurrent;
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -50,4 +56,8 @@ public class Script {
     public void setUpdateTime(LocalDateTime updateTime) { this.updateTime = updateTime; }
     public String getPrecheckConfigJson() { return precheckConfigJson; }
     public void setPrecheckConfigJson(String precheckConfigJson) { this.precheckConfigJson = precheckConfigJson; }
+    public String getRiskLevel() { return riskLevel; }
+    public void setRiskLevel(String riskLevel) { this.riskLevel = riskLevel; }
+    public Boolean getAllowConcurrent() { return allowConcurrent; }
+    public void setAllowConcurrent(Boolean allowConcurrent) { this.allowConcurrent = allowConcurrent; }
 }

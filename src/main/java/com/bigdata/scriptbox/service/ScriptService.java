@@ -6,6 +6,7 @@ import com.bigdata.scriptbox.entity.Script;
 import com.bigdata.scriptbox.entity.ScriptParam;
 import com.bigdata.scriptbox.mapper.ScriptMapper;
 import com.bigdata.scriptbox.mapper.ScriptParamMapper;
+import com.bigdata.scriptbox.model.RiskLevel;
 import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -64,6 +65,16 @@ public class ScriptService {
         if (script.getTimeoutSeconds() == null) script.setTimeoutSeconds(600);
         if (script.getEnabled() == null) script.setEnabled(Boolean.TRUE);
         if (script.getFavorite() == null) script.setFavorite(Boolean.FALSE);
+        // V2: risk level defaults to READ_ONLY if unspecified; allowConcurrent defaults to false.
+        // For create(), we accept and persist whatever the caller provided (controller normalizes).
+        if (script.getRiskLevel() == null || script.getRiskLevel().isBlank()) {
+            script.setRiskLevel(RiskLevel.READ_ONLY);
+        } else {
+            // Strict validation on user input — reject bogus values like "BOGUS".
+            RiskLevel.requireValid(script.getRiskLevel());
+            script.setRiskLevel(script.getRiskLevel().trim().toUpperCase());
+        }
+        if (script.getAllowConcurrent() == null) script.setAllowConcurrent(Boolean.FALSE);
 
         String body = readScriptFile(file);
 
@@ -96,6 +107,14 @@ public class ScriptService {
         }
         if (script.getEnabled() == null) script.setEnabled(db.getEnabled());
         if (script.getFavorite() == null) script.setFavorite(db.getFavorite());
+        // V2: validate risk level on update too; null means "don't change".
+        if (script.getRiskLevel() != null) {
+            RiskLevel.requireValid(script.getRiskLevel());
+            script.setRiskLevel(script.getRiskLevel().trim().toUpperCase());
+        } else {
+            script.setRiskLevel(db.getRiskLevel());
+        }
+        if (script.getAllowConcurrent() == null) script.setAllowConcurrent(db.getAllowConcurrent());
         script.setUpdateTime(LocalDateTime.now());
         scriptMapper.updateById(script);
         return scriptMapper.selectById(script.getId());

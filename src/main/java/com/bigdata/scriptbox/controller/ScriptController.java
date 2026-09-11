@@ -47,6 +47,8 @@ public class ScriptController {
                                       @RequestParam(value = "enabled", required = false) Boolean enabled,
                                       @RequestParam(value = "favorite", required = false) Boolean favorite,
                                       @RequestParam(value = "defaultTenantId", required = false) Long defaultTenantId,
+                                      @RequestParam(value = "riskLevel", required = false) String riskLevel,
+                                      @RequestParam(value = "allowConcurrent", required = false) Boolean allowConcurrent,
                                       @RequestParam("file") MultipartFile file) throws IOException {
         Script s = new Script();
         s.setName(name);
@@ -57,6 +59,8 @@ public class ScriptController {
         s.setEnabled(enabled == null ? Boolean.TRUE : enabled);
         s.setFavorite(favorite != null && favorite);
         s.setDefaultTenantId(defaultTenantId);
+        s.setRiskLevel(riskLevel);
+        s.setAllowConcurrent(allowConcurrent);
         return ApiResponse.ok(scriptService.create(s, file));
     }
 
@@ -70,6 +74,8 @@ public class ScriptController {
                                       @RequestParam(value = "enabled", required = false) Boolean enabled,
                                       @RequestParam(value = "favorite", required = false) Boolean favorite,
                                       @RequestParam(value = "defaultTenantId", required = false) Long defaultTenantId,
+                                      @RequestParam(value = "riskLevel", required = false) String riskLevel,
+                                      @RequestParam(value = "allowConcurrent", required = false) Boolean allowConcurrent,
                                       @RequestParam(value = "file", required = false) MultipartFile file) throws IOException {
         Script s = new Script();
         s.setId(id);
@@ -81,6 +87,8 @@ public class ScriptController {
         s.setEnabled(enabled == null ? Boolean.TRUE : enabled);
         s.setFavorite(favorite != null && favorite);
         s.setDefaultTenantId(defaultTenantId);
+        s.setRiskLevel(riskLevel);
+        s.setAllowConcurrent(allowConcurrent);
         return ApiResponse.ok(scriptService.update(s, file));
     }
 

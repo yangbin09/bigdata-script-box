@@ -22,10 +22,10 @@ public class BatchController {
             if (req.parallel && req.concurrency != null && req.concurrency > 1) {
                 return ApiResponse.ok(batchService.runParallel(
                         req.scriptId, req.tenantId, req.presetId, req.rows,
-                        req.concurrency));
+                        req.concurrency, req.confirmToken));
             }
             return ApiResponse.ok(batchService.runSequential(
-                    req.scriptId, req.tenantId, req.presetId, req.rows));
+                    req.scriptId, req.tenantId, req.presetId, req.rows, req.confirmToken));
         } catch (IllegalArgumentException ex) {
             return ApiResponse.error(ex.getMessage());
         }
@@ -44,5 +44,7 @@ public class BatchController {
         public List<Map<String, String>> rows;
         public boolean parallel;
         public Integer concurrency;
+        /** V2: forwarded to each row's ExecutionRequest for DANGEROUS scripts. */
+        public String confirmToken;
     }
 }

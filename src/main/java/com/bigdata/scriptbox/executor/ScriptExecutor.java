@@ -7,6 +7,7 @@ import com.bigdata.scriptbox.entity.Script;
 import com.bigdata.scriptbox.entity.ScriptParam;
 import com.bigdata.scriptbox.entity.Tenant;
 import com.bigdata.scriptbox.mapper.ExecutionHistoryMapper;
+import com.bigdata.scriptbox.model.RiskLevel;
 import com.bigdata.scriptbox.service.ScriptService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -56,6 +57,16 @@ public class ScriptExecutor {
         if (script == null) throw new IllegalArgumentException("script not found: " + req.getScriptId());
         if (script.getEnabled() == null || !script.getEnabled())
             throw new IllegalArgumentException("script is disabled: " + script.getName());
+
+        // V2: DANGEROUS scripts require the caller to send the CONFIRM token,
+        // unless the executor is replaying from a snapshot (the original run was
+        // already authorised, so a re-run with the same content should not nag).
+        if (RiskLevel.DANGEROUS.equals(script.getRiskLevel())
+                && !req.isBypassDangerousCheck()
+                && !RiskLevel.CONFIRM_TOKEN.equals(req.getConfirmToken())) {
+            throw new IllegalArgumentException(
+                "script is DANGEROUS: type " + RiskLevel.CONFIRM_TOKEN + " to confirm execution");
+        }
 
         Tenant tenant = tenantService.getById(req.getTenantId());
         if (tenant == null) throw new IllegalArgumentException("tenant not found: " + req.getTenantId());

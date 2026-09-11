@@ -51,6 +51,26 @@
                   style="width: 100%"
                 />
               </el-form-item>
+              <el-form-item label="风险等级">
+                <el-select v-model="form.riskLevel" style="width: 100%">
+                  <el-option
+                    v-for="o in RISK_LEVEL_OPTIONS"
+                    :key="o.value"
+                    :label="o.label"
+                    :value="o.value"
+                  />
+                </el-select>
+                <div v-if="form.riskLevel === 'DANGEROUS'" class="sb-risk-warn">
+                  <el-icon><WarningFilled /></el-icon>
+                  <span>执行此脚本将要求操作员输入 <code>CONFIRM</code> 才会真正运行。</span>
+                </div>
+              </el-form-item>
+              <el-form-item label="允许并发执行">
+                <el-switch v-model="form.allowConcurrent" />
+                <span class="muted" style="margin-left: 8px">
+                  开启后同一脚本同一租户可同时多次运行（默认互斥）。
+                </span>
+              </el-form-item>
               <el-form-item label="默认租户">
                 <el-select v-model="form.defaultTenantId" placeholder="不指定 (使用上次)"
                   clearable style="width: 100%">
@@ -256,7 +276,7 @@
 import { onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  Plus, Delete, Top, Bottom, VideoPlay
+  Plus, Delete, Top, Bottom, VideoPlay, WarningFilled
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -269,6 +289,7 @@ import {
   runPrecheck as runPrecheckApi, savePrecheck
 } from '../api/extras'
 import { formatDateTime } from '../utils/format'
+import { RISK_LEVEL_OPTIONS, normalizeRiskLevel } from '../utils/labels'
 
 const route = useRoute()
 const router = useRouter()
@@ -282,7 +303,8 @@ const activeTab = ref('info')
 const form = reactive({
   name: '', displayName: '', category: '', description: '',
   timeoutSeconds: 600, defaultTenantId: null,
-  favorite: false, enabled: true
+  favorite: false, enabled: true,
+  riskLevel: 'READ_ONLY', allowConcurrent: false
 })
 const body = ref('')
 const params = ref([])
@@ -323,7 +345,9 @@ async function load() {
       timeoutSeconds: detail.script.timeoutSeconds || 600,
       defaultTenantId: detail.script.defaultTenantId || null,
       favorite: !!detail.script.favorite,
-      enabled: detail.script.enabled !== false
+      enabled: detail.script.enabled !== false,
+      riskLevel: normalizeRiskLevel(detail.script.riskLevel),
+      allowConcurrent: !!detail.script.allowConcurrent
     })
     body.value = detail.body || ''
     params.value = (detail.params || []).map((p) => ({
@@ -363,6 +387,8 @@ async function saveAll(thenExecute) {
     fd.append('enabled', String(form.enabled))
     fd.append('favorite', String(form.favorite))
     if (form.defaultTenantId) fd.append('defaultTenantId', String(form.defaultTenantId))
+    fd.append('riskLevel', form.riskLevel || 'READ_ONLY')
+    fd.append('allowConcurrent', String(!!form.allowConcurrent))
     fd.append('precheckConfigJson', precheckJson.value || '')
     await updateScript(script.value.id, fd)
     await saveBody(script.value.id, body.value)
@@ -526,6 +552,26 @@ watch(() => route.query.id, load)
 .sb-precheck-result li.fail .dot { color: var(--sb-danger); }
 .sb-precheck-result .name { font-weight: 500; }
 .sb-precheck-result .msg { color: var(--sb-text-2); }
+
+.sb-risk-warn {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: var(--sb-danger);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+}
+.sb-risk-warn code {
+  background: #fff;
+  border: 1px solid #fca5a5;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-family: var(--sb-mono);
+}
 
 .sb-preset-row {
   display: flex;

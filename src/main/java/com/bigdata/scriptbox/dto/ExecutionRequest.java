@@ -19,6 +19,14 @@ public class ExecutionRequest {
     private Long scenarioId;
     /** Optional step number within a scenario. */
     private Integer scenarioStepNo;
+    /** V2: required when executing a DANGEROUS script. Frontend sends "CONFIRM"
+     *  only after the user types CONFIRM in the confirmation dialog. Dry-run
+     *  and re-run from history do NOT require this. */
+    private String confirmToken;
+    /** V2: set by HistoricalRerunService to bypass dangerous-confirmation when
+     *  replaying from a snapshot (the original execution was already authorized).
+     *  Defaults to false. */
+    private boolean bypassDangerousCheck;
 
     public Long getScriptId() { return scriptId; }
     public void setScriptId(Long scriptId) { this.scriptId = scriptId; }
@@ -38,4 +46,8 @@ public class ExecutionRequest {
     public void setScenarioId(Long scenarioId) { this.scenarioId = scenarioId; }
     public Integer getScenarioStepNo() { return scenarioStepNo; }
     public void setScenarioStepNo(Integer scenarioStepNo) { this.scenarioStepNo = scenarioStepNo; }
+    public String getConfirmToken() { return confirmToken; }
+    public void setConfirmToken(String confirmToken) { this.confirmToken = confirmToken; }
+    public boolean isBypassDangerousCheck() { return bypassDangerousCheck; }
+    public void setBypassDangerousCheck(boolean bypassDangerousCheck) { this.bypassDangerousCheck = bypassDangerousCheck; }
 }

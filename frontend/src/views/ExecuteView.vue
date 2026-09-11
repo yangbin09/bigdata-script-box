@@ -135,6 +135,12 @@
           <div>
             <div class="sb-drawer-title">
               {{ activeScript?.displayName || activeScript?.name }}
+              <el-tag
+                v-if="activeScript"
+                size="small" disable-transitions effect="plain"
+                :type="RISK_LEVEL_TAG_TYPE[normalizeRiskLevel(activeScript.riskLevel)]"
+                class="sb-title-tag"
+              >{{ RISK_LEVEL_LABEL[normalizeRiskLevel(activeScript.riskLevel)] }}</el-tag>
             </div>
             <div v-if="activeScript" class="sb-exec-sub">
               <span>{{ activeScript.category || '默认' }}</span>
@@ -359,7 +365,7 @@ import {
   Refresh, Search, VideoPlay, Loading, Close, ArrowRight, ArrowDown,
   EditPen, RefreshRight, UploadFilled
 } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { listScripts, getScript, setScriptFavorite } from '../api/scripts'
 import { listTenants } from '../api/tenants'
 import { execute, readStdout, readStderr } from '../api/executions'
@@ -370,6 +376,7 @@ import ParamForm from '../components/ParamForm.vue'
 import ExecutionResultPanel from '../components/ExecutionResultPanel.vue'
 import { formatDateTime } from '../utils/format'
 import { getItem, setItem, removeItem } from '../utils/storage'
+import { RISK_LEVEL, RISK_LEVEL_LABEL, RISK_LEVEL_TAG_TYPE, normalizeRiskLevel, RISK_CONFIRM_TOKEN } from '../utils/labels'
 
 const router = useRouter()
 const scripts = ref([])
@@ -688,6 +695,32 @@ async function runScript() {
   } catch {
     return
   }
+  // V2: DANGEROUS scripts require the user to type CONFIRM. Dry-run / batch /
+  // scripted paths do not go through this gate (they call /api/executions/preview
+  // or send bypassDangerousCheck via the snapshot re-run flow).
+  const riskLevel = normalizeRiskLevel(activeScript.value?.riskLevel)
+  let confirmToken = null
+  if (riskLevel === RISK_LEVEL.DANGEROUS) {
+    try {
+      const result = await ElMessageBox.prompt(
+        `此脚本属于「危险」级别，操作可能不可恢复或对外部有副作用。\n` +
+        `请输入 ${RISK_CONFIRM_TOKEN} 以确认执行：`,
+        '危险脚本确认',
+        {
+          inputPattern: new RegExp(`^${RISK_CONFIRM_TOKEN}$`),
+          inputErrorMessage: `必须输入 ${RISK_CONFIRM_TOKEN}`,
+          confirmButtonText: '执行',
+          cancelButtonText: '取消',
+          type: 'warning'
+        }
+      )
+      // ElMessageBox returns { value } in element-plus; normalize across versions.
+      confirmToken = (result && (result.value || result)) || RISK_CONFIRM_TOKEN
+    } catch {
+      return  // user cancelled
+    }
+  }
+
   running.value = true
   elapsed.value = 0
   if (elapsedTimer) clearInterval(elapsedTimer)
@@ -713,13 +746,14 @@ async function runScript() {
         running.value = false
         return
       }
-      const fileInputsMap = {}
-      for (const [k, v] of Object.entries(fileInputs)) fileInputsMap[k] = v.serverPath
       const sum = await runBatch({
         scriptId: activeScript.value.id,
         tenantId: tenantId.value,
         presetId: presetId.value,
-        rows
+        rows,
+        // BatchService fans out to executor.execute(); pass the token so each
+        // row inherits the dangerous-script authorisation.
+        confirmToken: confirmToken || undefined
       })
       // Refresh details for each row's history id
       batchResult.value = sum
@@ -745,6 +779,7 @@ async function runScript() {
         Object.entries(fileInputs).map(([k, v]) => [k, v.serverPath])
       )
     }
+    if (confirmToken) payload.confirmToken = confirmToken
     const history = await execute(payload)
     resultHistory.value = history
     try {
@@ -796,6 +831,8 @@ onMounted(async () => {
 .sb-search { max-width: 420px; }
 
 .sb-block { margin-bottom: 24px; }
+
+.sb-title-tag { margin-left: 8px; vertical-align: middle; }
 .sb-group-title {
   cursor: pointer;
   user-select: none;

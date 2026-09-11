@@ -81,6 +81,10 @@ CREATE INDEX IF NOT EXISTS idx_history_status ON execution_history(status);
 
 ALTER TABLE script ADD COLUMN IF NOT EXISTS precheck_config_json VARCHAR(4096);
 
+-- V2 Reliability additions (Phase 1: risk levels + concurrent flag) ----
+ALTER TABLE script ADD COLUMN IF NOT EXISTS risk_level VARCHAR(16) NOT NULL DEFAULT 'READ_ONLY';
+ALTER TABLE script ADD COLUMN IF NOT EXISTS allow_concurrent BOOLEAN NOT NULL DEFAULT FALSE;
+
 CREATE TABLE IF NOT EXISTS script_preset (
     id           BIGINT AUTO_INCREMENT PRIMARY KEY,
     script_id    BIGINT NOT NULL,

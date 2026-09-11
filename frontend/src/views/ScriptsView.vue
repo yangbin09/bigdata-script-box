@@ -52,6 +52,14 @@
           <span v-else class="muted">—</span>
         </template>
       </el-table-column>
+      <el-table-column label="风险等级" width="100">
+        <template #default="{ row }">
+          <el-tag
+            size="small" disable-transitions effect="plain"
+            :type="RISK_LEVEL_TAG_TYPE[normalizeRiskLevel(row.riskLevel)]"
+          >{{ RISK_LEVEL_LABEL[normalizeRiskLevel(row.riskLevel)] }}</el-tag>
+        </template>
+      </el-table-column>
       <el-table-column prop="description" label="描述" min-width="220" show-overflow-tooltip />
       <el-table-column label="参数" width="80" align="center">
         <template #default="{ row }">
@@ -127,6 +135,20 @@
             style="width: 100%"
           />
         </el-form-item>
+        <el-form-item label="风险等级">
+          <el-select v-model="createForm.riskLevel" style="width: 100%">
+            <el-option
+              v-for="o in RISK_LEVEL_OPTIONS"
+              :key="o.value"
+              :label="o.label"
+              :value="o.value"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="允许并发执行">
+          <el-switch v-model="createForm.allowConcurrent" />
+          <span class="muted" style="margin-left: 8px">开启后多个调用可同时运行（默认同一脚本同一租户互斥）。</span>
+        </el-form-item>
         <el-form-item label="上传 .sh 文件" required>
           <el-upload
             ref="uploadRef"
@@ -163,6 +185,7 @@ import {
 } from '../api/scripts'
 import { exportScript, importScript } from '../api/extras'
 import { formatDateTime } from '../utils/format'
+import { RISK_LEVEL_OPTIONS, RISK_LEVEL_LABEL, RISK_LEVEL_TAG_TYPE, normalizeRiskLevel } from '../utils/labels'
 
 const router = useRouter()
 const rows = ref([])
@@ -172,7 +195,9 @@ const loading = ref(false)
 const createOpen = ref(false)
 const createForm = reactive({
   name: '', displayName: '', category: '', description: '',
-  timeoutSeconds: 600
+  timeoutSeconds: 600,
+  riskLevel: 'READ_ONLY',
+  allowConcurrent: false
 })
 const scriptFile = ref(null)
 const uploadRef = ref(null)
@@ -199,6 +224,8 @@ function openCreate() {
   createForm.category = ''
   createForm.description = ''
   createForm.timeoutSeconds = 600
+  createForm.riskLevel = 'READ_ONLY'
+  createForm.allowConcurrent = false
   scriptFile.value = null
   uploadRef.value?.clearFiles?.()
   createOpen.value = true
@@ -220,6 +247,8 @@ async function submitCreate() {
     if (createForm.description)  fd.append('description', createForm.description)
     fd.append('timeoutSeconds', String(createForm.timeoutSeconds))
     fd.append('enabled', 'true')
+    fd.append('riskLevel', createForm.riskLevel || 'READ_ONLY')
+    fd.append('allowConcurrent', String(!!createForm.allowConcurrent))
     fd.append('file', scriptFile.value)
     await createScript(fd)
     ElMessage.success('已创建')

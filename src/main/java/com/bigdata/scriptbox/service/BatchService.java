@@ -51,6 +51,13 @@ public class BatchService {
      */
     public BatchSummary runSequential(Long scriptId, Long tenantId, Long presetId,
                                       List<Map<String, String>> rows) {
+        return runSequential(scriptId, tenantId, presetId, rows, null);
+    }
+
+    /** V2: confirmToken is forwarded to every row's ExecutionRequest so that
+     *  a DANGEROUS script's batch execution honours the operator's CONFIRM. */
+    public BatchSummary runSequential(Long scriptId, Long tenantId, Long presetId,
+                                      List<Map<String, String>> rows, String confirmToken) {
         if (rows == null || rows.isEmpty()) throw new IllegalArgumentException("empty rows");
         if (rows.size() > MAX_ROWS) throw new IllegalArgumentException(
                 "too many rows: " + rows.size() + " > " + MAX_ROWS);
@@ -69,6 +76,7 @@ public class BatchService {
             req.setParams(row);
             req.setBatchId(batchId);
             req.setBatchRowIndex(i);
+            req.setConfirmToken(confirmToken);
             try {
                 ExecutionHistory h = executor.execute(req);
                 summary.historyIds.add(h.getId());
@@ -88,6 +96,12 @@ public class BatchService {
      */
     public BatchSummary runParallel(Long scriptId, Long tenantId, Long presetId,
                                     List<Map<String, String>> rows, int concurrency) {
+        return runParallel(scriptId, tenantId, presetId, rows, concurrency, null);
+    }
+
+    /** V2: see {@link #runSequential(Long, Long, Long, List, String)} for confirmToken semantics. */
+    public BatchSummary runParallel(Long scriptId, Long tenantId, Long presetId,
+                                    List<Map<String, String>> rows, int concurrency, String confirmToken) {
         if (rows == null || rows.isEmpty()) throw new IllegalArgumentException("empty rows");
         if (rows.size() > MAX_ROWS) throw new IllegalArgumentException(
                 "too many rows: " + rows.size() + " > " + MAX_ROWS);
@@ -117,6 +131,7 @@ public class BatchService {
                 req.setParams(row);
                 req.setBatchId(batchId);
                 req.setBatchRowIndex(idx);
+                req.setConfirmToken(confirmToken);
                 try {
                     ExecutionHistory h = executor.execute(req);
                     synchronized (summary.historyIds) {
