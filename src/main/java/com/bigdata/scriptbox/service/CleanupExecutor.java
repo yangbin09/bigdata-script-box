@@ -261,7 +261,7 @@ public class CleanupExecutor {
         public int logDeleted;
         public int historyDeleted;
         public long bytesFreed;
-        public String result;        // SUCCESS / PARTIAL / FAILED
+        public com.bigdata.scriptbox.model.CleanupResult result;
         public List<String> skipped = new ArrayList<>();
         public List<SkipFail> failed = new ArrayList<>();
         public String message;
@@ -270,8 +270,10 @@ public class CleanupExecutor {
         public int failedCount()  { return failed.size(); }
 
         public void computeResult() {
-            if (failed != null && !failed.isEmpty()) result = "PARTIAL";
-            else result = "SUCCESS";
+            if (failed != null && !failed.isEmpty())
+                result = com.bigdata.scriptbox.model.CleanupResult.PARTIAL;
+            else
+                result = com.bigdata.scriptbox.model.CleanupResult.SUCCESS;
         }
     }
 }

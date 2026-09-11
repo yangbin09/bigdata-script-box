@@ -304,7 +304,7 @@ public class CleanupService {
                     "{\"historyDays\":%d,\"artifactDays\":%d,\"executionDays\":%d,\"logDays\":%d}",
                     preview.historyDays, preview.artifactDays,
                     preview.executionDays, preview.logDays));
-            row.setResult(report.result);
+            row.setResult(report.result.name());
             row.setExecutionDeleted(report.executionDeleted);
             row.setArtifactDeleted(report.artifactDeleted);
             row.setLogDeleted(report.logDeleted);

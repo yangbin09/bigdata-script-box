@@ -11,10 +11,12 @@
 
   Rotation:
     - TimeBasedRollingPolicy with daily rollover.
-    - Keep 30 days of history files (cleanup policy is independent — the
-      operator may keep more or fewer via the scriptbox.retention-log-days
-      setting and a manual cleanup).
-    - Total size cap is generous (~3 GB); raise if needed.
+    - Keep 3 days of history files. The retention is intentionally tight;
+      BigData Script Box is a control-plane tool, not a long-term log store.
+      If you need long-term logs, ship them to an external collector.
+    - Total size cap 1 GB across all rotated files; logback will GC older
+      files when this cap is reached. The combined cap leaves headroom
+      while preventing runaway disk usage on unattended deployments.
 
   Console appender is preserved so `mvn spring-boot:run` and container
   stdout capture still work in development.
@@ -34,8 +36,8 @@
         <file>${LOG_DIR}/scriptbox.log</file>
         <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
             <fileNamePattern>${LOG_DIR}/scriptbox.%d{yyyy-MM-dd}.log.gz</fileNamePattern>
-            <maxHistory>30</maxHistory>
-            <totalSizeCap>3GB</totalSizeCap>
+            <maxHistory>3</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
             <cleanHistoryOnStart>false</cleanHistoryOnStart>
         </rollingPolicy>
         <encoder>
