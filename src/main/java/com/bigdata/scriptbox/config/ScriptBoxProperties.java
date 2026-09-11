@@ -14,6 +14,10 @@ public class ScriptBoxProperties {
     private long maxLogBytes = 1048576L;
     private long maxScriptBytes = 1048576L;
     private long maxInputFileBytes = 10485760L; // 10 MB
+    // V2: hard cap on simultaneously-running executions across the whole
+    // process. Backed by a Semaphore in the executor. Defaults to 5 — generous
+    // enough for normal use, low enough that runaway forks can't fill the box.
+    private int maxConcurrent = 5;
 
     public boolean isMock() { return mock; }
     public void setMock(boolean mock) { this.mock = mock; }
@@ -31,4 +35,6 @@ public class ScriptBoxProperties {
     public void setMaxScriptBytes(long maxScriptBytes) { this.maxScriptBytes = maxScriptBytes; }
     public long getMaxInputFileBytes() { return maxInputFileBytes; }
     public void setMaxInputFileBytes(long maxInputFileBytes) { this.maxInputFileBytes = maxInputFileBytes; }
+    public int getMaxConcurrent() { return maxConcurrent; }
+    public void setMaxConcurrent(int maxConcurrent) { this.maxConcurrent = Math.max(1, maxConcurrent); }
 }

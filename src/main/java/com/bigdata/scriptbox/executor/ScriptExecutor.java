@@ -71,6 +71,20 @@ public class ScriptExecutor {
                 "script is DANGEROUS: type " + RiskLevel.CONFIRM_TOKEN + " to confirm execution");
         }
 
+        // V2: anti-duplicate gate. When the script has allowConcurrent=false
+        // (the default), refuse the request if any execution of THIS script is
+        // still running. We check the registry rather than the database because
+        // the row isn't inserted until the process exits.
+        if (!Boolean.TRUE.equals(script.getAllowConcurrent())) {
+            for (RunningExecution re : runningRegistry.activeExecutions()) {
+                if (re.scriptId == script.getId()) {
+                    throw new IllegalStateException(
+                            "script '" + script.getName() + "' is already running (executionId="
+                                    + re.executionId + "). Set allowConcurrent=true to override.");
+                }
+            }
+        }
+
         Tenant tenant = tenantService.getById(req.getTenantId());
         if (tenant == null) throw new IllegalArgumentException("tenant not found: " + req.getTenantId());
         if (tenant.getEnabled() == null || !tenant.getEnabled())
@@ -192,7 +206,19 @@ public class ScriptExecutor {
             pb.environment().putAll(globalVariableService.envForExecution());
         }
 
-        Process process = pb.start();
+        Process process;
+        // V2: enforce the concurrency cap by checking the registry. We use the
+        // registry (not a fixed-capacity semaphore) because (a) the cap is read
+        // live from props on every call, so changing max-concurrent at runtime
+        // takes effect immediately, and (b) "active" already maps to "Process
+        // is forked or queued", which is exactly the cap semantics we want.
+        if (runningRegistry.activeCount() >= props.getMaxConcurrent()) {
+            throw new IllegalStateException(
+                    "execution slot limit reached (active="
+                            + runningRegistry.activeCount() + ", max-concurrent="
+                            + props.getMaxConcurrent() + "); wait for a running script to finish or raise scriptbox.max-concurrent.");
+        }
+        process = pb.start();
         runningRegistry.register(executionId, script.getId(), tenant.getId(), startMs, process);
 
         // Drain stdout and stderr concurrently to avoid pipe-buffer deadlock.
