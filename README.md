@@ -5,7 +5,7 @@
 
 ## 核心理念
 
-* **程序只部署一次**：未来新增 Hudi / Flink / Hive / HBase / HDFS / YARN 脚本，**不需要修改 Java，不需要重新打包，不需要重新部署**。
+* **程序只部署一次**：未来新增 Hudi / Flink / Hive / HBase / HDFS / YARN 脚本，**不需要修改 Java、不需要重新打包、不需要重新部署**。
 * **动态参数自动生成表单**：每个脚本可声明 0~N 个参数，系统根据声明类型自动渲染执行页面。
 * **统一参数规范**：脚本接收 `--key value` 长选项，Java 端使用 `ProcessBuilder(List<String>)` 调用，**禁止 `bash -c`** 拼接，避免 Shell 注入。
 * **Mock 开发模式**：开发机无 Kerberos / Hadoop，所有功能以 mock 跑通；真实环境只需把 `scriptbox.mock` 改为 `false`。
@@ -14,13 +14,15 @@
 
 | 层 | 选型 |
 | --- | --- |
-| 语言 | Java 17 |
-| 框架 | Spring Boot 3.3.5 (Spring MVC + Thymeleaf) |
+| 后端语言 | Java 17 |
+| 后端框架 | Spring Boot 3.3.5 (Spring MVC + Validation) |
 | 持久化 | H2 File（`./data/db/scriptbox.mv.db`），MyBatis-Plus 3.5.7 |
-| 前端 | Bootstrap 5（webjars）+ 原生 JavaScript，无前端构建工具 |
 | 进程调用 | `java.lang.ProcessBuilder` |
+| 前端 | **Vue 3 + Vite 5 + Element Plus 2** (SPA) |
+| 前端状态 | Pinia |
+| HTTP 客户端 | axios |
 
-明确**不**引入：Vue / React / Node / MySQL / Redis / Spring Cloud / Docker / MQ。
+明确**不**引入：Thymeleaf / JSP / Bootstrap webjars / Vue 2 / React / Node 服务端渲染 / MySQL / Redis / Spring Cloud / Docker / MQ。
 
 ## 运行
 
@@ -28,6 +30,7 @@
 
 * JDK 17+
 * Maven 3.8+
+* Node 18+（仅构建期需要，运行时不需要 — 最终产物是单一 fat JAR）
 * Linux 权限：监听 80 端口需要 `CAP_NET_BIND_SERVICE`，一次性设置：
 
   ```bash
@@ -36,10 +39,10 @@
 
   之后用普通用户即可启动到 80 端口。
 
-### 构建 & 启动
+### 构建 & 启动（生产模式，单 JAR 部署）
 
 ```bash
-mvn clean package
+mvn clean package              # 自动跑 npm ci + vite build，把 dist 拷进 JAR
 java -jar target/script-box.jar
 ```
 
@@ -49,14 +52,28 @@ java -jar target/script-box.jar
 > 1. 在 `./data/` 下创建 `db/`、`scripts/`、`keytabs/`、`executions/` 目录。
 > 2. 执行 `db/schema.sql` 建表（`CREATE TABLE IF NOT EXISTS`，幂等）。
 > 3. 注入 1 个 mock 租户和 5 个示例脚本（success / failed / stderr-mix / timeout / large-output）。
+> 4. 服务 Vue SPA 静态资源（`BOOT-INF/classes/static/` 由 Maven 构建期从 `frontend/dist/` 注入）。
+
+### 开发模式（前后端分离，热更新）
+
+```bash
+# Terminal 1: Spring Boot 在 :80
+mvn spring-boot:run
+
+# Terminal 2: Vite dev server 在 :5173，自动代理 /api/* 到 :80
+cd frontend && npm install && npm run dev
+```
+
+打开 http://localhost:5173/ — 修改 Vue 组件即时热更新，REST 调用透明转发到后端。
 
 ### 测试
 
 ```bash
-mvn test
+mvn test                      # 跑全部单元 + 集成测试
+mvn test -DskipFrontend=true  # 跳过 npm 调用（离线环境）
 ```
 
-测试覆盖：
+12 个测试用例：
 
 | 类 | 覆盖点 |
 | --- | --- |
@@ -66,51 +83,91 @@ mvn test
 | `H2PersistenceTest` | H2 文件写入验证 |
 | `ApiSmokeTest` | REST API 端到端 |
 
+## 构建流程
+
+```
+┌──────────────┐  npm ci   ┌──────────────┐  vite build  ┌──────────────┐
+│  frontend/   │ ────────▶ │ node_modules/│ ────────────▶ │  dist/       │
+└──────────────┘           └──────────────┘              └──────────────┘
+                                                               │
+                          Maven exec plugin (generate-resources)
+                                                               ▼
+┌──────────────┐  copy-resources  ┌──────────────────────────────┐
+│  src/main/   │ ────────────────▶ │ target/classes/static/       │
+│  resources/  │                  │ (BOOT-INF/classes/static/)   │
+└──────────────┘                  └──────────────────────────────┘
+                                              │
+                                  spring-boot:repackage
+                                              ▼
+                                    ┌──────────────────┐
+                                    │ script-box.jar   │  ← 唯一交付物
+                                    │  ~29 MB          │
+                                    └──────────────────┘
+```
+
+构建期一次性把 Vue dist 拷进 Spring Boot 的 static 资源目录，最终只产出单一 fat JAR，**不需要 Nginx，不需要 Node，部署就是拷一个 jar 然后 `java -jar`**。
+
 ## 目录结构
 
 ```
 bigdata-script-box/
-├── pom.xml
+├── pom.xml                              # Maven 配置（含 exec-maven-plugin 自动 npm 构建）
 ├── README.md
-├── mock-scripts/                  # 内置示例脚本（启动时自动入库）
+├── mock-scripts/                        # 内置示例脚本（启动时自动入库）
 │   ├── success.sh
 │   ├── failed.sh
 │   ├── stderr.sh
 │   ├── timeout.sh
 │   └── large-output.sh
-├── data/                          # 运行期数据（H2 文件、keytab、脚本正文、执行产物）
+├── data/                                # 运行期数据（H2 文件、keytab、脚本正文、执行产物），gitignored
 │   ├── db/scriptbox.mv.db
 │   ├── scripts/{id}/script.sh
 │   ├── keytabs/tenant_{id}_*.keytab
 │   └── executions/{execId}/{stdout,stderr}.log
-└── src/
+├── frontend/                            # Vue 3 SPA
+│   ├── package.json
+│   ├── package-lock.json
+│   ├── vite.config.js                   # dev server 代理 /api → :80
+│   ├── index.html                       # Vite SPA 入口
+│   └── src/
+│       ├── main.js                      # Vue 启动 + Element Plus 注册
+│       ├── App.vue                      # 根组件（包 AppLayout + <router-view/>）
+│       ├── router.js                    # Vue Router（hash 模式）
+│       ├── style.css                    # 全局样式（中性色 + JetBrains Mono）
+│       ├── api/                         # axios 封装 + 各模块端点
+│       ├── components/                  # AppLayout / ParamForm / ExecutionResultDialog
+│       ├── views/                       # ExecuteView / ScriptsView / ScriptEditView / TenantsView / HistoryView
+│       └── utils/format.js              # 日期/时长/参数 JSON 解析
+└── src/                                 # Spring Boot 后端
     ├── main/
     │   ├── java/com/bigdata/scriptbox/
     │   │   ├── ScriptBoxApplication.java
-    │   │   ├── config/             # DataInitializer / Properties / InMemoryMultipartFile
-    │   │   ├── controller/         # PageController / Tenant / Script / Execution / History
-    │   │   ├── dto/                # ApiResponse / ExecutionRequest
-    │   │   ├── entity/             # Tenant / Script / ScriptParam / ExecutionHistory
-    │   │   ├── executor/           # ScriptExecutor
-    │   │   ├── mapper/             # MyBatis-Plus Mappers
-    │   │   └── service/            # TenantService / ScriptService / ExecutionService / HistoryService
+    │   │   ├── config/                  # DataInitializer / Properties / InMemoryMultipartFile / WebConfig (SPA fallback)
+    │   │   ├── controller/              # Tenant / Script / Execution / History (REST 控制器)
+    │   │   ├── dto/                     # ApiResponse / ExecutionRequest
+    │   │   ├── entity/                  # Tenant / Script / ScriptParam / ExecutionHistory
+    │   │   ├── executor/                # ScriptExecutor
+    │   │   ├── mapper/                  # MyBatis-Plus Mappers
+    │   │   └── service/                 # TenantService / ScriptService / ExecutionService / HistoryService
     │   └── resources/
     │       ├── application.yml
     │       ├── db/schema.sql
     │       ├── mappers/ScriptParamMapper.xml
-    │       └── templates/          # Thymeleaf 模板
+    │       └── static/                  # ← Vue dist 在构建期被复制到这里
     └── test/...
 ```
 
-## 页面
+## 页面（4 个 SPA 路由）
 
-| 路径 | 功能 |
+| Hash 路径 | 功能 |
 | --- | --- |
-| `/` | 执行中心：按 category 分组展示脚本，点击进入动态表单 |
-| `/scripts` | 脚本列表 + 新增入口 |
-| `/scripts/edit?id=N` | 编辑脚本基本信息 + 在线编辑脚本正文 + 管理动态参数 |
-| `/tenants` | 租户 CRUD + 上传 keytab + 测试租户（mock 或真实 kinit） |
-| `/history` | 执行历史，点击查看 stdout / stderr / 参数 |
+| `#/` | **执行中心**：按 category 分组卡片，点击打开 Drawer 渲染动态参数表单，执行后弹出会话框显示状态卡 + stdout/stderr/参数 Tabs |
+| `#/scripts` | **脚本管理**：Element Plus Table 列出所有脚本，新增 Drawer 上传 .sh，行内启停 / 编辑 / 删除 |
+| `#/scripts/edit?id=N` | **脚本编辑**：左侧基本信息和脚本正文，右侧动态参数（增删、类型、必填、默认值、选项） |
+| `#/tenants` | **租户管理**：Element Plus Table，新增/编辑 Drawer，keytab 上传，测试租户（Mock 模式返回模拟 kinit 输出） |
+| `#/history` | **执行历史**：Element Plus Table，点行弹窗看 stdout/stderr/参数 |
+
+> Vue Router 使用 hash 模式 (`createWebHashHistory`)，这样 SPA 路由完全在浏览器端处理，Spring Boot 只需服务 `index.html` 和静态资源，无需任何 rewrite 规则。
 
 ## REST API
 
@@ -136,13 +193,16 @@ bigdata-script-box/
 
 支持的 `type`（见 `ScriptService.ALLOWED_TYPES`）：
 
-* `text` / `textarea`
-* `number`
-* `select`（`options` 逗号分隔）
-* `boolean`
-* `date`
+| type | 控件 | 说明 |
+| --- | --- | --- |
+| `text` | `<el-input>` | 单行文本 |
+| `textarea` | `<el-input type="textarea">` | 多行文本 |
+| `number` | `<el-input-number>` | 数字 |
+| `select` | `<el-select>` | 枚举，`options` 逗号分隔 |
+| `boolean` | `<el-switch>` | 开关 |
+| `date` | `<el-date-picker>` | 日期选择器 |
 
-新增脚本 → 在 `/scripts/edit?id=N` 配置参数 → 保存。执行页面自动按 `sortOrder` 渲染。
+新增脚本 → 在「脚本管理 → 编辑」配置参数 → 保存。执行页面自动按 `sortOrder` 渲染。
 
 ## 执行模型
 
@@ -184,17 +244,13 @@ scriptbox:
 ## 验收清单
 
 1. `mvn test` 全部通过（12 个用例）✅
-2. `mvn clean package` 成功 ✅
+2. `mvn clean package` 成功（自动跑 npm 构建，最终单 JAR ~29 MB）✅
 3. Spring Boot 正常启动 ✅
-4. 浏览器访问 80 端口页面 ✅
-5. 租户 CRUD ✅
-6. 脚本 CRUD ✅
-7. 参数可动态配置 ✅
-8. 执行页面根据参数自动生成 ✅
-9. success.sh 正常执行 ✅
-10. failed.sh 正确识别失败 ✅
-11. timeout.sh 正确超时 ✅
-12. stdout / stderr 正常保存 ✅
-13. execution_history 正常记录 ✅
-14. H2 重启后数据存在 ✅（`./data/db/scriptbox.mv.db`）
-15. README 完整 ✅
+4. 浏览器访问首页（SPA shell 由 Spring Boot 提供）✅
+5. 4 个页面（执行中心 / 脚本 / 租户 / 历史）渲染正常 ✅
+6. 执行中心按 category 分类卡片，点击 Drawer 打开动态表单 ✅
+7. 5 个 mock 脚本端到端执行（success / failed / timeout / stderr-mix / large-output）✅
+8. stdout / stderr 正常保存并展示 ✅
+9. execution_history 正常记录 ✅
+10. H2 重启后数据存在 ✅（`./data/db/scriptbox.mv.db`）
+11. README 完整 ✅
