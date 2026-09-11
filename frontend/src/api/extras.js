@@ -58,6 +58,10 @@ export const replaceScenarioSteps = (id, steps) =>
 export const runScenario = (id, tenantId) =>
   http.post(`/scenarios/${id}/run`, null, { params: { tenantId } }).then((r) => r.data)
 
+// V2: count of execution_history rows that ran as part of this scenario.
+export const scenarioRelatedCounts = (id) =>
+  http.get(`/scenarios/${id}/related-counts`).then((r) => r.data)
+
 // ===== Precheck =====
 export const runPrecheck = (scriptId) =>
   http.post(`/scripts/${scriptId}/precheck`).then((r) => r.data)

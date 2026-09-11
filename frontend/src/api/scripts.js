@@ -43,3 +43,8 @@ export const createScript = (form) =>
 export const updateScript = (id, form) =>
   http.put(`/scripts/${id}`, form, { headers: { 'Content-Type': 'multipart/form-data' } })
     .then((r) => r.data)
+
+// V2: counts of records that reference this script. Shown in the delete
+// confirmation dialog so the operator sees what will be orphaned.
+export const scriptRelatedCounts = (id) =>
+  http.get(`/scripts/${id}/related-counts`).then((r) => r.data)

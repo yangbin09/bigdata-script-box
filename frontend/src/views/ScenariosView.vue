@@ -195,7 +195,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   listScenarios, getScenario, createScenario, updateScenario,
   deleteScenario, replaceScenarioSteps, runScenario,
-  listPresets
+  listPresets, scenarioRelatedCounts
 } from '../api/extras'
 import { listScripts } from '../api/scripts'
 import { listTenants } from '../api/tenants'
@@ -313,7 +313,17 @@ async function submitForm() {
 }
 
 async function confirmDelete(row) {
-  await ElMessageBox.confirm(`确认删除场景「${row.name}」？`, '确认', { type: 'warning' })
+  let counts = { historyCount: 0 }
+  try {
+    const r = await scenarioRelatedCounts(row.id)
+    counts = r?.data || counts
+  } catch (_) { /* tolerate */ }
+  const related = counts.historyCount
+    ? `\n将关联影响：${counts.historyCount} 条执行历史（删除后这些记录的引用将悬空）`
+    : ''
+  await ElMessageBox.confirm(
+    `确认删除场景「${row.name}」？${related}`,
+    '确认', { type: 'warning' })
   await deleteScenario(row.id)
   ElMessage.success('已删除')
   await refresh()

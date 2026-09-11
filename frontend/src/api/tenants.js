@@ -28,3 +28,7 @@ export const uploadKeytab = (id, file) => {
 
 export const testTenant = (id) =>
   http.post(`/tenants/${id}/test`).then((r) => r.data)
+
+// V2: count of execution_history rows referencing this tenant.
+export const tenantRelatedCounts = (id) =>
+  http.get(`/tenants/${id}/related-counts`).then((r) => r.data)

@@ -1,9 +1,15 @@
 package com.bigdata.scriptbox.controller;
 
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.bigdata.scriptbox.dto.ApiResponse;
+import com.bigdata.scriptbox.entity.ExecutionHistory;
 import com.bigdata.scriptbox.entity.Script;
 import com.bigdata.scriptbox.entity.ScriptParam;
+import com.bigdata.scriptbox.entity.ScriptPreset;
 import com.bigdata.scriptbox.entity.ScriptTemplate;
+import com.bigdata.scriptbox.mapper.ExecutionHistoryMapper;
+import com.bigdata.scriptbox.mapper.ScriptPresetMapper;
+import com.bigdata.scriptbox.mapper.ScenarioStepMapper;
 import com.bigdata.scriptbox.service.ScriptService;
 import com.bigdata.scriptbox.service.ScriptTemplateService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,6 +30,9 @@ public class ScriptController {
 
     @Autowired private ScriptService scriptService;
     @Autowired private ScriptTemplateService templateService;
+    @Autowired private ExecutionHistoryMapper historyMapper;
+    @Autowired private ScriptPresetMapper presetMapper;
+    @Autowired private ScenarioStepMapper scenarioStepMapper;
 
     @GetMapping
     public ApiResponse<List<Script>> list() {
@@ -163,6 +172,25 @@ public class ScriptController {
     public ApiResponse<Void> delete(@PathVariable Long id) {
         scriptService.delete(id);
         return ApiResponse.ok();
+    }
+
+    /**
+     * V2: counts of records that reference this script, surfaced in the
+     * delete confirmation dialog so the operator sees the blast radius
+     * before clicking confirm. H2 has no FKs so a delete orphans rows;
+     * these numbers make that visible.
+     */
+    @GetMapping("/{id}/related-counts")
+    public ApiResponse<Map<String, Long>> relatedCounts(@PathVariable Long id) {
+        Map<String, Long> out = new HashMap<>();
+        out.put("historyCount",
+                historyMapper.selectCount(new QueryWrapper<ExecutionHistory>().eq("script_id", id)));
+        out.put("presetCount",
+                presetMapper.selectCount(new QueryWrapper<ScriptPreset>().eq("script_id", id)));
+        // Scenarios that have at least one step referencing this script.
+        out.put("scenarioCount",
+                scenarioStepMapper.selectCount(new QueryWrapper<com.bigdata.scriptbox.entity.ScenarioStep>().eq("script_id", id)));
+        return ApiResponse.ok(out);
     }
 
     @PostMapping("/{id}/enabled")

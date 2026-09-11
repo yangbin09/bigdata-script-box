@@ -1,8 +1,11 @@
 package com.bigdata.scriptbox.controller;
 
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.bigdata.scriptbox.config.ScriptBoxProperties;
 import com.bigdata.scriptbox.dto.ApiResponse;
+import com.bigdata.scriptbox.entity.ExecutionHistory;
 import com.bigdata.scriptbox.entity.Tenant;
+import com.bigdata.scriptbox.mapper.ExecutionHistoryMapper;
 import com.bigdata.scriptbox.service.TenantService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
@@ -22,6 +25,7 @@ public class TenantController {
 
     @Autowired private TenantService tenantService;
     @Autowired private ScriptBoxProperties props;
+    @Autowired private ExecutionHistoryMapper historyMapper;
 
     @GetMapping
     public ApiResponse<List<Tenant>> list() {
@@ -50,6 +54,15 @@ public class TenantController {
     public ApiResponse<Void> delete(@PathVariable Long id) {
         tenantService.delete(id);
         return ApiResponse.ok();
+    }
+
+    /** V2: count of execution_history rows referencing this tenant. */
+    @GetMapping("/{id}/related-counts")
+    public ApiResponse<Map<String, Long>> relatedCounts(@PathVariable Long id) {
+        Map<String, Long> out = new HashMap<>();
+        out.put("historyCount",
+                historyMapper.selectCount(new QueryWrapper<ExecutionHistory>().eq("tenant_id", id)));
+        return ApiResponse.ok(out);
     }
 
     @PostMapping("/{id}/enabled")
