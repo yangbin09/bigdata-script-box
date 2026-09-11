@@ -36,8 +36,12 @@
     </div>
 
     <el-empty
-      v-if="!loading && !filteredScripts.length"
+      v-if="!loading && !filteredScripts.length && !search.trim()"
       description="暂无可执行脚本。先去「脚本管理」创建或调整脚本的启用状态。"
+    />
+    <el-empty
+      v-else-if="!loading && !filteredScripts.length"
+      :description="`没有匹配「${search}」的脚本。试试别的关键词，或清空搜索框查看全部。`"
     />
 
     <!-- 最近使用 -->
