@@ -46,6 +46,17 @@ scriptbox:
   max-log-bytes: 1048576           # 1MB limit per page render
   max-script-bytes: 1048576        # 1MB script upload limit
   max-input-file-bytes: 10485760   # 10MB script parameter file upload limit
+  max-artifact-bytes: 52428800     # 50MB per artifact file
+  max-artifact-files: 50           # 50 artifacts per execution max
+  max-artifact-total-bytes: 209715200  # 200MB total artifacts per execution
+  # V2: auto-cleanup retention. 0 disables a category. Values can also be
+  # overridden at runtime via the system_setting table (see
+  # SystemSettingService for keys: cleanup.historyDays etc).
+  retention-history-days: 30
+  retention-artifact-days: 30
+  retention-execution-days: 30
+  retention-log-days: 7
+  cleanup-cron: "0 0 3 * * *"     # daily 03:00 local time
 
 bigdata:
   environment-name: Mock 环境      # shown in the topbar tag

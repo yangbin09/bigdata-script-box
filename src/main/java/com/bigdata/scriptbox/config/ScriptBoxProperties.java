@@ -25,6 +25,17 @@ public class ScriptBoxProperties {
     private long maxArtifactBytes = 52428800L; // 50 MB per file
     private int maxArtifactFiles = 50;         // 50 files per execution
     private long maxArtifactTotalBytes = 209715200L; // 200 MB total per execution
+    // V2: auto-cleanup retention. The CleanupService reads system_setting
+    // overrides first, then falls back to these defaults. historyDays=0
+    // disables history cleanup; same for the other knobs.
+    private int retentionHistoryDays = 30;
+    private int retentionArtifactDays = 30;
+    private int retentionExecutionDays = 30;
+    private int retentionLogDays = 7;
+    // V2: cron expression for the auto-cleanup @Scheduled. Default is
+    // "0 0 3 * * *" — every day at 03:00 local time. Off-by-default for
+    // development; tests can invoke CleanupService.apply() directly.
+    private String cleanupCron = "0 0 3 * * *";
 
     public boolean isMock() { return mock; }
     public void setMock(boolean mock) { this.mock = mock; }
@@ -50,4 +61,14 @@ public class ScriptBoxProperties {
     public void setMaxArtifactFiles(int maxArtifactFiles) { this.maxArtifactFiles = Math.max(1, maxArtifactFiles); }
     public long getMaxArtifactTotalBytes() { return maxArtifactTotalBytes; }
     public void setMaxArtifactTotalBytes(long maxArtifactTotalBytes) { this.maxArtifactTotalBytes = maxArtifactTotalBytes; }
+    public int getRetentionHistoryDays() { return retentionHistoryDays; }
+    public void setRetentionHistoryDays(int v) { this.retentionHistoryDays = Math.max(0, v); }
+    public int getRetentionArtifactDays() { return retentionArtifactDays; }
+    public void setRetentionArtifactDays(int v) { this.retentionArtifactDays = Math.max(0, v); }
+    public int getRetentionExecutionDays() { return retentionExecutionDays; }
+    public void setRetentionExecutionDays(int v) { this.retentionExecutionDays = Math.max(0, v); }
+    public int getRetentionLogDays() { return retentionLogDays; }
+    public void setRetentionLogDays(int v) { this.retentionLogDays = Math.max(0, v); }
+    public String getCleanupCron() { return cleanupCron; }
+    public void setCleanupCron(String cleanupCron) { this.cleanupCron = cleanupCron; }
 }

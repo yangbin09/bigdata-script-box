@@ -212,3 +212,14 @@ CREATE TABLE IF NOT EXISTS execution_artifact (
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_artifact_exec ON execution_artifact(execution_id);
+
+-- V2: simple key/value settings table used by the cleanup scheduler to
+-- override the application.yml defaults without restart. Keys are
+-- dotted namespaced (e.g. cleanup.historyDays); values are strings
+-- coerced on read. UpdatedTime lets the UI show 'last edited'.
+CREATE TABLE IF NOT EXISTS system_setting (
+    setting_key   VARCHAR(128) PRIMARY KEY,
+    setting_value VARCHAR(1024),
+    description   VARCHAR(512),
+    update_time   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
