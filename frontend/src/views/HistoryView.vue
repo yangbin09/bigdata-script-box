@@ -17,7 +17,7 @@
     <div class="sb-header">
       <div>
         <h2 class="sb-page-title">执行历史</h2>
-        <p class="sb-page-sub">最近 {{ rows.length }} 条执行记录（默认 100 条上限）。</p>
+        <p class="sb-page-sub">{{ rows.length > 0 ? `最近 ${rows.length} 条执行记录（最多 200 条）` : '这里会显示你跑过的脚本记录。' }}</p>
       </div>
       <el-button :icon="Refresh" plain @click="refresh" :loading="loading">刷新</el-button>
     </div>
@@ -77,6 +77,10 @@
     </div>
 
     <el-table :data="rows" v-loading="loading" class="sb-card" stripe @row-click="openDetail">
+      <template #empty>
+        <el-empty v-if="!loading && !hasFilters" description="还没有执行记录。先去「执行」页面跑一个脚本试试。" />
+        <el-empty v-else description="没有匹配当前筛选条件的记录。点击右上角「全部清空」重置筛选。" />
+      </template>
       <el-table-column label="#" width="70" prop="id" />
       <el-table-column label="脚本" min-width="200">
         <template #default="{ row }">
@@ -251,7 +255,7 @@
 </template>
 
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import { onMounted, ref, watch, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Refresh, RefreshRight, RefreshLeft, Close, DocumentCopy, Download,
@@ -282,6 +286,13 @@ const keyword = ref('')
 // `from` as inclusive and `to` as exclusive (the day after the last kept day).
 const dateFrom = ref('')
 const dateTo = ref('')
+
+// True when the user has applied any filter — used by the empty state to
+// show a different hint ("reset filters") versus the cold-start hint
+// ("run a script first").
+const hasFilters = computed(() =>
+  !!status.value || scriptId.value != null || tenantId.value != null ||
+  (keyword.value && keyword.value.trim()) || !!dateFrom.value || !!dateTo.value)
 
 const detailOpen = ref(false)
 const current = ref(null)
