@@ -142,7 +142,7 @@ const rows = computed(() => {
   if (!props.report) return []
   return [
     { key: 'exec',  label: '执行目录', deleted: props.report.executionDeleted || 0, skipped: 0, failed: 0 },
-    { key: 'art',   label: 'Artifact',  deleted: props.report.artifactDeleted  || 0, skipped: 0, failed: 0 },
+    { key: 'art',   label: '产物文件', deleted: props.report.artifactDeleted  || 0, skipped: 0, failed: 0 },
     { key: 'log',   label: '日志',     deleted: props.report.logDeleted       || 0, skipped: 0, failed: 0 },
     { key: 'hist',  label: '历史',     deleted: props.report.historyDeleted   || 0, skipped: 0, failed: 0 }
   ]

@@ -58,17 +58,15 @@
       >
         <el-option
           v-for="opt in selectOptions(p)"
-          :key="opt"
-          :label="opt"
-          :value="opt"
+          :key="opt.value"
+          :label="opt.label"
+          :value="opt.value"
         />
       </el-select>
       <!-- boolean -->
       <el-switch
         v-else-if="p.type === 'boolean'"
         v-model="form[p.name]"
-        active-text="true"
-        inactive-text="false"
       />
       <!-- date -->
       <el-date-picker
@@ -222,8 +220,20 @@ function paramLabel(p) {
   return s
 }
 
+/**
+ * Parse ScriptParam.options (comma-separated string) into [{label, value}].
+ * Each entry may be "label:value" — execute uses value, UI shows label.
+ * Legacy "value" entries round-trip with label === value.
+ */
 function selectOptions(p) {
-  return (p.options || '').split(',').map((s) => s.trim()).filter(Boolean)
+  const raw = p.options || ''
+  return raw.split(',').map((s) => s.trim()).filter(Boolean).map((entry) => {
+    const i = entry.indexOf(':')
+    if (i >= 0) {
+      return { label: entry.substring(0, i).trim(), value: entry.substring(i + 1).trim() }
+    }
+    return { label: entry, value: entry }
+  })
 }
 
 function rulesFor(p) {
@@ -251,8 +261,8 @@ function rulesFor(p) {
       validator: (_, value, cb) => {
         if (!p.required && (value === '' || value == null)) return cb()
         const opts = selectOptions(p)
-        if (opts.includes(String(value))) return cb()
-        cb(new Error(`必须是 ${opts.join('/')} 之一`))
+        if (opts.some((o) => o.value === String(value))) return cb()
+        cb(new Error(`必须是 ${opts.map((o) => o.label).join('/')} 之一`))
       },
       trigger: ['blur', 'change']
     })

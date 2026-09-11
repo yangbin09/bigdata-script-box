@@ -70,7 +70,7 @@
           <span class="mono">{{ paramCounts[row.id] ?? '-' }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="超时" width="100" align="right">
+      <el-table-column label="超时（秒）" width="110" align="right">
         <template #default="{ row }">{{ row.timeoutSeconds || 600 }} 秒</template>
       </el-table-column>
       <el-table-column label="状态" width="100" align="center">
@@ -119,27 +119,34 @@
       size="480px"
     >
       <el-form :model="createForm" label-position="top">
-        <el-form-item label="名称" required>
-          <el-input v-model="createForm.name" placeholder="小写字母+数字+下划线" />
+        <el-form-item required>
+          <template #label><SBLabel text="技术名称" tip="Shell 脚本接收到的命令行参数名前缀（用于路由/API 调用）。保存后修改需谨慎。" required /></template>
+          <el-input v-model="createForm.name" placeholder="小写字母+数字+下划线，例如 daily_etl" />
         </el-form-item>
-        <el-form-item label="显示名">
-          <el-input v-model="createForm.displayName" placeholder="留空则使用名称" />
+        <el-form-item>
+          <template #label><SBLabel text="显示名" tip="在执行中心和脚本列表展示给用户的友好名称。留空则回退到技术名称。" /></template>
+          <el-input v-model="createForm.displayName" placeholder="留空则使用技术名称" />
         </el-form-item>
-        <el-form-item label="分类">
-          <el-input v-model="createForm.category" placeholder="如 Mock / Hudi / Flink" />
+        <el-form-item>
+          <template #label><SBLabel text="分类" tip="用于在执行中心将脚本分组显示。常用分类：Mock、Hudi、Flink、Hive。" /></template>
+          <el-input v-model="createForm.category" placeholder="例如：Mock / Hudi / Flink" />
         </el-form-item>
-        <el-form-item label="描述">
-          <el-input v-model="createForm.description" type="textarea" :rows="2" />
+        <el-form-item>
+          <template #label><SBLabel text="描述" tip="在脚本列表和执行中心展示的简短说明，便于协作者快速理解脚本用途。" /></template>
+          <el-input v-model="createForm.description" type="textarea" :rows="2" placeholder="例如：每日凌晨同步 Hive 数据到 Hudi 表" />
         </el-form-item>
-        <el-form-item label="超时(秒)">
+        <el-form-item>
+          <template #label><SBLabel text="超时时间（秒）" tip="脚本允许执行的最长时间。超过该时间后系统会终止进程。建议普通测试设置 300 秒。" /></template>
           <el-input-number
             v-model="createForm.timeoutSeconds"
             :min="1" :max="86400"
             controls-position="right"
             style="width: 100%"
+            placeholder="300"
           />
         </el-form-item>
-        <el-form-item label="风险等级">
+        <el-form-item>
+          <template #label><SBLabel text="风险等级" tip="用来提示用户脚本对外部系统的影响。只读表示安全；写操作表示会修改文件系统/数据库；危险表示删除或不可恢复。" /></template>
           <el-select v-model="createForm.riskLevel" style="width: 100%">
             <el-option
               v-for="o in RISK_LEVEL_OPTIONS"
@@ -149,11 +156,12 @@
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="允许并发执行">
+        <el-form-item>
+          <template #label><SBLabel text="允许并发执行" tip="默认同一脚本同一租户互斥（同一时间只能跑一次）。开启后允许多次同时运行。" /></template>
           <el-switch v-model="createForm.allowConcurrent" />
-          <span class="muted" style="margin-left: 8px">开启后多个调用可同时运行（默认同一脚本同一租户互斥）。</span>
         </el-form-item>
-        <el-form-item label="上传 .sh 文件" required>
+        <el-form-item required>
+          <template #label><SBLabel text="上传 Shell 文件" tip="拖拽或选择一个 .sh 文件。文件内容会成为脚本正文，可在保存后通过「编辑」继续调整。" required /></template>
           <el-upload
             ref="uploadRef"
             :auto-upload="false"
@@ -200,7 +208,8 @@
           </div>
         </div>
         <el-form v-if="tplPicked" label-position="top" class="sb-tpl-form">
-          <el-form-item label="新脚本名称" required>
+          <el-form-item required>
+            <template #label><SBLabel text="新脚本名称" tip="将通过此名称（技术名称）创建脚本，保存后可在编辑页面继续调整。" required /></template>
             <el-input
               v-model="tplName"
               :placeholder="`${tplPicked.code}-copy`"
@@ -238,6 +247,7 @@ import { exportScript, importScript } from '../api/extras'
 import { listTemplates, createFromTemplate } from '../api/templates'
 import { formatDateTime } from '../utils/format'
 import { RISK_LEVEL_OPTIONS, RISK_LEVEL_LABEL, RISK_LEVEL_TAG_TYPE, normalizeRiskLevel } from '../utils/labels'
+import SBLabel from '../components/SBLabel.vue'
 
 const router = useRouter()
 const rows = ref([])

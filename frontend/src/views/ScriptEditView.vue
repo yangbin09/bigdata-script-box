@@ -41,27 +41,34 @@
         <el-tab-pane label="基本信息" name="info">
           <div class="sb-card sb-edit-section">
             <el-form :model="form" label-position="top">
-              <el-form-item label="显示名">
-                <el-input v-model="form.displayName" placeholder="显示在执行中心的名称" />
+              <el-form-item>
+                <template #label><SBLabel text="显示名" tip="在执行中心和脚本列表展示给用户的友好名称。留空则回退到技术名称。" /></template>
+                <el-input v-model="form.displayName" placeholder="例如：每日 ETL" />
               </el-form-item>
-              <el-form-item label="技术名称 (cli key)" required>
-                <el-input v-model="form.name" placeholder="小写字母+数字+下划线" />
+              <el-form-item required>
+                <template #label><SBLabel text="技术名称" tip="Shell 脚本接收到的命令行参数名前缀（用于路由/API 调用）。保存后修改需谨慎，会影响已有执行记录。" required /></template>
+                <el-input v-model="form.name" placeholder="小写字母+数字+下划线，例如 daily_etl" />
               </el-form-item>
-              <el-form-item label="分类">
-                <el-input v-model="form.category" placeholder="如 Mock / Hudi / Flink" />
+              <el-form-item>
+                <template #label><SBLabel text="分类" tip="用于在执行中心将脚本分组显示。常用分类：Mock、Hudi、Flink、Hive。" /></template>
+                <el-input v-model="form.category" placeholder="例如：Mock / Hudi / Flink" />
               </el-form-item>
-              <el-form-item label="描述">
-                <el-input v-model="form.description" type="textarea" :rows="2" />
+              <el-form-item>
+                <template #label><SBLabel text="描述" tip="在脚本列表和执行中心展示的简短说明，便于协作者快速理解脚本用途。" /></template>
+                <el-input v-model="form.description" type="textarea" :rows="2" placeholder="例如：每日凌晨同步 Hive 数据到 Hudi 表" />
               </el-form-item>
-              <el-form-item label="超时(秒)">
+              <el-form-item>
+                <template #label><SBLabel text="超时时间（秒）" tip="脚本允许执行的最长时间。超过该时间后系统会终止进程。建议普通测试设置 300 秒，长时间批处理可调到 3600 或更高。" /></template>
                 <el-input-number
                   v-model="form.timeoutSeconds"
                   :min="1" :max="86400"
                   controls-position="right"
                   style="width: 100%"
+                  placeholder="300"
                 />
               </el-form-item>
-              <el-form-item label="风险等级">
+              <el-form-item>
+                <template #label><SBLabel text="风险等级" tip="用来提示用户脚本对外部系统的影响。只读表示安全；写操作表示会修改文件系统/数据库；危险表示删除或不可恢复。" /></template>
                 <el-select v-model="form.riskLevel" style="width: 100%">
                   <el-option
                     v-for="o in RISK_LEVEL_OPTIONS"
@@ -75,23 +82,24 @@
                   <span>执行此脚本将要求操作员输入 <code>CONFIRM</code> 才会真正运行。</span>
                 </div>
               </el-form-item>
-              <el-form-item label="允许并发执行">
+              <el-form-item>
+                <template #label><SBLabel text="允许并发执行" tip="默认同一脚本同一租户互斥（同一时间只能跑一次）。开启后允许多次同时运行。" /></template>
                 <el-switch v-model="form.allowConcurrent" />
-                <span class="muted" style="margin-left: 8px">
-                  开启后同一脚本同一租户可同时多次运行（默认互斥）。
-                </span>
               </el-form-item>
-              <el-form-item label="默认租户">
-                <el-select v-model="form.defaultTenantId" placeholder="不指定 (使用上次)"
+              <el-form-item>
+                <template #label><SBLabel text="默认租户" tip="打开执行页面时预选的租户。留空则使用上次执行的租户，或仅有 1 个租户时自动选择。" /></template>
+                <el-select v-model="form.defaultTenantId" placeholder="不指定（使用上次执行的租户）"
                   clearable style="width: 100%">
                   <el-option v-for="t in tenants" :key="t.id"
-                    :label="`${t.name} (${t.principal || '-'})`" :value="t.id" />
+                    :label="`${t.name}（${t.principal || '-'}）`" :value="t.id" />
                 </el-select>
               </el-form-item>
-              <el-form-item label="收藏">
+              <el-form-item>
+                <template #label><SBLabel text="收藏" tip="开启后此脚本会在执行中心的「常用脚本」中置顶显示。" /></template>
                 <el-switch v-model="form.favorite" />
               </el-form-item>
-              <el-form-item label="启用">
+              <el-form-item>
+                <template #label><SBLabel text="启用" tip="关闭后脚本不会出现在执行中心，也无法被执行。" /></template>
                 <el-switch v-model="form.enabled" />
               </el-form-item>
             </el-form>
@@ -102,12 +110,15 @@
         <el-tab-pane label="Shell" name="body">
           <div class="sb-card sb-edit-section">
             <h3 class="sb-section-title">
-              脚本正文 <span class="count">{{ body.length }} chars</span>
+              Shell 脚本正文 <span class="count">{{ body.length }} 字符</span>
               <span class="sb-syntax-indicator" :class="syntaxClass">
                 <el-icon><component :is="syntaxIcon" /></el-icon>
                 <span>{{ syntaxLabel }}</span>
               </span>
             </h3>
+            <p class="sb-help">
+              编写 Shell 脚本。可通过 <code>$1</code> / <code>$2</code> 或 <code>--参数名 "$VAR"</code> 引用「参数」页声明的动态参数。
+            </p>
             <el-input
               v-model="body"
               type="textarea"
@@ -115,16 +126,16 @@
               resize="vertical"
               spellcheck="false"
               class="mono"
-              placeholder="#!/usr/bin/env bash&#10;echo hello"
+              placeholder="#!/usr/bin/env bash&#10;echo &quot;hello $1&quot;"
             />
             <div v-if="syntaxErrors.length" class="sb-syntax-errors">
-              <div class="sb-syntax-errors-title">语法错误 (bash -n)</div>
+              <div class="sb-syntax-errors-title">语法错误（bash -n）</div>
               <ul>
                 <li v-for="(e, i) in syntaxErrors" :key="i">{{ e }}</li>
               </ul>
             </div>
             <div v-else-if="syntaxWarnings.length" class="sb-syntax-warnings">
-              <div class="sb-syntax-warnings-title">提示 (shellcheck)</div>
+              <div class="sb-syntax-warnings-title">提示（shellcheck）</div>
               <ul>
                 <li v-for="(w, i) in syntaxWarnings" :key="i">{{ w }}</li>
               </ul>
@@ -148,7 +159,7 @@
               <el-button size="small" type="primary" plain :icon="Plus" @click="addParam">新增参数</el-button>
             </div>
             <p class="sb-help">
-              执行时按 <code>--name value</code> 传给脚本；type=file 表示该参数接受上传文件。
+              声明脚本运行时需要的输入。执行时按 <code>--参数名 值</code> 传给脚本；选择「文件上传」时会上传到受控目录并将服务端路径作为参数传给 Shell。
             </p>
             <el-empty v-if="!params.length" :image-size="60" description="未声明参数" />
             <div v-for="(p, idx) in params" :key="idx" class="sb-param-row">
@@ -162,37 +173,92 @@
               </div>
               <el-form label-position="top" :model="p" class="sb-param-form">
                 <div class="sb-param-grid">
-                  <el-form-item label="name (cli key)" required>
-                    <el-input v-model="p.name" placeholder="database" />
+                  <el-form-item required>
+                    <template #label><SBLabel text="参数名" tip="Shell 脚本接收到的命令行参数名。例如填写 action，执行时生成 --action value。不需要填写前面的 --。" required /></template>
+                    <el-input v-model="p.name" placeholder="例如：database" />
+                    <div class="sb-help-inline">执行时以 <code>--参数名 值</code> 的形式传递给脚本。</div>
                   </el-form-item>
-                  <el-form-item label="label">
+                  <el-form-item>
+                    <template #label><SBLabel text="显示名称" tip="执行页面展示给用户看的字段名称。例如参数名 tableType，可以显示为「表类型」。" /></template>
                     <el-input v-model="p.label" placeholder="数据库" />
                   </el-form-item>
-                  <el-form-item label="type">
+                  <el-form-item>
+                    <template #label><SBLabel text="参数类型" tip="决定该参数在执行页面以何种控件呈现。" /></template>
                     <el-select v-model="p.type" style="width: 100%">
-                      <el-option v-for="t in ALLOWED_TYPES" :key="t" :label="t" :value="t" />
+                      <el-option
+                        v-for="t in PARAM_TYPE_OPTIONS"
+                        :key="t.value"
+                        :label="t.label"
+                        :value="t.value"
+                      />
                     </el-select>
+                    <div class="sb-help-inline">{{ PARAM_TYPE_HELP[p.type] }}</div>
                   </el-form-item>
-                  <el-form-item label="required">
+                  <el-form-item>
+                    <template #label><SBLabel text="是否必填" tip="开启后，执行脚本前必须填写该参数。" /></template>
                     <el-switch v-model="p.required" />
                   </el-form-item>
-                  <el-form-item v-if="p.type === 'select'" label="options (逗号分隔)">
-                    <el-input v-model="p.options" placeholder="a,b,c" />
+
+                  <!-- Select options editor: shows for 下拉选择 type.
+                       The backend stores a comma-separated string in p.options,
+                       so we keep that data shape and only change the UI to
+                       a friendly table editor. -->
+                  <el-form-item v-if="p.type === 'select'" class="sb-param-full">
+                    <template #label><SBLabel text="选项配置" tip="定义下拉选择参数的候选项。执行页面展示「显示名称」，实际传给 Shell 脚本的是「参数值」。" /></template>
+                    <div class="sb-options-table">
+                      <div class="sb-options-head">
+                        <span>显示名称</span>
+                        <span>参数值</span>
+                        <span></span>
+                      </div>
+                      <div v-for="(opt, oi) in (p._options || [])" :key="oi" class="sb-options-row">
+                        <el-input v-model="opt.label" placeholder="例如：查看文件" size="small" />
+                        <el-input v-model="opt.value" placeholder="例如：ls" size="small" class="mono" />
+                        <el-button size="small" type="danger" plain :icon="Delete" @click="removeOption(p, oi)" />
+                      </div>
+                      <div v-if="!p._options || !p._options.length" class="sb-options-empty">
+                        暂无选项，点击下方新增。
+                      </div>
+                      <el-button size="small" plain :icon="Plus" @click="addOption(p)" style="margin-top: 6px">
+                        新增选项
+                      </el-button>
+                    </div>
                   </el-form-item>
-                  <el-form-item label="默认值">
-                    <el-input v-if="p.type === 'textarea'" v-model="p.defaultValue" type="textarea" :rows="2" />
-                    <el-input v-else v-model="p.defaultValue" />
+                  <el-form-item v-else-if="p.type !== 'select'" />
+
+                  <el-form-item>
+                    <template #label><SBLabel text="默认值" tip="打开执行页面时自动填充的初始值，用户仍然可以修改。" /></template>
+                    <el-input
+                      v-if="p.type === 'textarea'"
+                      v-model="p.defaultValue"
+                      type="textarea"
+                      :rows="2"
+                      :placeholder="PARAM_TYPE_DEFAULT_PLACEHOLDER[p.type] || ''"
+                    />
+                    <el-input
+                      v-else-if="p.type === 'select'"
+                      v-model="p.defaultValue"
+                      :placeholder="PARAM_TYPE_DEFAULT_PLACEHOLDER[p.type] || '可选值之一'"
+                    />
+                    <el-input
+                      v-else
+                      v-model="p.defaultValue"
+                      :placeholder="PARAM_TYPE_DEFAULT_PLACEHOLDER[p.type] || ''"
+                    />
                   </el-form-item>
-                  <el-form-item label="placeholder">
-                    <el-input v-model="p.placeholder" placeholder="占位提示" />
+                  <el-form-item>
+                    <template #label><SBLabel text="占位提示" tip="执行页面输入框为空时显示的灰色提示文字。留空将使用参数类型对应的默认提示。" /></template>
+                    <el-input v-model="p.placeholder" placeholder="例如：选择需要执行的操作" />
                   </el-form-item>
-                  <el-form-item label="helpText">
-                    <el-input v-model="p.helpText" placeholder="字段下方说明" />
+                  <el-form-item class="sb-param-full">
+                    <template #label><SBLabel text="帮助说明" tip="显示在执行表单参数下方，用于说明参数用途和填写方式。" /></template>
+                    <el-input v-model="p.helpText" type="textarea" :rows="2" placeholder="例如：选择需要执行的操作" />
                   </el-form-item>
                   <el-form-item label="显示条件 (visibleWhenJson)" :class="{ 'sb-param-full': true }">
+                    <template #label><SBLabel text="显示条件" tip="JSON 配置：引用其他参数的值满足某条件时才显示本参数。留空 = 总是显示。" /></template>
                     <el-input v-model="p.visibleWhenJson"
                       type="textarea" :rows="2" class="mono"
-                      placeholder='例如: {"param":"env","operator":"equals","value":"prod"}' />
+                      placeholder='例如：{"param":"env","operator":"equals","value":"prod"}' />
                     <div v-if="p.visibleWhenJson && visibleWhenError(p)" class="sb-visibility-warn">
                       <el-icon><WarningFilled /></el-icon>
                       <span>{{ visibleWhenError(p) }}</span>
@@ -211,7 +277,7 @@
         <el-tab-pane label="执行前检查" name="precheck">
           <div class="sb-card sb-edit-section">
             <p class="sb-help">
-              每次执行前按 JSON 配置依次检查环境（kerberos、PATH 命令、文件存在、可写目录）。失败则不进入实际执行，状态为 <code>PRECHECK_FAILED</code>。
+              每次执行前按 JSON 配置依次检查环境（Kerberos、PATH 命令、文件存在、可写目录）。失败则不进入实际执行，状态为 <code>PRECHECK_FAILED</code>。留空表示不进行任何检查。
             </p>
             <el-input
               v-model="precheckJson"
@@ -226,7 +292,7 @@
             </div>
             <div v-if="precheckResult" class="sb-precheck-result" :class="{ ok: precheckResult.ok, fail: !precheckResult.ok, skipped: precheckResult.skipped }">
               <div class="sb-precheck-headline">
-                {{ precheckResult.skipped ? '未配置检查项 (已跳过)' : (precheckResult.ok ? '通过' : '失败') }}
+                {{ precheckResult.skipped ? '未配置检查项（已跳过）' : (precheckResult.ok ? '通过' : '失败') }}
                 <span class="muted">{{ precheckResult.message }}</span>
               </div>
               <ul v-if="precheckResult.results && precheckResult.results.length">
@@ -245,7 +311,7 @@
         <el-tab-pane label="参数方案" name="presets">
           <div class="sb-card sb-edit-section">
             <div class="sb-params-head">
-              <h3 class="sb-section-title" style="margin: 0">参数方案 (preset) <span class="count">{{ presets.length }}</span></h3>
+              <h3 class="sb-section-title" style="margin: 0">参数方案（preset） <span class="count">{{ presets.length }}</span></h3>
               <el-button size="small" type="primary" plain :icon="Plus" @click="openPresetForm()">新增方案</el-button>
             </div>
             <p class="sb-help">
@@ -291,13 +357,16 @@
       <!-- Preset drawer -->
       <el-drawer v-model="presetFormOpen" :title="presetForm.id ? '编辑参数方案' : '新增参数方案'" direction="rtl" size="520px">
         <el-form :model="presetForm" label-position="top">
-          <el-form-item label="名称" required>
-            <el-input v-model="presetForm.name" />
+          <el-form-item required>
+            <template #label><SBLabel text="名称" tip="在执行页面下拉列表中展示的名称。建议简短、语义清晰，例如「开发环境」「生产环境」。" required /></template>
+            <el-input v-model="presetForm.name" placeholder="例如：每日凌晨同步" />
           </el-form-item>
-          <el-form-item label="描述">
-            <el-input v-model="presetForm.description" type="textarea" :rows="2" />
+          <el-form-item>
+            <template #label><SBLabel text="描述" tip="对该方案的简要说明，便于协作者理解适用场景。" /></template>
+            <el-input v-model="presetForm.description" type="textarea" :rows="2" placeholder="例如：用于开发环境的小批量测试" />
           </el-form-item>
-          <el-form-item label="参数 (JSON)" required>
+          <el-form-item required>
+            <template #label><SBLabel text="参数值（JSON）" tip='键为脚本「参数」页声明的参数名，值为执行时要应用的值。例如：{&quot;database&quot;:&quot;default&quot;,&quot;threads&quot;:&quot;4&quot;}' required /></template>
             <el-input v-model="presetForm.paramsJson" type="textarea" :rows="14"
               class="mono" placeholder='{"database":"default","threads":"4"}' />
           </el-form-item>
@@ -333,7 +402,11 @@ import {
   runPrecheck as runPrecheckApi, savePrecheck
 } from '../api/extras'
 import { formatDateTime } from '../utils/format'
-import { RISK_LEVEL_OPTIONS, normalizeRiskLevel } from '../utils/labels'
+import {
+  RISK_LEVEL_OPTIONS, normalizeRiskLevel,
+  PARAM_TYPE_OPTIONS, PARAM_TYPE_HELP, PARAM_TYPE_DEFAULT_PLACEHOLDER, PARAM_TYPE
+} from '../utils/labels'
+import SBLabel from '../components/SBLabel.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -367,7 +440,45 @@ const versions = ref([])
 const versionOpen = ref(false)
 const activeVersion = ref(null)
 
-const ALLOWED_TYPES = ['text', 'number', 'select', 'boolean', 'date', 'textarea', 'file']
+/**
+ * Parse p.options (a comma-separated string) into a [{label, value}] array.
+ * Each entry may be "label:value" or just "value" (in which case label = value).
+ * The legacy "ls,ps,df" form keeps working unchanged.
+ */
+function parseOptions(p) {
+  const raw = p.options || ''
+  return raw.split(',').map((s) => s.trim()).filter(Boolean).map((entry) => {
+    const i = entry.indexOf(':')
+    if (i >= 0) {
+      return { label: entry.substring(0, i).trim(), value: entry.substring(i + 1).trim() }
+    }
+    return { label: entry, value: entry }
+  })
+}
+
+/** Serialize [{label, value}] back into the comma-separated p.options string. */
+function serializeOptions(opts) {
+  return (opts || [])
+    .map((o) => {
+      const label = (o.label || '').trim()
+      const value = (o.value || '').trim()
+      if (!label && !value) return null
+      // If label === value, keep the old "value-only" form so legacy scripts
+      // round-trip unchanged. Otherwise emit "label:value".
+      if (!label || label === value) return value || label
+      return `${label}:${value}`
+    })
+    .filter(Boolean)
+    .join(',')
+}
+
+function addOption(p) {
+  if (!p._options) p._options = []
+  p._options.push({ label: '', value: '' })
+}
+function removeOption(p, i) {
+  p._options.splice(i, 1)
+}
 
 async function load() {
   const id = Number(route.query.id)
@@ -399,7 +510,10 @@ async function load() {
       required: !!p.required,
       placeholder: p.placeholder || '',
       helpText: p.helpText || '',
-      visibleWhenJson: p.visibleWhenJson || ''
+      visibleWhenJson: p.visibleWhenJson || '',
+      // _options is a UI-only helper that materializes p.options (a comma-
+      // separated string in the backend) into [{label, value}] pairs.
+      _options: parseOptions(p)
     }))
     precheckJson.value = detail.script.precheckConfigJson || ''
     tenants.value = ts || []
@@ -450,7 +564,8 @@ function addParam() {
   params.value.push({
     name: '', label: '', type: 'text', defaultValue: '',
     options: '', required: false, sortOrder: params.value.length,
-    placeholder: '', helpText: '', visibleWhenJson: ''
+    placeholder: '', helpText: '', visibleWhenJson: '',
+    _options: []
   })
 }
 async function removeParam(i) {
@@ -500,12 +615,19 @@ async function saveAll(thenExecute) {
       .filter((p) => p.name && p.name.trim())
       .map((p, i) => {
         const trimmed = (p.visibleWhenJson || '').trim()
-        return {
+        const out = {
           ...p,
           sortOrder: i,
           required: !!p.required,
           visibleWhenJson: trimmed === '' ? null : trimmed
         }
+        // Re-serialize the UI option editor back into the backend's
+        // comma-separated string. _options itself is dropped from the payload.
+        if (p.type === PARAM_TYPE.SELECT) {
+          out.options = serializeOptions(p._options || [])
+        }
+        delete out._options
+        return out
       })
     await replaceParams(script.value.id, cleaned)
     ElMessage.success('已保存')
@@ -731,6 +853,51 @@ watch(body, () => {
 }
 
 .sb-param-full { grid-column: 1 / -1; }
+
+.sb-help-inline {
+  font-size: 12px;
+  color: var(--sb-text-3);
+  margin-top: 4px;
+  line-height: 1.5;
+}
+.sb-help-inline code {
+  background: #f3f4f6;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: var(--sb-mono);
+  font-size: 11.5px;
+}
+
+.sb-options-table {
+  border: 1px solid var(--sb-border);
+  border-radius: 4px;
+  background: #fcfcfd;
+  padding: 8px;
+}
+.sb-options-head {
+  display: grid;
+  grid-template-columns: 1fr 1fr 36px;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--sb-text-3);
+  padding: 2px 4px 6px;
+  border-bottom: 1px dashed var(--sb-border);
+  margin-bottom: 6px;
+}
+.sb-options-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 36px;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.sb-options-row:last-of-type { margin-bottom: 0; }
+.sb-options-empty {
+  font-size: 12px;
+  color: var(--sb-text-3);
+  padding: 6px 4px;
+  text-align: center;
+}
 
 .sb-visibility-warn {
   margin-top: 4px;

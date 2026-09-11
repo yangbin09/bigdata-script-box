@@ -36,7 +36,7 @@
           <div class="stat-sub">{{ fmtBytes(totals.executionBytes) }}</div>
         </div>
         <div class="stat">
-          <div class="stat-label">Artifact</div>
+          <div class="stat-label">产物文件</div>
           <div class="stat-value">{{ totals.artifactCount }}</div>
           <div class="stat-sub">{{ fmtBytes(totals.artifactBytes) }}</div>
         </div>
@@ -94,7 +94,7 @@
           <el-button text size="small" @click="openList('executionDirs')">查看全部 ({{ preview.executionDirs.length }})</el-button>
         </div>
         <el-table :data="preview.executionDirs.slice(0, 5)" size="small" empty-text="无候选">
-          <el-table-column label="Execution ID" prop="id" width="100" />
+          <el-table-column label="执行编号" prop="id" width="100" />
           <el-table-column label="脚本" prop="scriptName" min-width="120" />
           <el-table-column label="租户" prop="tenantName" min-width="100" />
           <el-table-column label="开始时间" min-width="160">
@@ -118,7 +118,7 @@
       <div class="cat">
         <div class="cat-head">
           <div>
-            <div class="cat-title">Artifact</div>
+            <div class="cat-title">产物文件</div>
             <div class="muted small">条件：{{ preview.artifactDays }} 天以前（与执行目录合并扫描，零散孤儿文件单独列出）</div>
           </div>
           <div class="cat-stats">
@@ -130,7 +130,7 @@
           <el-button text size="small" @click="openList('artifacts')">查看全部 ({{ preview.artifacts.length }})</el-button>
         </div>
         <el-table :data="preview.artifacts.slice(0, 5)" size="small" empty-text="无候选">
-          <el-table-column label="ID" prop="id" width="80" />
+          <el-table-column label="编号" prop="id" width="80" />
           <el-table-column label="路径" min-width="280">
             <template #default="{ row }"><span class="mono small">{{ row.path }}</span></template>
           </el-table-column>
@@ -161,7 +161,7 @@
           <el-table-column label="大小" width="100">
             <template #default="{ row }">{{ fmtBytes(row.sizeBytes) }}</template>
           </el-table-column>
-          <el-table-column label="mtime" min-width="160">
+          <el-table-column label="修改时间" min-width="160">
             <template #default="{ row }">{{ formatTime(row.mtimeMs) }}</template>
           </el-table-column>
         </el-table>
@@ -181,7 +181,7 @@
           <el-button text size="small" @click="openList('histories')">查看全部 ({{ preview.histories.length }})</el-button>
         </div>
         <el-table :data="preview.histories.slice(0, 5)" size="small" empty-text="无候选">
-          <el-table-column label="ID" prop="id" width="80" />
+          <el-table-column label="编号" prop="id" width="80" />
           <el-table-column label="脚本" prop="scriptName" min-width="120" />
           <el-table-column label="租户" prop="tenantName" min-width="100" />
           <el-table-column label="开始时间" min-width="160">
@@ -211,7 +211,7 @@
       :title="listTitle"
     >
       <el-table :data="listData" size="small" max-height="100%">
-        <el-table-column v-if="currentList === 'executionDirs' || currentList === 'histories'" label="ID" prop="id" width="80" />
+        <el-table-column v-if="currentList === 'executionDirs' || currentList === 'histories'" label="编号" prop="id" width="80" />
         <el-table-column v-if="currentList === 'executionDirs' || currentList === 'histories'" label="脚本" prop="scriptName" min-width="120" />
         <el-table-column v-if="currentList === 'executionDirs' || currentList === 'histories'" label="租户" prop="tenantName" min-width="100" />
         <el-table-column v-if="currentList === 'executionDirs' || currentList === 'histories'" label="开始时间" min-width="160">
@@ -272,7 +272,7 @@ const listDrawerOpen = ref(false)
 const currentList = ref('')
 const listTitle = computed(() => ({
   executionDirs: '执行目录 — 全部候选项',
-  artifacts:     'Artifact — 全部候选项',
+  artifacts:     '产物文件 — 全部候选项',
   logs:          '应用日志 — 全部候选项',
   histories:     '执行历史 — 全部候选项'
 }[currentList.value] || '候选项'))

@@ -16,7 +16,7 @@
       <template #empty>
         <el-empty description="还没有场景。点击右上角「新增场景」把多个脚本按顺序串起来。" />
       </template>
-      <el-table-column label="ID" width="60" prop="id" />
+      <el-table-column label="编号" width="60" prop="id" />
       <el-table-column label="名称" min-width="180">
         <template #default="{ row }">
           <div class="sb-name-main">{{ row.name }}</div>
@@ -71,17 +71,21 @@
 
       <el-form :model="form" label-position="top">
         <div class="sb-edit-grid">
-          <el-form-item label="名称" required>
-            <el-input v-model="form.name" placeholder="如 每日ETL" />
+          <el-form-item required>
+            <template #label><SBLabel text="名称" tip="场景的展示名称，建议简短、语义清晰。" required /></template>
+            <el-input v-model="form.name" placeholder="例如：每日 ETL" />
           </el-form-item>
-          <el-form-item label="分类">
-            <el-input v-model="form.category" placeholder="如 Mock / ETL" />
+          <el-form-item>
+            <template #label><SBLabel text="分类" tip="用于在执行中心将场景分组显示。" /></template>
+            <el-input v-model="form.category" placeholder="例如：Mock / ETL" />
           </el-form-item>
         </div>
-        <el-form-item label="描述">
-          <el-input v-model="form.description" type="textarea" :rows="2" />
+        <el-form-item>
+          <template #label><SBLabel text="描述" tip="对该场景的简要说明，便于协作者理解适用场景。" /></template>
+          <el-input v-model="form.description" type="textarea" :rows="2" placeholder="例如：每日凌晨同步 Hive 到 Hudi" />
         </el-form-item>
-        <el-form-item label="启用">
+        <el-form-item>
+          <template #label><SBLabel text="启用" tip="关闭后此场景不会出现在执行中心。" /></template>
           <el-switch v-model="form.enabled" />
         </el-form-item>
 
@@ -102,7 +106,8 @@
             </div>
           </div>
           <el-form label-position="top" :model="s" class="sb-step-form">
-            <el-form-item label="脚本" required>
+            <el-form-item required>
+              <template #label><SBLabel text="脚本" tip="该步骤要执行的脚本。只能选择已启用的脚本。" required /></template>
               <el-select v-model="s.scriptId" filterable placeholder="选择脚本" style="width: 100%">
                 <el-option
                   v-for="sc in enabledScripts"
@@ -112,7 +117,8 @@
                 />
               </el-select>
             </el-form-item>
-            <el-form-item label="参数方案 (preset)">
+            <el-form-item>
+              <template #label><SBLabel text="参数方案" tip="选中参数方案后，运行该步骤时会自动应用其参数值。" /></template>
               <el-select v-model="s.presetId" clearable placeholder="不使用" style="width: 100%">
                 <el-option
                   v-for="p in (presetsByScript[s.scriptId] || [])"
@@ -122,7 +128,8 @@
                 />
               </el-select>
             </el-form-item>
-            <el-form-item label="失败时继续执行">
+            <el-form-item>
+              <template #label><SBLabel text="失败时继续执行" tip="关闭后（默认）任何步骤失败都会中止整个场景；开启后失败步骤将被跳过，继续执行后续步骤。" /></template>
               <el-switch v-model="s.continueOnFailure" />
             </el-form-item>
           </el-form>
@@ -138,7 +145,8 @@
     <!-- Run drawer -->
     <el-drawer v-model="runOpen" :title="`运行场景 — ${runTarget?.name || ''}`" direction="rtl" size="540px">
       <el-form label-position="top">
-        <el-form-item label="租户" required>
+        <el-form-item required>
+          <template #label><SBLabel text="租户" tip="所有步骤都在该租户下执行，使用其 Kerberos principal 和 keytab。" required /></template>
           <el-select v-model="runTenantId" placeholder="选择租户" style="width: 100%">
             <el-option v-for="t in enabledTenants" :key="t.id"
               :label="`${t.name}（${t.principal || '-'}）`" :value="t.id" />
@@ -178,7 +186,7 @@
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="history" width="120" align="right">
+          <el-table-column label="执行记录" width="120" align="right">
             <template #default="{ row }">
               <router-link
                 v-if="row.historyId"
@@ -209,6 +217,7 @@ import {
 } from '../api/extras'
 import { listScripts } from '../api/scripts'
 import { listTenants } from '../api/tenants'
+import SBLabel from '../components/SBLabel.vue'
 
 const rows = ref([])
 const scripts = ref([])

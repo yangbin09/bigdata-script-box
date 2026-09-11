@@ -375,7 +375,7 @@
           <el-table-column label="耗时" width="100" align="right">
             <template #default="{ row }">{{ row.durationMs || 0 }} ms</template>
           </el-table-column>
-          <el-table-column label="history" width="100" align="right">
+          <el-table-column label="执行记录" width="110" align="right">
             <template #default="{ row }">
               <span class="mono">{{ row.id }}</span>
             </template>

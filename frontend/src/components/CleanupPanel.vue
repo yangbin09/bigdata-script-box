@@ -67,19 +67,19 @@
 
       <div class="retention-grid">
         <div class="retention-field">
-          <label>执行历史 (historyDays)</label>
+          <label>执行历史保留天数</label>
           <el-input-number v-model="retention.historyDays" :min="0" :max="365" :step="1" />
         </div>
         <div class="retention-field">
-          <label>产物文件 (artifactDays)</label>
+          <label>产物文件保留天数</label>
           <el-input-number v-model="retention.artifactDays" :min="0" :max="365" :step="1" />
         </div>
         <div class="retention-field">
-          <label>执行目录 (executionDays)</label>
+          <label>执行目录保留天数</label>
           <el-input-number v-model="retention.executionDays" :min="0" :max="365" :step="1" />
         </div>
         <div class="retention-field">
-          <label>应用日志 (logDays)</label>
+          <label>应用日志保留天数</label>
           <el-input-number v-model="retention.logDays" :min="0" :max="365" :step="1" />
         </div>
       </div>

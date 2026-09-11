@@ -20,12 +20,12 @@
           <template #empty>
             <el-empty description="还没有全局变量。点击「新增变量」创建可在脚本中引用的 ${VAR_KEY} 占位符。" />
           </template>
-          <el-table-column label="key" min-width="180">
+          <el-table-column label="变量名" min-width="180">
             <template #default="{ row }">
               <span class="mono">{{ row.variableKey }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="value" min-width="220">
+          <el-table-column label="变量值" min-width="220">
             <template #default="{ row }">
               <span class="mono" v-if="!row.sensitive">{{ row.variableValue }}</span>
               <span v-else class="mono sb-masked">******</span>
@@ -64,25 +64,30 @@
 
     <el-drawer v-model="formOpen" :title="form.id ? '编辑变量' : '新增变量'" direction="rtl" size="420px">
       <el-form :model="form" label-position="top">
-        <el-form-item label="key" required>
-          <el-input v-model="form.variableKey" placeholder="大写字母、数字、下划线（[A-Za-z_][A-Za-z0-9_]*）" />
+        <el-form-item required>
+          <template #label><SBLabel text="变量名" tip="脚本中通过 ${变量名} 占位符引用此值。命名规则：[A-Za-z_][A-Za-z0-9_]*。" required /></template>
+          <el-input v-model="form.variableKey" placeholder="例如 HIVE_DB、API_TOKEN" />
         </el-form-item>
-        <el-form-item label="value">
+        <el-form-item>
+          <template #label><SBLabel text="变量值" tip="实际注入到脚本中的字符串值。开启「敏感」后日志和前端不会明文展示。" /></template>
           <el-input
             v-model="form.variableValue"
             :type="form.sensitive ? 'password' : 'text'"
-            :placeholder="form.sensitive ? '敏感值不会出现在日志或前端明文' : '变量值'"
+            :placeholder="form.sensitive ? '敏感值不会出现在日志或前端明文' : '例如：default、https://example.com'"
             show-password
           />
         </el-form-item>
-        <el-form-item label="敏感">
+        <el-form-item>
+          <template #label><SBLabel text="敏感" tip="开启后变量值在日志中将被脱敏，前端展示为 ******。" /></template>
           <el-switch v-model="form.sensitive" />
         </el-form-item>
-        <el-form-item label="启用">
+        <el-form-item>
+          <template #label><SBLabel text="启用" tip="关闭后该变量不会注入到脚本执行环境。" /></template>
           <el-switch v-model="form.enabled" />
         </el-form-item>
-        <el-form-item label="描述">
-          <el-input v-model="form.description" type="textarea" :rows="2" />
+        <el-form-item>
+          <template #label><SBLabel text="描述" tip="说明此变量的用途，便于协作者理解。" /></template>
+          <el-input v-model="form.description" type="textarea" :rows="2" placeholder="例如：Hive 默认数据库名" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -103,6 +108,7 @@ import {
 } from '../api/extras'
 import { getItem, setItem } from '../utils/storage'
 import CleanupPanel from '../components/CleanupPanel.vue'
+import SBLabel from '../components/SBLabel.vue'
 
 // Persist the active tab across page navigations — users that came from
 // a cleanup run land here often and shouldn't have to re-pick the tab.

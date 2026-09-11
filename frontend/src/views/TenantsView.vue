@@ -19,19 +19,19 @@
       <template #empty>
         <el-empty description="还没有租户。点击右上角「新增租户」开始。" />
       </template>
-      <el-table-column label="ID" width="60" prop="id" />
+      <el-table-column label="编号" width="60" prop="id" />
       <el-table-column label="名称" min-width="140">
         <template #default="{ row }">
           <div class="sb-name-main">{{ row.name }}</div>
         </template>
       </el-table-column>
-      <el-table-column label="Principal" min-width="220">
+      <el-table-column label="Principal（Kerberos 主体）" min-width="220">
         <template #default="{ row }">
           <span class="mono">{{ row.principal }}</span>
         </template>
       </el-table-column>
       <el-table-column label="默认数据库" min-width="120" prop="defaultDatabase" />
-      <el-table-column label="Keytab" min-width="120">
+      <el-table-column label="Keytab 文件" min-width="120">
         <template #default="{ row }">
           <el-tooltip
             v-if="row.keytabPath"
@@ -67,19 +67,24 @@
     <!-- Create / Edit Drawer -->
     <el-drawer v-model="formOpen" :title="form.id ? '编辑租户' : '新增租户'" direction="rtl" size="440px">
       <el-form :model="form" label-position="top">
-        <el-form-item label="名称" required>
-          <el-input v-model="form.name" placeholder="如 mock-hive" />
+        <el-form-item required>
+          <template #label><SBLabel text="名称" tip="显示给用户的友好名称。建议简短、语义清晰，例如 mock-hive、prod-hive。" required /></template>
+          <el-input v-model="form.name" placeholder="例如：mock-hive" />
         </el-form-item>
-        <el-form-item label="principal" required>
+        <el-form-item required>
+          <template #label><SBLabel text="Principal（Kerberos 主体）" tip="Kerberos 主体名，格式为 user/instance@REALM。例如 hive@EXAMPLE.COM。执行脚本时会用此 principal 进行 kinit 认证。" required /></template>
           <el-input v-model="form.principal" placeholder="hive@EXAMPLE.COM" />
         </el-form-item>
-        <el-form-item label="默认数据库">
+        <el-form-item>
+          <template #label><SBLabel text="默认数据库" tip="脚本执行时使用的默认 Hive/Spark 数据库。仅作提示，实际脚本里仍可自由切换。" /></template>
           <el-input v-model="form.defaultDatabase" placeholder="default" />
         </el-form-item>
-        <el-form-item label="描述">
-          <el-input v-model="form.description" type="textarea" :rows="2" />
+        <el-form-item>
+          <template #label><SBLabel text="描述" tip="对该租户的简短说明，便于协作者区分环境或业务范围。" /></template>
+          <el-input v-model="form.description" type="textarea" :rows="2" placeholder="例如：开发环境 Hive 租户" />
         </el-form-item>
-        <el-form-item label="启用">
+        <el-form-item>
+          <template #label><SBLabel text="启用" tip="关闭后此租户不会出现在执行页面的租户下拉列表中。" /></template>
           <el-switch v-model="form.enabled" />
         </el-form-item>
       </el-form>
@@ -90,7 +95,10 @@
     </el-drawer>
 
     <!-- Keytab upload dialog -->
-    <el-dialog v-model="keytabOpen" :title="`上传 keytab — ${keytabTarget?.name || ''}`" width="440px">
+    <el-dialog v-model="keytabOpen" :title="`上传 Keytab 文件 — ${keytabTarget?.name || ''}`" width="440px">
+      <p class="sb-help" style="margin-top: 0">
+        上传与租户 Principal 匹配的 Keytab 文件。Keytab 通常小于 1 KB，过大的文件将被拒绝。
+      </p>
       <el-upload
         ref="keytabUploadRef"
         :auto-upload="false"
@@ -165,6 +173,7 @@ import {
   setTenantEnabled, uploadKeytab, testTenant,
   tenantRelatedCounts
 } from '../api/tenants'
+import SBLabel from '../components/SBLabel.vue'
 
 const rows = ref([])
 const loading = ref(false)
