@@ -61,16 +61,13 @@ public class GlobalVariableController {
      */
     @PostMapping
     public ApiResponse<GlobalVariable> create(@RequestBody Map<String, Object> body) {
-        try {
-            String key = (String) body.get("variableKey");
-            String val = (String) body.get("variableValue");
-            String desc = (String) body.get("description");
-            boolean sensitive = Boolean.TRUE.equals(body.get("sensitive"));
-            boolean enabled = !body.containsKey("enabled") || Boolean.TRUE.equals(body.get("enabled"));
-            return ApiResponse.ok(variableService.create(key, val, desc, sensitive, enabled));
-        } catch (IllegalArgumentException ex) {
-            return ApiResponse.error(ex.getMessage());
-        }
+        // 异常处理走 GlobalExceptionHandler（IllegalArgumentException → ApiResponse.error）
+        String key = (String) body.get("variableKey");
+        String val = (String) body.get("variableValue");
+        String desc = (String) body.get("description");
+        boolean sensitive = Boolean.TRUE.equals(body.get("sensitive"));
+        boolean enabled = !body.containsKey("enabled") || Boolean.TRUE.equals(body.get("enabled"));
+        return ApiResponse.ok(variableService.create(key, val, desc, sensitive, enabled));
     }
 
     /**
@@ -82,16 +79,12 @@ public class GlobalVariableController {
      */
     @PutMapping("/{id}")
     public ApiResponse<GlobalVariable> update(@PathVariable Long id, @RequestBody Map<String, Object> body) {
-        try {
-            String key = (String) body.get("variableKey");
-            String val = (String) body.get("variableValue");
-            String desc = (String) body.get("description");
-            boolean sensitive = Boolean.TRUE.equals(body.get("sensitive"));
-            boolean enabled = Boolean.TRUE.equals(body.get("enabled"));
-            return ApiResponse.ok(variableService.update(id, key, val, desc, sensitive, enabled));
-        } catch (IllegalArgumentException ex) {
-            return ApiResponse.error(ex.getMessage());
-        }
+        String key = (String) body.get("variableKey");
+        String val = (String) body.get("variableValue");
+        String desc = (String) body.get("description");
+        boolean sensitive = Boolean.TRUE.equals(body.get("sensitive"));
+        boolean enabled = Boolean.TRUE.equals(body.get("enabled"));
+        return ApiResponse.ok(variableService.update(id, key, val, desc, sensitive, enabled));
     }
 
     /**

@@ -41,6 +41,30 @@ public class AdminController {
     @Autowired private SystemSettingService settingsService;
 
     // ----------------------------------------------------------------------
+    // 局部异常处理：本控制器的清理接口对前端契约保留 "PREVIEW_EXPIRED: ..." /
+    // "BAD_REQUEST: ..." / "EXECUTE_FAILED: ..." 前缀，便于前端按 code 前缀分流。
+    // 不污染全局 GlobalExceptionHandler 的语义。
+    // ----------------------------------------------------------------------
+
+    @ExceptionHandler(PreviewStore.PreviewExpiredException.class)
+    public ApiResponse<Void> handlePreviewExpired(PreviewStore.PreviewExpiredException ex) {
+        log.warn("cleanup preview expired: {}", ex.getMessage());
+        return ApiResponse.error("PREVIEW_EXPIRED: " + ex.getMessage());
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ApiResponse<Void> handleIllegalArgument(IllegalArgumentException ex) {
+        log.warn("cleanup bad request: {}", ex.getMessage());
+        return ApiResponse.error("BAD_REQUEST: " + ex.getMessage());
+    }
+
+    @ExceptionHandler(Exception.class)
+    public ApiResponse<Void> handleAny(Exception ex) {
+        log.error("cleanup execute failed", ex);
+        return ApiResponse.error("EXECUTE_FAILED: " + ex.getMessage());
+    }
+
+    // ----------------------------------------------------------------------
     // 清理
     // ----------------------------------------------------------------------
 
@@ -57,24 +81,18 @@ public class AdminController {
     @PostMapping("/cleanup/preview")
     public ApiResponse<PreviewStore.CleanupPreview> cleanupPreview(
             @RequestBody(required = false) Map<String, Object> body) {
-        try {
-            int h = readInt(body, "historyDays",   cleanupService.historyDays());
-            int a = readInt(body, "artifactDays",  cleanupService.artifactDays());
-            int e = readInt(body, "executionDays", cleanupService.executionDays());
-            int l = readInt(body, "logDays",       cleanupService.logDays());
-            log.info("开始生成数据清理预览 historyDays={} artifactDays={} executionDays={} logDays={}",
-                    h, a, e, l);
-            PreviewStore.CleanupPreview preview = cleanupService.preview(h, a, e, l);
-            log.info("数据清理预览生成完成，previewId={}，候选数量={}，预计释放={}字节",
-                    preview.getPreviewId(),
-                    preview.totals.executionDirCount + preview.totals.artifactCount + preview.totals.logCount,
-                    preview.totals.totalBytes);
-            return ApiResponse.ok(preview);
-        } catch (PreviewStore.PreviewExpiredException pee) {
-            return ApiResponse.error("PREVIEW_EXPIRED: " + pee.getMessage());
-        } catch (IllegalArgumentException iae) {
-            return ApiResponse.error("BAD_REQUEST: " + iae.getMessage());
-        }
+        int h = readInt(body, "historyDays",   cleanupService.historyDays());
+        int a = readInt(body, "artifactDays",  cleanupService.artifactDays());
+        int e = readInt(body, "executionDays", cleanupService.executionDays());
+        int l = readInt(body, "logDays",       cleanupService.logDays());
+        log.info("开始生成数据清理预览 historyDays={} artifactDays={} executionDays={} logDays={}",
+                h, a, e, l);
+        PreviewStore.CleanupPreview preview = cleanupService.preview(h, a, e, l);
+        log.info("数据清理预览生成完成，previewId={}，候选数量={}，预计释放={}字节",
+                preview.getPreviewId(),
+                preview.totals.executionDirCount + preview.totals.artifactCount + preview.totals.logCount,
+                preview.totals.totalBytes);
+        return ApiResponse.ok(preview);
     }
 
     /**
@@ -93,20 +111,12 @@ public class AdminController {
             return ApiResponse.error("previewId is required");
         if (token == null || !CleanupService.CONFIRM_TOKEN.equals(token))
             return ApiResponse.error("confirmation token mismatch: type CLEAN exactly");
-        try {
-            log.info("用户确认执行手动数据清理，previewId={}", previewId);
-            CleanupExecutor.CleanupReport report = cleanupService.execute(previewId, token);
-            log.info("手动数据清理完成，删除={}，跳过={}，失败={}，释放={}字节",
-                    report.executionDeleted + report.artifactDeleted + report.logDeleted + report.historyDeleted,
-                    report.skippedCount(), report.failedCount(), report.bytesFreed);
-            return ApiResponse.ok(report);
-        } catch (PreviewStore.PreviewExpiredException pee) {
-            return ApiResponse.error("PREVIEW_EXPIRED: " + pee.getMessage());
-        } catch (IllegalArgumentException iae) {
-            return ApiResponse.error("BAD_REQUEST: " + iae.getMessage());
-        } catch (Exception e) {
-            return ApiResponse.error("EXECUTE_FAILED: " + e.getMessage());
-        }
+        log.info("用户确认执行手动数据清理，previewId={}", previewId);
+        CleanupExecutor.CleanupReport report = cleanupService.execute(previewId, token);
+        log.info("手动数据清理完成，删除={}，跳过={}，失败={}，释放={}字节",
+                report.executionDeleted + report.artifactDeleted + report.logDeleted + report.historyDeleted,
+                report.skippedCount(), report.failedCount(), report.bytesFreed);
+        return ApiResponse.ok(report);
     }
 
     /**
