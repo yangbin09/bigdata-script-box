@@ -68,6 +68,38 @@
       <el-tab-pane label="参数" name="params">
         <pre class="sb-log">{{ paramsPretty }}</pre>
       </el-tab-pane>
+      <el-tab-pane :label="`产物 (${artifacts.length})`" name="artifacts">
+        <div v-if="artifactsLoading" class="sb-log sb-log-empty">加载中...</div>
+        <div v-else-if="!artifacts.length" class="sb-log sb-log-empty">
+          脚本未在 <code>$ARTIFACT_DIR</code> 下写入任何文件。
+        </div>
+        <div v-else class="sb-artifacts">
+          <div
+            v-for="a in artifacts"
+            :key="a.id"
+            class="sb-artifact-row"
+          >
+            <div class="sb-artifact-name">
+              <el-icon><Document /></el-icon>
+              <span :title="a.name">{{ shortName(a.name) }}</span>
+              <el-tag size="small" effect="plain" disable-transitions>{{ a.mimeType }}</el-tag>
+            </div>
+            <div class="sb-artifact-meta">
+              {{ formatBytes(a.sizeBytes) }}
+              <span v-if="a.sha256" class="dot">·</span>
+              <code v-if="a.sha256" class="sb-artifact-sha">{{ a.sha256.slice(0, 12) }}…</code>
+            </div>
+            <a
+              class="sb-artifact-dl"
+              :href="artifactDownloadUrl(history.id, a.name)"
+              :download="shortName(a.name)"
+            >
+              <el-icon><Download /></el-icon>
+              下载
+            </a>
+          </div>
+        </div>
+      </el-tab-pane>
     </el-tabs>
 
     <div class="sb-result-actions">
@@ -82,12 +114,13 @@
 import { computed, ref, watch } from 'vue'
 import {
   CircleClose, CircleCheck, WarningFilled,
-  RefreshRight, EditPen, Clock
+  RefreshRight, EditPen, Clock, Document, Download
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { formatDateTime, formatDuration, parseParamsJson } from '../utils/format'
 import { STATUS, STATUS_LABEL, STATUS_TAG_TYPE, statusOfHistory } from '../utils/labels'
 import LogPane from './LogPane.vue'
+import { listArtifacts, artifactDownloadUrl } from '../api/executions'
 
 const props = defineProps({
   history: { type: Object, required: true },
@@ -98,6 +131,42 @@ const props = defineProps({
 defineEmits(['rerun', 'edit', 'view-history'])
 
 const activeTab = ref('result')
+
+// V2: artifacts panel state. Lazily fetched when the panel mounts so
+// running executions don't pay the cost; refreshes when the history
+// row's id changes (e.g. user re-runs).
+const artifacts = ref([])
+const artifactsLoading = ref(false)
+async function refreshArtifacts() {
+  if (!props.history || props.history.id == null) {
+    artifacts.value = []
+    return
+  }
+  artifactsLoading.value = true
+  try {
+    const data = await listArtifacts(props.history.id)
+    artifacts.value = Array.isArray(data?.data) ? data.data : []
+  } catch (_) {
+    artifacts.value = []
+  } finally {
+    artifactsLoading.value = false
+  }
+}
+watch(() => props.history?.id, refreshArtifacts, { immediate: true })
+
+function shortName(name) {
+  if (!name) return ''
+  const i = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'))
+  return i >= 0 ? name.substring(i + 1) : name
+}
+
+function formatBytes(n) {
+  if (n == null) return '-'
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`
+  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`
+}
 
 const status = computed(() => statusOfHistory(props.history))
 const statusLabel = computed(() => STATUS_LABEL[status.value])
@@ -192,4 +261,50 @@ function download(name, text) {
 }
 .sb-result-tabs { margin-top: 4px; }
 .sb-result-tabs :deep(.el-tabs__header) { margin-bottom: 8px; }
+.sb-artifacts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sb-artifact-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 12px;
+  border: 1px solid var(--sb-border);
+  border-radius: 6px;
+  background: var(--sb-bg-soft);
+}
+.sb-artifact-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.sb-artifact-name > span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sb-artifact-meta {
+  font-size: 12px;
+  color: var(--sb-text-muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.sb-artifact-sha {
+  font-family: var(--sb-mono);
+  font-size: 11px;
+}
+.sb-artifact-dl {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  text-decoration: none;
+  color: var(--el-color-primary);
+  font-size: 13px;
+}
+.sb-artifact-dl:hover { text-decoration: underline; }
 </style>

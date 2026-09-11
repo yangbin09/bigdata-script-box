@@ -93,6 +93,10 @@
           <div class="sb-card sb-edit-section">
             <h3 class="sb-section-title">
               脚本正文 <span class="count">{{ body.length }} chars</span>
+              <span class="sb-syntax-indicator" :class="syntaxClass">
+                <el-icon><component :is="syntaxIcon" /></el-icon>
+                <span>{{ syntaxLabel }}</span>
+              </span>
             </h3>
             <el-input
               v-model="body"
@@ -103,6 +107,24 @@
               class="mono"
               placeholder="#!/usr/bin/env bash&#10;echo hello"
             />
+            <div v-if="syntaxErrors.length" class="sb-syntax-errors">
+              <div class="sb-syntax-errors-title">语法错误 (bash -n)</div>
+              <ul>
+                <li v-for="(e, i) in syntaxErrors" :key="i">{{ e }}</li>
+              </ul>
+            </div>
+            <div v-else-if="syntaxWarnings.length" class="sb-syntax-warnings">
+              <div class="sb-syntax-warnings-title">提示 (shellcheck)</div>
+              <ul>
+                <li v-for="(w, i) in syntaxWarnings" :key="i">{{ w }}</li>
+              </ul>
+            </div>
+            <div class="sb-syntax-actions">
+              <el-button size="small" :icon="CircleCheck" :loading="syntaxChecking" @click="runSyntaxCheck">
+                检查语法
+              </el-button>
+              <span class="muted">保存时会自动用 bash -n 拦截语法错误。</span>
+            </div>
           </div>
         </el-tab-pane>
 
@@ -285,14 +307,14 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref, watch } from 'vue'
+import { onMounted, reactive, ref, watch, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  Plus, Delete, Top, Bottom, VideoPlay, WarningFilled
+  Plus, Delete, Top, Bottom, VideoPlay, WarningFilled, CircleCheck, CircleClose
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  getScript, updateScript, saveBody, replaceParams
+  getScript, updateScript, saveBody, replaceParams, syntaxCheck
 } from '../api/scripts'
 import { listTenants } from '../api/tenants'
 import {
@@ -509,6 +531,46 @@ async function rollback(v) {
 
 onMounted(load)
 watch(() => route.query.id, load)
+
+// V2: inline syntax-check state. The indicator sits next to the body
+// counter; clicking "检查语法" (or auto-checking after a debounce) calls
+// the preflight endpoint and updates the error list below the editor.
+const syntaxChecking = ref(false)
+const syntaxErrors = ref([])
+const syntaxWarnings = ref([])
+const syntaxState = ref('idle') // idle | ok | error | warning
+async function runSyntaxCheck() {
+  if (syntaxChecking.value) return
+  syntaxChecking.value = true
+  try {
+    const r = await syntaxCheck(body.value)
+    const data = r?.data || r
+    syntaxErrors.value = Array.isArray(data?.errors) ? data.errors : []
+    syntaxWarnings.value = Array.isArray(data?.warnings) ? data.warnings : []
+    syntaxState.value = data?.ok ? (syntaxWarnings.value.length ? 'warning' : 'ok') : 'error'
+  } catch (_) {
+    syntaxState.value = 'idle'
+  } finally {
+    syntaxChecking.value = false
+  }
+}
+const syntaxLabel = computed(() => {
+  switch (syntaxState.value) {
+    case 'ok': return '语法 OK'
+    case 'warning': return '有提示'
+    case 'error': return '语法错误'
+    default: return '未检查'
+  }
+})
+const syntaxClass = computed(() => syntaxState.value)
+const syntaxIcon = computed(() => syntaxState.value === 'error' ? CircleClose : CircleCheck)
+// Debounced auto-check after edits stop — avoid hammering the server while
+// the user types.
+let syntaxTimer = null
+watch(body, () => {
+  if (syntaxTimer) clearTimeout(syntaxTimer)
+  syntaxTimer = setTimeout(() => { runSyntaxCheck().catch(() => {}) }, 900)
+})
 </script>
 
 <style scoped>
@@ -646,4 +708,34 @@ watch(() => route.query.id, load)
 .sb-version-no { font-weight: 700; font-family: var(--sb-mono); font-size: 13.5px; }
 .sb-version-meta { font-size: 12px; margin-top: 2px; }
 .sb-version-remark { font-size: 12px; margin-top: 4px; color: var(--sb-text-2); }
+
+.sb-syntax-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 12px;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.sb-syntax-indicator.ok { background: #f0f9eb; color: #67c23a; }
+.sb-syntax-indicator.warning { background: #fdf6ec; color: #e6a23c; }
+.sb-syntax-indicator.error { background: #fef0f0; color: #f56c6c; }
+.sb-syntax-indicator.idle { background: #f4f4f5; color: #909399; }
+.sb-syntax-errors, .sb-syntax-warnings {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  max-height: 160px;
+  overflow: auto;
+}
+.sb-syntax-errors { background: #fef0f0; border: 1px solid #fbc4c4; }
+.sb-syntax-errors-title { color: #f56c6c; font-weight: 600; margin-bottom: 4px; }
+.sb-syntax-warnings { background: #fdf6ec; border: 1px solid #faecd8; }
+.sb-syntax-warnings-title { color: #e6a23c; font-weight: 600; margin-bottom: 4px; }
+.sb-syntax-errors ul, .sb-syntax-warnings ul { margin: 0; padding-left: 20px; }
+.sb-syntax-actions { margin-top: 8px; display: flex; align-items: center; gap: 8px; }
+.muted { color: var(--sb-text-muted); font-size: 12.5px; }
 </style>

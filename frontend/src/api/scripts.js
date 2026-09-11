@@ -30,6 +30,11 @@ export const readBody = (id) =>
 export const saveBody = (id, body) =>
   http.put(`/scripts/${id}/body`, { body }).then((r) => r.data)
 
+// V2: probe a body for bash syntax errors without persisting. The same
+// gate fires on the actual save; this is just an editor convenience.
+export const syntaxCheck = (body) =>
+  http.post('/scripts/syntax-check', { body }).then((r) => r.data)
+
 // Multipart create/update. We pass the FormData directly so axios sets the boundary.
 export const createScript = (form) =>
   http.post('/scripts', form, { headers: { 'Content-Type': 'multipart/form-data' } })

@@ -34,3 +34,14 @@ export const activeExecutions = (scriptId, tenantId) => {
 // snapshotted body into the script's file, runs, then restores.
 export const rerunExecution = (id) =>
   http.post(`/executions/${id}/rerun`).then((r) => r.data)
+
+// V2: list the artifacts registered for an execution (files the script
+// wrote under $ARTIFACT_DIR). Empty array when nothing was produced.
+export const listArtifacts = (id) =>
+  http.get(`/executions/${id}/artifacts`).then((r) => r.data)
+
+// V2: artifact download URL — the browser navigates to it directly so
+// the Content-Disposition header drives the filename. Caller should use
+// `window.location.href = artifactDownloadUrl(id, name)` or anchor href.
+export const artifactDownloadUrl = (id, name) =>
+  `/api/executions/${id}/artifacts/${encodeURIComponent(name)}`
