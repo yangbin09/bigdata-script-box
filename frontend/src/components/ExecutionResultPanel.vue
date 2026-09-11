@@ -44,7 +44,8 @@
 
     <el-tabs v-model="activeTab" class="sb-result-tabs">
       <el-tab-pane label="结果" name="result">
-        <pre class="sb-log" v-if="summaryText">{{ summaryText }}</pre>
+        <pre class="sb-log" v-if="resultJsonText">{{ resultJsonText }}</pre>
+        <pre class="sb-log" v-else-if="summaryText">{{ summaryText }}</pre>
         <div v-else class="sb-log sb-log-empty">执行完成，无附加输出。</div>
       </el-tab-pane>
       <el-tab-pane label="stdout" name="stdout">
@@ -120,7 +121,7 @@ import { ElMessage } from 'element-plus'
 import { formatDateTime, formatDuration, formatBytes, parseParamsJson } from '../utils/format'
 import { STATUS, STATUS_LABEL, STATUS_TAG_TYPE, statusOfHistory } from '../utils/labels'
 import LogPane from './LogPane.vue'
-import { listArtifacts, artifactDownloadUrl } from '../api/executions'
+import { listArtifacts, artifactDownloadUrl, readResult } from '../api/executions'
 
 const props = defineProps({
   history: { type: Object, required: true },
@@ -203,6 +204,23 @@ const summaryText = computed(() => {
   }
   return lines.join('\n')
 })
+
+// V2: load result.json if the script wrote one. Shown above the summary
+// in the 结果 tab — users post-run see structured output first, fall
+// back to the derived summary when nothing was written.
+const resultJsonText = ref('')
+const resultJsonLoadedFor = ref(null)
+watch(() => props.history?.id, async (id) => {
+  resultJsonText.value = ''
+  resultJsonLoadedFor.value = null
+  if (id == null) return
+  try {
+    const r = await readResult(id)
+    const obj = r?.data
+    resultJsonText.value = obj == null ? '' : JSON.stringify(obj, null, 2)
+  } catch (_) { resultJsonText.value = '' }
+  resultJsonLoadedFor.value = id
+}, { immediate: true })
 
 const paramsPretty = computed(() => {
   const p = parseParamsJson(props.history.parametersJson)
