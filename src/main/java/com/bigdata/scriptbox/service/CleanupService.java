@@ -2,49 +2,56 @@ package com.bigdata.scriptbox.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.bigdata.scriptbox.config.ScriptBoxProperties;
+import com.bigdata.scriptbox.entity.CleanupHistory;
 import com.bigdata.scriptbox.entity.ExecutionArtifact;
 import com.bigdata.scriptbox.entity.ExecutionHistory;
 import com.bigdata.scriptbox.mapper.ExecutionArtifactMapper;
 import com.bigdata.scriptbox.mapper.ExecutionHistoryMapper;
+import com.bigdata.scriptbox.service.PreviewStore.CandidateOutcome;
+import com.bigdata.scriptbox.service.PreviewStore.CleanupPreview;
+import com.bigdata.scriptbox.service.PreviewStore.ControlledPaths;
+import com.bigdata.scriptbox.service.PreviewStore.Totals;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.stream.Stream;
 
 /**
- * V2: auto-cleanup. Two surfaces:
+ * V2: manual cleanup orchestrator. Cleanup is <b>fully manual</b>; there is
+ * no cron, no startup trigger, no {@code @Scheduled} anywhere. Every
+ * deletion must travel through:
  *
  * <ol>
- *   <li>{@link #preview()} — counts and a per-bucket breakdown without
- *       deleting anything. The settings UI calls this to show the operator
- *       exactly what will be removed before they confirm.</li>
- *   <li>{@link #apply()} — actually deletes. Backs the cron job AND the
- *       "cleanup now" admin button.</li>
+ *   <li>{@link #preview(int, int, int, int)} — scan and build a server-side
+ *       snapshot. No file is touched.</li>
+ *   <li>Operator reviews the preview, then calls
+ *       {@link #execute(String, String)} with the snapshot's
+ *       {@code previewId} and the literal token {@link #CONFIRM_TOKEN}.</li>
+ *   <li>{@link CleanupExecutor} applies the snapshot under
+ *       path-validation, symlink-skip, running-task-skip guards. One row
+ *       is written to {@code cleanup_history} when done.</li>
  * </ol>
  *
  * <p>Retention is read from {@link SystemSettingService} first (keys
  * {@code cleanup.historyDays} etc.), falling back to
  * {@link ScriptBoxProperties} defaults. {@code 0} disables a category.
  *
- * <p>Safety: any execution still in {@link RunningExecutionRegistry} is
- * NEVER deleted, even if it's older than the retention window — we'd race
- * with the live process and could leave the on-disk dir in an
- * unrecoverable state. The preview surfaces the skip count so the
- * operator knows.
+ * <p>The set of paths cleanup is allowed to touch is <b>server-fixed</b>
+ * — derived from {@link ScriptBoxProperties#getExecutionsDir()} and
+ * {@link ScriptBoxProperties#getLogsDir()}. The frontend never sends
+ * paths; the API only accepts retention days + the previewId token.
  */
 @Service
 public class CleanupService {
@@ -56,260 +63,280 @@ public class CleanupService {
     public static final String K_EXECUTION = "cleanup.executionDays";
     public static final String K_LOG = "cleanup.logDays";
 
+    /** The literal string the operator must type to confirm cleanup. */
+    public static final String CONFIRM_TOKEN = "CLEAN";
+
     @Autowired private ScriptBoxProperties props;
     @Autowired private SystemSettingService settings;
     @Autowired private ExecutionHistoryMapper historyMapper;
     @Autowired private ExecutionArtifactMapper artifactMapper;
     @Autowired private RunningExecutionRegistry runningRegistry;
+    @Autowired private PreviewStore previewStore;
+    @Autowired private CleanupExecutor executor;
+    @Autowired private CleanupHistoryService historyService;
 
     /** Effective retention in days; respects override rows. 0 = disabled. */
-    public int historyDays() {
-        return settings.getInt(K_HISTORY, props.getRetentionHistoryDays());
-    }
-    public int artifactDays() {
-        return settings.getInt(K_ARTIFACT, props.getRetentionArtifactDays());
-    }
-    public int executionDays() {
-        return settings.getInt(K_EXECUTION, props.getRetentionExecutionDays());
-    }
-    public int logDays() {
-        return settings.getInt(K_LOG, props.getRetentionLogDays());
-    }
+    public int historyDays()    { return settings.getInt(K_HISTORY,    props.getRetentionHistoryDays()); }
+    public int artifactDays()   { return settings.getInt(K_ARTIFACT,   props.getRetentionArtifactDays()); }
+    public int executionDays()  { return settings.getInt(K_EXECUTION,  props.getRetentionExecutionDays()); }
+    public int logDays()        { return settings.getInt(K_LOG,        props.getRetentionLogDays()); }
+
+    // ----------------------------------------------------------------------
+    // Preview
+    // ----------------------------------------------------------------------
 
     /**
-     * Compute the breakdown WITHOUT deleting anything. The result shape is:
-     * <pre>
-     * {
-     *   "historyDays": 30, "artifactDays": 30, "executionDays": 30, "logDays": 7,
-     *   "historyCandidates": 5,  "historySkippedRunning": 1,
-     *   "artifactCandidates": 12,
-     *   "executionDirsCandidates": 4,
-     *   "oldestHistoryIso": "2026-08-01T03:14:15"
-     * }
-     * </pre>
-     * Counts are read directly from the DB / filesystem so they reflect
-     * the actual state.
+     * Build a fresh preview snapshot. Pure read — nothing is deleted.
+     * Returns the snapshot (which is also stored in {@link PreviewStore}).
      */
-    public Map<String, Object> preview() {
-        Map<String, Object> out = new HashMap<>();
-        out.put("historyDays", historyDays());
-        out.put("artifactDays", artifactDays());
-        out.put("executionDays", executionDays());
-        out.put("logDays", logDays());
+    public CleanupPreview preview(int hDays, int aDays, int eDays, int lDays) {
+        CleanupPreview p = new CleanupPreview();
+        p.historyDays   = Math.max(0, hDays);
+        p.artifactDays  = Math.max(0, aDays);
+        p.executionDays = Math.max(0, eDays);
+        p.logDays       = Math.max(0, lDays);
 
-        // History
-        int hDays = historyDays();
-        int historyCandidates = 0;
-        int historySkippedRunning = 0;
-        if (hDays > 0) {
-            LocalDateTime cutoff = LocalDateTime.now().minusDays(hDays);
-            List<ExecutionHistory> rows = historyMapper.selectList(
-                    new QueryWrapper<ExecutionHistory>().lt("start_time", cutoff));
-            for (ExecutionHistory h : rows) {
-                if (isRunning(h.getId())) historySkippedRunning++;
-                else historyCandidates++;
-            }
-            // Oldest for UI
-            List<ExecutionHistory> oldest = historyMapper.selectList(
-                    new QueryWrapper<ExecutionHistory>().orderByAsc("start_time").last("LIMIT 1"));
-            if (!oldest.isEmpty()) out.put("oldestHistoryIso",
-                    oldest.get(0).getStartTime().atZone(ZoneId.systemDefault()).toInstant().toString());
+        ControlledPaths cp = new ControlledPaths();
+        cp.executionsRoot = props.getExecutionsDir();
+        cp.artifactsRoot  = cp.executionsRoot; // artifacts live under each execution dir
+        cp.logsRoot       = props.getLogsDir();
+        p.controlledPaths = cp;
+
+        // Decide whether the log category is enabled.
+        boolean logsEnabled = false;
+        Path logsAbs = null;
+        if (lDays > 0 && cp.logsRoot != null && !cp.logsRoot.isBlank()) {
+            logsAbs = Paths.get(cp.logsRoot).toAbsolutePath().normalize();
+            logsEnabled = Files.isDirectory(logsAbs);
         }
-        out.put("historyCandidates", historyCandidates);
-        out.put("historySkippedRunning", historySkippedRunning);
-
-        // Artifacts
-        int aDays = artifactDays();
-        int artifactCandidates = 0;
-        if (aDays > 0) {
-            // We don't have a createdAt column on the artifact table, but
-            // we can infer from the joined execution_history.start_time.
-            // Simpler: any artifact whose execution's start_time is older
-            // than aDays is a candidate. Use the join via IN.
-            LocalDateTime cutoff = LocalDateTime.now().minusDays(aDays);
-            List<ExecutionHistory> oldRuns = historyMapper.selectList(
-                    new QueryWrapper<ExecutionHistory>().lt("start_time", cutoff));
-            for (ExecutionHistory h : oldRuns) {
-                if (isRunning(h.getId())) continue;
-                Long n = artifactMapper.selectCount(new QueryWrapper<ExecutionArtifact>()
-                        .eq("execution_id", h.getId()));
-                artifactCandidates += n == null ? 0 : n;
-            }
+        p.logsEnabled = logsEnabled;
+        if (lDays > 0 && !logsEnabled) {
+            p.warnings.add("Application Log 目录未配置或不存在：「" + cp.logsRoot + "」，logDays 已忽略。");
         }
-        out.put("artifactCandidates", artifactCandidates);
 
-        // Execution dirs
-        int eDays = executionDays();
-        int executionDirsCandidates = 0;
+        Totals t = new Totals();
+
+        // Execution dirs — keyed off the dir's lastModifiedTime.
         if (eDays > 0) {
-            executionDirsCandidates = countOldExecutionDirs(eDays);
-        }
-        out.put("executionDirsCandidates", executionDirsCandidates);
-
-        return out;
-    }
-
-    /**
-     * Apply retention: delete history rows + on-disk dirs that exceed the
-     * retention window. Idempotent — running it twice in a row is a no-op
-     * the second time. Returns the breakdown as in {@link #preview()} but
-     * with "deleted" counts instead of "candidates".
-     */
-    public Map<String, Object> apply() {
-        long start = System.currentTimeMillis();
-        int deletedHistory = 0, deletedArtifacts = 0, deletedDirs = 0, skippedRunning = 0;
-        List<Long> failedDeletes = new ArrayList<>();
-
-        // History
-        int hDays = historyDays();
-        if (hDays > 0) {
-            LocalDateTime cutoff = LocalDateTime.now().minusDays(hDays);
-            List<ExecutionHistory> rows = historyMapper.selectList(
-                    new QueryWrapper<ExecutionHistory>().lt("start_time", cutoff));
-            for (ExecutionHistory h : rows) {
-                if (isRunning(h.getId())) { skippedRunning++; continue; }
-                try {
-                    historyMapper.deleteById(h.getId());
-                    deletedHistory++;
-                } catch (Exception e) {
-                    failedDeletes.add(h.getId());
+            long cutoffMs = System.currentTimeMillis() - (eDays * 86_400_000L);
+            Path root = Paths.get(cp.executionsRoot).toAbsolutePath().normalize();
+            if (Files.isDirectory(root)) {
+                try (Stream<Path> stream = Files.list(root)) {
+                    for (Path child : (Iterable<Path>) stream::iterator) {
+                        if (!Files.isDirectory(child, LinkOption.NOFOLLOW_LINKS)) continue;
+                        if (Files.isSymbolicLink(child)) continue; // never follow links at preview stage
+                        long mtime;
+                        try { mtime = Files.getLastModifiedTime(child, LinkOption.NOFOLLOW_LINKS).toMillis(); }
+                        catch (IOException ioe) { continue; }
+                        if (mtime >= cutoffMs) continue;
+                        CandidateOutcome c = makeExecutionCandidate(child, root);
+                        if (c.flag == CandidateOutcome.Status.CANDIDATE) {
+                            t.executionBytes += c.sizeBytes;
+                            t.executionDirCount++;
+                        } else if (c.flag == CandidateOutcome.Status.SKIPPED_RUNNING) {
+                            t.skippedRunning++;
+                        }
+                        p.executionDirs.add(c);
+                    }
+                } catch (IOException e) {
+                    p.warnings.add("无法列出执行目录：" + e.getMessage());
                 }
             }
         }
 
-        // Artifact rows
-        int aDays = artifactDays();
+        // Histories older than historyDays.
+        if (hDays > 0) {
+            LocalDateTime cutoff = LocalDateTime.now().minusDays(hDays);
+            List<ExecutionHistory> rows = historyMapper.selectList(
+                    new QueryWrapper<ExecutionHistory>().lt("start_time", cutoff));
+            for (ExecutionHistory row : rows) {
+                CandidateOutcome c = new CandidateOutcome();
+                c.id = row.getId();
+                c.path = "(row)";
+                c.scriptName = row.getScriptName();
+                c.tenantName = row.getTenantName();
+                c.startTimeIso = row.getStartTime() == null ? null
+                        : row.getStartTime().atZone(ZoneId.systemDefault()).toInstant().toString();
+                c.status = row.getStatus();
+                if (runningRegistry.get(row.getId()) != null) {
+                    c.flag = CandidateOutcome.Status.SKIPPED_RUNNING;
+                    c.reason = "任务正在运行";
+                    t.skippedRunning++;
+                } else {
+                    t.historyCount++;
+                }
+                p.histories.add(c);
+            }
+        }
+
+        // Artifacts belonging to executions older than artifactDays.
+        // We piggyback on the execution-dir scan above to keep the count
+        // consistent; if the dir will be removed, its artifacts go too.
+        // For now, surface artifact rows only when their execution is
+        // not already covered by an execution-dir candidate (e.g. orphan
+        // files left behind by a manual delete).
         if (aDays > 0) {
             LocalDateTime cutoff = LocalDateTime.now().minusDays(aDays);
             List<ExecutionHistory> oldRuns = historyMapper.selectList(
                     new QueryWrapper<ExecutionHistory>().lt("start_time", cutoff));
             for (ExecutionHistory h : oldRuns) {
-                if (isRunning(h.getId())) continue;
+                if (runningRegistry.get(h.getId()) != null) continue;
+                // Skip runs whose execution dir is already a candidate —
+                // they'd be removed wholesale by step 1 of execute().
+                boolean covered = p.executionDirs.stream()
+                        .anyMatch(c -> c.id != null && c.id.equals(h.getId())
+                                && c.flag == CandidateOutcome.Status.CANDIDATE);
+                if (covered) continue;
                 List<ExecutionArtifact> arts = artifactMapper.selectList(
                         new QueryWrapper<ExecutionArtifact>().eq("execution_id", h.getId()));
-                if (arts.isEmpty()) continue;
                 for (ExecutionArtifact a : arts) {
-                    try {
-                        // Wipe the on-disk file first (best-effort), then the row.
-                        Path p = Paths.get(a.getPath());
-                        Files.deleteIfExists(p);
-                        artifactMapper.deleteById(a.getId());
-                        deletedArtifacts++;
-                    } catch (IOException ioe) {
-                        log.warn("cleanup: delete artifact file failed for {}: {}",
-                                a.getPath(), ioe.getMessage());
-                    } catch (Exception ex) {
-                        log.warn("cleanup: delete artifact row failed for {}: {}",
-                                a.getId(), ex.getMessage());
-                    }
+                    CandidateOutcome c = new CandidateOutcome();
+                    c.id = a.getId();
+                    c.path = a.getPath();
+                    c.sizeBytes = a.getSizeBytes() == null ? 0 : a.getSizeBytes();
+                    c.mtimeMs = a.getCreatedAt() == null ? null
+                            : a.getCreatedAt().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+                    t.artifactBytes += c.sizeBytes;
+                    t.artifactCount++;
+                    p.artifacts.add(c);
                 }
             }
         }
 
-        // Execution dirs
-        int eDays = executionDays();
-        if (eDays > 0) {
-            deletedDirs = deleteOldExecutionDirs(eDays);
+        // Application log files older than logDays.
+        if (logsEnabled) {
+            long cutoffMs = System.currentTimeMillis() - (lDays * 86_400_000L);
+            try (Stream<Path> stream = Files.list(logsAbs)) {
+                for (Path child : (Iterable<Path>) stream::iterator) {
+                    if (Files.isSymbolicLink(child)) continue;
+                    if (!Files.isRegularFile(child, LinkOption.NOFOLLOW_LINKS)) continue;
+                    long mtime;
+                    try { mtime = Files.getLastModifiedTime(child, LinkOption.NOFOLLOW_LINKS).toMillis(); }
+                    catch (IOException ioe) { continue; }
+                    if (mtime >= cutoffMs) continue;
+                    CandidateOutcome c = new CandidateOutcome();
+                    c.path = child.toAbsolutePath().normalize().toString();
+                    try { c.sizeBytes = Files.size(child); } catch (IOException ignored) {}
+                    c.mtimeMs = mtime;
+                    t.logBytes += c.sizeBytes;
+                    t.logCount++;
+                    p.logs.add(c);
+                }
+            } catch (IOException ioe) {
+                p.warnings.add("无法列出日志目录：" + ioe.getMessage());
+            }
         }
 
-        Map<String, Object> out = new HashMap<>();
-        out.put("historyDeleted", deletedHistory);
-        out.put("artifactsDeleted", deletedArtifacts);
-        out.put("executionDirsDeleted", deletedDirs);
-        out.put("skippedRunning", skippedRunning);
-        out.put("failedDeleteCount", failedDeletes.size());
-        if (!failedDeletes.isEmpty()) out.put("failedExecutionIds", failedDeletes);
-        out.put("elapsedMs", System.currentTimeMillis() - start);
-        out.put("ranAt", Instant.now().toString());
-        log.info("cleanup: deleted history={} artifacts={} dirs={} skippedRunning={} elapsedMs={}",
-                deletedHistory, deletedArtifacts, deletedDirs, skippedRunning,
-                System.currentTimeMillis() - start);
-        return out;
+        t.totalBytes = t.executionBytes + t.artifactBytes + t.logBytes;
+        p.totals = t;
+        return previewStore.put(p);
     }
 
-    /**
-     * V2: daily scheduled cleanup. Spring's @Scheduled is wired by the
-     * application's {@code @EnableScheduling} (added in this phase). The
-     * cron expression is read from {@link ScriptBoxProperties#getCleanupCron()}.
-     * Failure is logged but does not abort the schedule — the next fire
-     * will retry.
-     */
-    @Scheduled(cron = "${scriptbox.cleanup-cron}")
-    public void scheduledCleanup() {
+    private CandidateOutcome makeExecutionCandidate(Path child, Path root) {
+        CandidateOutcome c = new CandidateOutcome();
+        c.path = child.toAbsolutePath().normalize().toString();
+        try { c.sizeBytes = directorySize(child); } catch (IOException ignored) {}
         try {
-            apply();
-        } catch (Exception e) {
-            log.error("scheduled cleanup failed: {}", e.getMessage(), e);
-        }
-    }
-
-    private boolean isRunning(long executionId) {
-        return runningRegistry.get(executionId) != null;
-    }
-
-    private int countOldExecutionDirs(int days) {
-        Path root = Paths.get(props.getExecutionsDir()).toAbsolutePath();
-        if (!Files.isDirectory(root)) return 0;
-        long cutoffMs = System.currentTimeMillis() - (days * 86_400_000L);
-        int count = 0;
-        try (Stream<Path> stream = Files.list(root)) {
-            for (Path p : (Iterable<Path>) stream::iterator) {
-                if (!Files.isDirectory(p)) continue;
-                try {
-                    long mtime = Files.getLastModifiedTime(p).toMillis();
-                    if (mtime < cutoffMs) {
-                        // Skip if any executionId in the dir name is still live.
-                        Long id = parseId(p.getFileName().toString());
-                        if (id != null && isRunning(id)) continue;
-                        count++;
-                    }
-                } catch (IOException ignored) {}
+            c.mtimeMs = Files.getLastModifiedTime(child, LinkOption.NOFOLLOW_LINKS).toMillis();
+        } catch (IOException ignored) {}
+        Long id = parseId(child.getFileName().toString());
+        c.id = id;
+        if (id != null) {
+            // Try to enrich with script / tenant / startTime from history.
+            ExecutionHistory h = historyMapper.selectById(id);
+            if (h != null) {
+                c.scriptName = h.getScriptName();
+                c.tenantName = h.getTenantName();
+                c.startTimeIso = h.getStartTime() == null ? null
+                        : h.getStartTime().atZone(ZoneId.systemDefault()).toInstant().toString();
+                c.status = h.getStatus();
             }
-        } catch (IOException e) {
-            log.warn("countOldExecutionDirs: {}", e.getMessage());
-        }
-        return count;
-    }
-
-    private int deleteOldExecutionDirs(int days) {
-        Path root = Paths.get(props.getExecutionsDir()).toAbsolutePath();
-        if (!Files.isDirectory(root)) return 0;
-        long cutoffMs = System.currentTimeMillis() - (days * 86_400_000L);
-        int deleted = 0;
-        try (Stream<Path> stream = Files.list(root)) {
-            for (Path p : (Iterable<Path>) stream::iterator) {
-                if (!Files.isDirectory(p)) continue;
-                try {
-                    long mtime = Files.getLastModifiedTime(p).toMillis();
-                    if (mtime < cutoffMs) {
-                        Long id = parseId(p.getFileName().toString());
-                        if (id != null && isRunning(id)) continue;
-                        deleteRecursively(p);
-                        deleted++;
-                    }
-                } catch (IOException ioe) {
-                    log.warn("deleteRecursively({}): {}", p, ioe.getMessage());
-                }
+            if (runningRegistry.get(id) != null) {
+                c.flag = CandidateOutcome.Status.SKIPPED_RUNNING;
+                c.reason = "任务正在运行";
             }
-        } catch (IOException e) {
-            log.warn("deleteOldExecutionDirs: {}", e.getMessage());
         }
-        return deleted;
+        return c;
     }
 
-    private void deleteRecursively(Path p) throws IOException {
-        if (!Files.exists(p)) return;
-        try (Stream<Path> stream = Files.walk(p)) {
-            // Reverse order so files are deleted before their parent dirs.
-            stream.sorted((a, b) -> b.toString().length() - a.toString().length())
-                    .forEach(child -> {
-                        try { Files.deleteIfExists(child); } catch (IOException ignored) {}
-                    });
+    private long directorySize(Path dir) throws IOException {
+        long total = 0;
+        try (Stream<Path> stream = Files.walk(dir)) {
+            for (Path p : (Iterable<Path>) stream::iterator) {
+                if (Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS)) total += Files.size(p);
+            }
         }
+        return total;
     }
 
     private Long parseId(String name) {
         try { return Long.parseLong(name); }
         catch (NumberFormatException e) { return null; }
     }
+
+    // ----------------------------------------------------------------------
+    // Execute
+    // ----------------------------------------------------------------------
+
+    /**
+     * Apply the snapshot identified by {@code previewId}. The
+     * {@code confirmToken} must equal {@link #CONFIRM_TOKEN} verbatim;
+     * no other string is accepted. Throws
+     * {@link PreviewStore.PreviewExpiredException} if the preview is gone
+     * or expired.
+     */
+    public CleanupExecutor.CleanupReport execute(String previewId, String confirmToken) {
+        if (!CONFIRM_TOKEN.equals(confirmToken)) {
+            throw new IllegalArgumentException("confirmation token mismatch");
+        }
+        CleanupPreview preview = previewStore.get(previewId); // throws if missing/expired
+        CleanupExecutor.CleanupReport report = executor.execute(preview);
+        previewStore.evict(previewId);
+
+        // Persist audit row.
+        try {
+            CleanupHistory row = new CleanupHistory();
+            row.setPreviewId(previewId);
+            row.setRetentionJson(String.format(
+                    "{\"historyDays\":%d,\"artifactDays\":%d,\"executionDays\":%d,\"logDays\":%d}",
+                    preview.historyDays, preview.artifactDays,
+                    preview.executionDays, preview.logDays));
+            row.setResult(report.result);
+            row.setExecutionDeleted(report.executionDeleted);
+            row.setArtifactDeleted(report.artifactDeleted);
+            row.setLogDeleted(report.logDeleted);
+            row.setHistoryDeleted(report.historyDeleted);
+            row.setBytesFreed(report.bytesFreed);
+            row.setSkippedCount(report.skippedCount());
+            row.setFailedCount(report.failedCount());
+            row.setMessage(buildMessage(report));
+            historyService.record(row);
+        } catch (Exception e) {
+            log.warn("cleanup: failed to record cleanup_history: {}", e.getMessage());
+        }
+
+        log.info("cleanup: deleted executions={} artifacts={} logs={} histories={} skipped={} failed={} bytesFreed={} elapsedMs={}",
+                report.executionDeleted, report.artifactDeleted, report.logDeleted,
+                report.historyDeleted, report.skippedCount(), report.failedCount(),
+                report.bytesFreed, report.elapsedMs);
+        return report;
+    }
+
+    private String buildMessage(CleanupExecutor.CleanupReport r) {
+        if (r.failed == null || r.failed.isEmpty()) return null;
+        StringBuilder sb = new StringBuilder();
+        for (CleanupExecutor.SkipFail f : r.failed) {
+            if (sb.length() > 0) sb.append("; ");
+            sb.append(f.path == null ? "?" : f.path).append(": ").append(f.reason);
+            if (sb.length() > 1800) { sb.append("..."); break; }
+        }
+        return sb.toString();
+    }
+
+    public List<CleanupHistory> recentHistory(int limit) {
+        return historyService.listRecent(Math.max(1, Math.min(limit, 200)));
+    }
+
+    /** Convenience for the controller layer; just the persistence leg. */
+    public Instant nowForTests() { return Instant.now(); }
 }

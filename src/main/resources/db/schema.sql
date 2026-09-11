@@ -213,7 +213,7 @@ CREATE TABLE IF NOT EXISTS execution_artifact (
 );
 CREATE INDEX IF NOT EXISTS idx_artifact_exec ON execution_artifact(execution_id);
 
--- V2: simple key/value settings table used by the cleanup scheduler to
+-- V2: simple key/value settings table used by the cleanup preview flow to
 -- override the application.yml defaults without restart. Keys are
 -- dotted namespaced (e.g. cleanup.historyDays); values are strings
 -- coerced on read. UpdatedTime lets the UI show 'last edited'.
@@ -223,3 +223,24 @@ CREATE TABLE IF NOT EXISTS system_setting (
     description   VARCHAR(512),
     update_time   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- V2: audit log of every manual cleanup the operator ran. One row per
+-- execute call (regardless of how many deletes happened). Keeps the
+-- 'recent cleanup' list at the bottom of Settings → Data Cleanup, and
+-- gives a paper trail when something disappears.
+CREATE TABLE IF NOT EXISTS cleanup_history (
+    id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
+    created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    preview_id          VARCHAR(64),
+    retention_json      VARCHAR(1024) NOT NULL,
+    result              VARCHAR(16) NOT NULL,                  -- SUCCESS / PARTIAL / FAILED
+    execution_deleted   INT NOT NULL DEFAULT 0,
+    artifact_deleted    INT NOT NULL DEFAULT 0,
+    log_deleted         INT NOT NULL DEFAULT 0,
+    history_deleted     INT NOT NULL DEFAULT 0,
+    bytes_freed         BIGINT NOT NULL DEFAULT 0,
+    skipped_count       INT NOT NULL DEFAULT 0,
+    failed_count        INT NOT NULL DEFAULT 0,
+    message             VARCHAR(2048)
+);
+CREATE INDEX IF NOT EXISTS idx_cleanup_history_created_at ON cleanup_history(created_at);

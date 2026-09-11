@@ -405,7 +405,14 @@ function addParam() {
     placeholder: '', helpText: '', visibleWhenJson: ''
   })
 }
-function removeParam(i) { params.value.splice(i, 1) }
+async function removeParam(i) {
+  const p = params.value[i]
+  const label = p?.label || p?.name || `参数 #${i + 1}`
+  try {
+    await ElMessageBox.confirm(`确认移除参数「${label}」？此操作不会持久化，需点保存才生效。`, '确认', { type: 'warning' })
+    params.value.splice(i, 1)
+  } catch (_) { /* cancelled */ }
+}
 function moveUp(i) { if (i <= 0) return; const a = params.value[i - 1]; params.value[i - 1] = params.value[i]; params.value[i] = a }
 function moveDown(i) { if (i >= params.value.length - 1) return; const a = params.value[i + 1]; params.value[i + 1] = params.value[i]; params.value[i] = a }
 

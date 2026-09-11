@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  V2: file-based rolling application log.
+
+  Why this exists:
+    - The Settings → Data Cleanup "Application Log" category cleans a real
+      directory of files; without this config nothing is written and the
+      cleanup would have an empty target.
+    - Path is read from scriptbox.logs-dir (default ./logs), so an operator
+      can point it at a different volume if they want.
+
+  Rotation:
+    - TimeBasedRollingPolicy with daily rollover.
+    - Keep 30 days of history files (cleanup policy is independent — the
+      operator may keep more or fewer via the scriptbox.retention-log-days
+      setting and a manual cleanup).
+    - Total size cap is generous (~3 GB); raise if needed.
+
+  Console appender is preserved so `mvn spring-boot:run` and container
+  stdout capture still work in development.
+-->
+<configuration scan="true" scanPeriod="30 seconds">
+
+    <!-- Pull scriptbox.logs-dir (with a sane default) from Spring properties. -->
+    <springProperty scope="context" name="LOG_DIR" source="scriptbox.logs-dir" defaultValue="./logs"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_DIR}/scriptbox.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_DIR}/scriptbox.%d{yyyy-MM-dd}.log.gz</fileNamePattern>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>3GB</totalSizeCap>
+            <cleanHistoryOnStart>false</cleanHistoryOnStart>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!--
+      Default level INFO. Application packages log at DEBUG when running
+      with -Dlogging.level.com.bigdata.scriptbox=DEBUG.
+    -->
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="FILE"/>
+    </root>
+
+    <logger name="com.bigdata.scriptbox" level="INFO"/>
+</configuration>

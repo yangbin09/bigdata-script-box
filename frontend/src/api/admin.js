@@ -1,13 +1,17 @@
 import http from './http'
 
-// V2: preview the auto-cleanup result without deleting anything. Returns
-// candidate counts for history, artifacts and execution dirs.
-export const previewCleanup = () =>
-  http.get('/admin/cleanup/preview').then((r) => r.data)
+// V2: manual cleanup. previewCleanup POSTs the four retention numbers
+// and gets back a server-side snapshot with a previewId and TTL. The
+// operator confirms by sending that previewId + the literal token
+// 'CLEAN' to executeCleanup.
+export const previewCleanup = (retention) =>
+  http.post('/admin/cleanup/preview', retention).then((r) => r.data)
 
-// V2: actually apply the cleanup. Returns deleted counts.
-export const applyCleanup = () =>
-  http.post('/admin/cleanup/apply').then((r) => r.data)
+export const executeCleanup = (body) =>
+  http.post('/admin/cleanup/execute', body).then((r) => r.data)
+
+export const listCleanupHistory = (limit = 20) =>
+  http.get(`/admin/cleanup/history?limit=${limit}`).then((r) => r.data)
 
 // V2: persisted runtime settings. Keys are dotted (e.g.
 // 'cleanup.historyDays'); values are strings.

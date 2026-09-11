@@ -282,7 +282,14 @@ async function loadPresetsForSteps() {
 function addStep() {
   steps.value.push({ scriptId: null, presetId: null, continueOnFailure: false })
 }
-function removeStep(i) { steps.value.splice(i, 1) }
+async function removeStep(i) {
+  const s = steps.value[i]
+  const scriptLabel = scriptNameOf(s?.scriptId)
+  try {
+    await ElMessageBox.confirm(`确认移除步骤 #${i + 1}「${scriptLabel}」？此操作不会持久化，需点保存才生效。`, '确认', { type: 'warning' })
+    steps.value.splice(i, 1)
+  } catch (_) { /* cancelled */ }
+}
 function moveUp(i) { if (i <= 0) return; const a = steps.value[i - 1]; steps.value[i - 1] = steps.value[i]; steps.value[i] = a }
 function moveDown(i) { if (i >= steps.value.length - 1) return; const a = steps.value[i + 1]; steps.value[i + 1] = steps.value[i]; steps.value[i] = a }
 

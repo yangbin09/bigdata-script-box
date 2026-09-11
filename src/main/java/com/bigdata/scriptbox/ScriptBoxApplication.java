@@ -4,14 +4,12 @@ import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.scheduling.annotation.EnableAsync;
-import org.springframework.scheduling.annotation.EnableScheduling;
 
+// V2: cleanup is fully manual. No @EnableScheduling, no @Scheduled cron,
+// no startup-triggered cleanup. BigData Script Box must never delete data
+// on its own — all deletes go through a user-driven preview/confirm flow.
 @SpringBootApplication
 @EnableAsync
-// V2: enable @Scheduled so CleanupService can run daily at the configured
-// cron. Cron expression lives in scriptbox.cleanup-cron (see
-// application.yml).
-@EnableScheduling
 @MapperScan("com.bigdata.scriptbox.mapper")
 public class ScriptBoxApplication {
 

@@ -49,14 +49,17 @@ scriptbox:
   max-artifact-bytes: 52428800     # 50MB per artifact file
   max-artifact-files: 50           # 50 artifacts per execution max
   max-artifact-total-bytes: 209715200  # 200MB total artifacts per execution
-  # V2: auto-cleanup retention. 0 disables a category. Values can also be
+  # V2: manual cleanup retention. 0 disables a category. Values can also be
   # overridden at runtime via the system_setting table (see
-  # SystemSettingService for keys: cleanup.historyDays etc).
+  # SystemSettingService for keys: cleanup.historyDays etc). Cleanup is
+  # fully manual — no cron, no startup trigger.
   retention-history-days: 30
   retention-artifact-days: 30
   retention-execution-days: 30
   retention-log-days: 7
-  cleanup-cron: "0 0 3 * * *"     # daily 03:00 local time
+  # Directory where logback-spring.xml writes the rolling application log.
+  # Cleanup will only operate on this directory if it actually exists.
+  logs-dir: ./logs
 
 bigdata:
   environment-name: Mock 环境      # shown in the topbar tag
