@@ -30,8 +30,11 @@
       </nav>
       <div class="sb-topbar-right">
         <span class="sb-env-name">{{ envInfo.environmentName }}</span>
-        <span class="sb-status-dot" :class="{ live: ready }" />
-        <span class="sb-status-text">{{ ready ? '就绪' : '加载中' }}</span>
+        <span
+          class="sb-status-dot"
+          :class="{ live: ready, offline: offline }"
+        />
+        <span class="sb-status-text">{{ ready ? '就绪' : (offline ? '离线' : '加载中') }}</span>
       </div>
     </header>
     <main class="sb-main">
@@ -47,6 +50,7 @@ import { systemInfo } from '../api/system'
 
 const route = useRoute()
 const ready = ref(false)
+const offline = ref(false)
 const envInfo = reactive({ mock: true, environmentName: 'Mock 环境' })
 
 const navItems = [
@@ -64,14 +68,18 @@ function isActive(p) {
 }
 
 // Probe the system endpoint once on mount — confirms the JAR is up and gives us
-// the mock/real flag + environment name displayed in the topbar tag.
+// the mock/real flag + environment name displayed in the topbar tag. If the
+// probe fails the topbar shows '离线' instead of '加载中' so the user knows
+// it's a connection problem, not just a slow response.
 onMounted(async () => {
   try {
     const info = await systemInfo()
     if (info) Object.assign(envInfo, info)
     ready.value = true
+    offline.value = false
   } catch (_) {
     ready.value = false
+    offline.value = true
   }
 })
 </script>
@@ -190,6 +198,10 @@ onMounted(async () => {
 
 .sb-status-dot.live {
   background: var(--sb-success);
+}
+
+.sb-status-dot.offline {
+  background: var(--sb-danger);
 }
 
 .sb-main {
