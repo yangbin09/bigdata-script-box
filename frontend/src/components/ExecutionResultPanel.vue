@@ -2,6 +2,11 @@
   ExecutionResultPanel — shown inside the drawer after a run completes.
   - Status card (success / failed / timeout) with elapsed time + exit code.
   - Tabs: 结果 / stdout / stderr / 参数.
+    V2: stdout/stderr tabs gained search (regex or plain), highlight of matches,
+    quick chips (ERROR / WARN / Exception / Caused by / FAILED), and context
+    lines (0 / 3 / 5 / 10). The pre-download strip trims the visible content
+    to whatever the user is currently looking at, so big logs don't all hit
+    disk by accident.
   - "再次执行" / "修改参数" / "查看历史" buttons handled by parent via slots/events.
 -->
 <template>
@@ -43,20 +48,22 @@
         <div v-else class="sb-log sb-log-empty">执行完成，无附加输出。</div>
       </el-tab-pane>
       <el-tab-pane label="stdout" name="stdout">
-        <div class="sb-log-toolbar">
-          <el-button size="small" :icon="DocumentCopy" @click="copy(logStdout)">复制</el-button>
-          <el-button size="small" :icon="Download" @click="download('stdout', logStdout)">下载</el-button>
-        </div>
-        <pre class="sb-log" v-if="logStdout">{{ logStdout }}</pre>
-        <div v-else class="sb-log sb-log-empty">无 stdout 输出</div>
+        <LogPane
+          :text="logStdout"
+          stream-name="stdout"
+          :execution-id="history.id"
+          @copy="copy"
+          @download="download"
+        />
       </el-tab-pane>
       <el-tab-pane label="stderr" name="stderr">
-        <div class="sb-log-toolbar">
-          <el-button size="small" :icon="DocumentCopy" @click="copy(logStderr)">复制</el-button>
-          <el-button size="small" :icon="Download" @click="download('stderr', logStderr)">下载</el-button>
-        </div>
-        <pre class="sb-log" v-if="logStderr">{{ logStderr }}</pre>
-        <div v-else class="sb-log sb-log-empty">无 stderr 输出</div>
+        <LogPane
+          :text="logStderr"
+          stream-name="stderr"
+          :execution-id="history.id"
+          @copy="copy"
+          @download="download"
+        />
       </el-tab-pane>
       <el-tab-pane label="参数" name="params">
         <pre class="sb-log">{{ paramsPretty }}</pre>
@@ -75,11 +82,12 @@
 import { computed, ref, watch } from 'vue'
 import {
   CircleClose, CircleCheck, WarningFilled,
-  DocumentCopy, Download, RefreshRight, EditPen, Clock
+  RefreshRight, EditPen, Clock
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { formatDateTime, formatDuration, parseParamsJson } from '../utils/format'
 import { STATUS, STATUS_LABEL, STATUS_TAG_TYPE, statusOfHistory } from '../utils/labels'
+import LogPane from './LogPane.vue'
 
 const props = defineProps({
   history: { type: Object, required: true },
