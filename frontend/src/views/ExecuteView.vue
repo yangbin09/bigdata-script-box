@@ -157,6 +157,12 @@
               <span>{{ activeScript.category || '默认' }}</span>
               <span class="dot">·</span>
               <span>超时 {{ activeScript.timeoutSeconds || 600 }} 秒</span>
+              <span class="dot">·</span>
+              <router-link
+                :to="{ name: 'script-edit', query: { id: activeScript.id } }"
+                class="sb-exec-edit-link"
+                target="_blank"
+              >查看脚本定义 →</router-link>
             </div>
           </div>
           <el-button text :icon="Close" @click="closeDrawer" />
@@ -929,6 +935,11 @@ onMounted(async () => {
   color: var(--sb-text-3);
 }
 .sb-recent-meta .dot { color: var(--sb-text-3); }
+.sb-exec-edit-link {
+  color: var(--el-color-primary);
+  text-decoration: none;
+}
+.sb-exec-edit-link:hover { text-decoration: underline; }
 
 .sb-drawer-header {
   display: flex;
