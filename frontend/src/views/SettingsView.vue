@@ -91,16 +91,21 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref, watch } from 'vue'
 import { Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   listGlobalVariables, createGlobalVariable,
   updateGlobalVariable, deleteGlobalVariable
 } from '../api/extras'
+import { getItem, setItem } from '../utils/storage'
 import CleanupPanel from '../components/CleanupPanel.vue'
 
-const activeTab = ref('vars')
+// Persist the active tab across page navigations — users that came from
+// a cleanup run land here often and shouldn't have to re-pick the tab.
+const SETTINGS_TAB_KEY = 'sb.settingsTab'
+const activeTab = ref(getItem(SETTINGS_TAB_KEY, 'vars'))
+watch(activeTab, (v) => setItem(SETTINGS_TAB_KEY, v))
 
 const rows = ref([])
 const loading = ref(false)
