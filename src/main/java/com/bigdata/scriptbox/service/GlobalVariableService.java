@@ -5,7 +5,6 @@ import com.bigdata.scriptbox.entity.GlobalVariable;
 import com.bigdata.scriptbox.mapper.GlobalVariableMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -30,8 +29,12 @@ public class GlobalVariableService {
     /** 环境变量名合法字符集。 */
     private static final Pattern KEY_PATTERN = Pattern.compile("^[A-Za-z_][A-Za-z0-9_]*$");
 
-    @Autowired
-    private GlobalVariableMapper variableMapper;
+    private final GlobalVariableMapper variableMapper;
+
+    /** 构造器注入：依赖显式化，字段 final 不可变。 */
+    public GlobalVariableService(GlobalVariableMapper variableMapper) {
+        this.variableMapper = variableMapper;
+    }
 
     /**
      * 列出全部变量（含禁用项）。按 ID 升序。

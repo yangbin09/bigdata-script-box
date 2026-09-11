@@ -7,7 +7,6 @@ import com.bigdata.scriptbox.entity.ExecutionHistory;
 import com.bigdata.scriptbox.mapper.ExecutionArtifactMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -50,9 +49,18 @@ public class ArtifactService {
 
     private static final Logger log = LoggerFactory.getLogger(ArtifactService.class);
 
-    @Autowired private ScriptBoxProperties props;
-    @Autowired private ExecutionArtifactMapper artifactMapper;
-    @Autowired private StoragePathService storagePathService;
+    private final ScriptBoxProperties props;
+    private final ExecutionArtifactMapper artifactMapper;
+    private final StoragePathService storagePathService;
+
+    /** 构造器注入：依赖显式化，字段 final 不可变。 */
+    public ArtifactService(ScriptBoxProperties props,
+                           ExecutionArtifactMapper artifactMapper,
+                           StoragePathService storagePathService) {
+        this.props = props;
+        this.artifactMapper = artifactMapper;
+        this.storagePathService = storagePathService;
+    }
 
     /**
      * 获取某个执行的 artifacts/ 目录绝对路径，按需创建（不存在则创建）。

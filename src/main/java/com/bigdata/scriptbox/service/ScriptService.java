@@ -11,7 +11,6 @@ import com.bigdata.scriptbox.model.VisibleWhen;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -44,26 +43,30 @@ public class ScriptService {
     private static final Set<String> ALLOWED_TYPES = Set.of(
             "text", "number", "select", "boolean", "date", "textarea", "file");
 
-    @Autowired
-    private ScriptMapper scriptMapper;
+    private final ScriptMapper scriptMapper;
+    private final ScriptParamMapper scriptParamMapper;
+    private final ScriptBoxProperties props;
+    private final ScriptVersionService versionService;
+    private final PresetService presetService;
+    private final SyntaxCheckService syntaxCheckService;
+    private final StoragePathService storagePathService;
 
-    @Autowired
-    private ScriptParamMapper scriptParamMapper;
-
-    @Autowired
-    private ScriptBoxProperties props;
-
-    @Autowired
-    private ScriptVersionService versionService;
-
-    @Autowired
-    private PresetService presetService;
-
-    @Autowired
-    private SyntaxCheckService syntaxCheckService;
-
-    @Autowired
-    private StoragePathService storagePathService;
+    /** 构造器注入：依赖显式化，字段 final 不可变，便于单元测试。 */
+    public ScriptService(ScriptMapper scriptMapper,
+                         ScriptParamMapper scriptParamMapper,
+                         ScriptBoxProperties props,
+                         ScriptVersionService versionService,
+                         PresetService presetService,
+                         SyntaxCheckService syntaxCheckService,
+                         StoragePathService storagePathService) {
+        this.scriptMapper = scriptMapper;
+        this.scriptParamMapper = scriptParamMapper;
+        this.props = props;
+        this.versionService = versionService;
+        this.presetService = presetService;
+        this.syntaxCheckService = syntaxCheckService;
+        this.storagePathService = storagePathService;
+    }
 
     /** 启动时确保脚本根目录存在。 */
     @PostConstruct
