@@ -36,7 +36,9 @@ public record ExecutionContext(
         Path resultPath,
         Path scriptPath,
         boolean kinitWrapped,
-        int timeoutSeconds
+        int timeoutSeconds,
+        /** 临时 kinit wrapper 文件路径；执行结束（成功/失败/取消）必须删除。null 表示未生成 wrapper。 */
+        Path wrapperPath
 ) {
     /** 构造后保持 Map 不可变（防御性拷贝，防止调用方后续修改 params）。 */
     public ExecutionContext {
@@ -63,6 +65,7 @@ public record ExecutionContext(
         private Path scriptPath;
         private boolean kinitWrapped;
         private int timeoutSeconds = 600;
+        private Path wrapperPath;
 
         public Builder executionId(long v) { this.executionId = v; return this; }
         public Builder request(ExecutionRequest v) { this.request = v; return this; }
@@ -77,11 +80,12 @@ public record ExecutionContext(
         public Builder scriptPath(Path v) { this.scriptPath = v; return this; }
         public Builder kinitWrapped(boolean v) { this.kinitWrapped = v; return this; }
         public Builder timeoutSeconds(int v) { this.timeoutSeconds = v; return this; }
+        public Builder wrapperPath(Path v) { this.wrapperPath = v; return this; }
 
         public ExecutionContext build() {
             return new ExecutionContext(executionId, request, script, tenant, params,
                     executionDir, artifactDir, stdoutPath, stderrPath, resultPath,
-                    scriptPath, kinitWrapped, timeoutSeconds);
+                    scriptPath, kinitWrapped, timeoutSeconds, wrapperPath);
         }
     }
 }

@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 进程执行器。
@@ -85,14 +86,18 @@ public class ProcessRunner {
         // 都能 cancel(executionId)。registry 不负责启动，只负责跟踪。
         registry.register(executionId, req.scriptId(), req.tenantId(), startMs, process);
 
+        // drainFailed 标志：drain 线程任一发生 IO 异常则置 true；调用方据此在
+        // history / 日志里提示用户"输出可能不完整"，而不是静默丢消息。
+        AtomicBoolean drainFailed = new AtomicBoolean(false);
+
         // 整个执行生命周期放在 try/finally，保证 registry.unregister 必然执行。
         // 即便 waitFor / drain 抛异常，也不会留下 stale registry 条目阻塞后续 slot 检查。
         try (java.io.InputStream stdout = process.getInputStream();
              java.io.InputStream stderr = process.getErrorStream()) {
 
             // 启动两个 daemon 线程并行 drain stdout / stderr。
-            Thread drainOut = drainAsync(stdout, req.stdoutPath(), "stdout-" + req.label());
-            Thread drainErr = drainAsync(stderr, req.stderrPath(), "stderr-" + req.label());
+            Thread drainOut = drainAsync(stdout, req.stdoutPath(), "stdout-" + req.label(), drainFailed);
+            Thread drainErr = drainAsync(stderr, req.stderrPath(), "stderr-" + req.label(), drainFailed);
 
             boolean timedOut = false;
             try {
@@ -131,7 +136,8 @@ public class ProcessRunner {
             if (timedOut || cancelled) exitCode = -1;
 
             long duration = System.currentTimeMillis() - startMs;
-            return new ProcessResult(exitCode, timedOut, cancelled, duration, req.stdoutPath(), req.stderrPath());
+            return new ProcessResult(exitCode, timedOut, cancelled, duration,
+                    req.stdoutPath(), req.stderrPath(), drainFailed.get());
         } finally {
             // 关键：无论上面是否抛异常，registry 都必须注销。
             // 同时确保进程被销毁（极端情况下：抛异常发生在 waitFor 之前，进程仍在跑）。
@@ -164,14 +170,16 @@ public class ProcessRunner {
 
     /**
      * 异步 drain 进程输出流到目标文件。线程退出原因：流 EOF、IO 异常或线程被中断。
-     * 异常仅记录 WARN，不向上抛（stdout/stderr 写入失败不应影响主流程）。
+     * 异常仅记录 WARN，不向上抛（stdout/stderr 写入失败不应影响主流程）；
+     * 但会置位 {@code drainFailed} 让主流程在 history 里给运维一个提示。
      *
      * @param in 进程输出流
      * @param target 目标文件
      * @param label 日志标签，便于排查是哪个 drain
+     * @param drainFailed 任一 drain 失败即置 true 的共享标志
      * @return 已启动的线程
      */
-    private Thread drainAsync(java.io.InputStream in, Path target, String label) {
+    private Thread drainAsync(java.io.InputStream in, Path target, String label, AtomicBoolean drainFailed) {
         Thread t = new Thread(() -> {
             try (var br = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
                  var writer = Files.newBufferedWriter(target, StandardCharsets.UTF_8)) {
@@ -181,8 +189,10 @@ public class ProcessRunner {
                     writer.newLine();
                 }
             } catch (IOException e) {
-                // drain 失败：可能是 stdout 已经被强制关闭（cancel / destroy）。
-                // 这是预期场景，不影响主流程。
+                // drain 失败：可能是 stdout 已经被强制关闭（cancel / destroy），
+                // 也可能是目标文件路径不可写 / 权限问题。
+                // 不影响主流程 exitCode 解读，但需要让调用方知道。
+                drainFailed.set(true);
                 log.warn("drain {} 失败: {}", label, e.getMessage());
             }
         }, "exec-drain-" + label);

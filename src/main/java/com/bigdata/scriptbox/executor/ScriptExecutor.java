@@ -206,6 +206,21 @@ public class ScriptExecutor {
         ExecutionHistory history = newExecutionHistory(req, executionId, script, tenant,
                 validated, execDir, stdoutFile, stderrFile, resultFile, timeoutSeconds);
 
+        // kinit wrapper（如需）：在 prepareContext 阶段就生成 0700 临时 wrapper，
+        // 让 finalizeExecution 的 finally 能可靠地清理。
+        boolean kinitWrap = !props.isMock()
+                && tenant.getKeytabPath() != null
+                && !tenant.getKeytabPath().isBlank();
+        Path wrapperPath = null;
+        if (kinitWrap) {
+            ExecutionContext tmp = ExecutionContext.builder()
+                    .executionId(executionId).tenant(tenant)
+                    .executionDir(execDir).scriptPath(Paths.get(
+                            script.getScriptPath() == null ? "" : script.getScriptPath()))
+                    .build();
+            wrapperPath = createKinitWrapper(tmp);
+        }
+
         // 把 executionId 同步给 FileUploadService（之前在 promoteForExecution 调用里用了临时值，
         // 现在重新调一次以保证文件落到正确目录）。
         if (req.getFileInputs() != null && !req.getFileInputs().isEmpty()) {
@@ -231,8 +246,9 @@ public class ScriptExecutor {
                 .stderrPath(stderrFile)
                 .resultPath(resultFile)
                 .scriptPath(Paths.get(script.getScriptPath() == null ? "" : script.getScriptPath()))
-                .kinitWrapped(false) // 实际值在 startProcess 中根据 tenant keytab 决定
+                .kinitWrapped(kinitWrap)
                 .timeoutSeconds(timeoutSeconds)
+                .wrapperPath(wrapperPath)
                 .build();
     }
 
@@ -357,13 +373,10 @@ public class ScriptExecutor {
         }
 
         List<String> command;
-        boolean kinitWrap = !props.isMock()
-                && ctx.tenant().getKeytabPath() != null
-                && !ctx.tenant().getKeytabPath().isBlank();
         Map<String, String> env = buildEnv(ctx);
 
-        if (kinitWrap) {
-            command = buildKinitWrappedCommand(ctx);
+        if (ctx.kinitWrapped() && ctx.wrapperPath() != null) {
+            command = buildKinitWrappedCommand(ctx.wrapperPath(), ctx);
         } else {
             command = buildDirectCommand(ctx);
         }
@@ -388,75 +401,100 @@ public class ScriptExecutor {
 
     /**
      * 把 ProcessResult 映射回 ExecutionHistory 的最终字段；解析 result.json；扫描 artifact。
+     *
+     * <p>无论最终状态如何（成功 / 失败 / 超时 / 取消 / 异常），都会在 finally 内
+     * 删除临时 kinit wrapper 文件，防止敏感 wrapper 在 executionDir 中残留。
      */
     private ExecutionHistory finalizeExecution(ExecutionContext ctx, ProcessResult processResult) {
-        ExecutionHistory history = historyMapper.selectById(ctx.executionId());
-        if (history == null) {
-            history = newExecutionHistory(ctx.request(), ctx.executionId(), ctx.script(), ctx.tenant(),
-                    ctx.params(), ctx.executionDir(), ctx.stdoutPath(), ctx.stderrPath(),
-                    ctx.resultPath(), ctx.timeoutSeconds());
-        }
-
-        // 状态决策：cancel / timeout / ok 三者互斥，cancel 优先
-        boolean cancelled = processResult.cancelled();
-        boolean timedOut = processResult.timeout();
-        boolean ok = processResult.ok();
-        ExecutionStatus status;
-        if (cancelled) {
-            status = ExecutionStatus.CANCELLED;
-            log.info("任务已取消 executionId={}", ctx.executionId());
-        } else if (timedOut) {
-            status = ExecutionStatus.TIMEOUT;
-            log.warn("脚本执行超时 executionId={} timeout={}s",
-                    ctx.executionId(), ctx.timeoutSeconds());
-        } else {
-            status = ok ? ExecutionStatus.SUCCESS : ExecutionStatus.FAILED;
-            if (!ok) {
-                log.warn("脚本执行失败 executionId={} exitCode={}",
-                        ctx.executionId(), processResult.exitCode());
-            }
-        }
-
-        history.setEndTime(LocalDateTime.now());
-        history.setDurationMs(processResult.durationMs());
-        history.setExitCode(processResult.exitCode());
-        history.setTimeout(timedOut);
-        history.setSuccess(ok);
-        history.setStatus(status.name());
-
-        // result.json 解析失败不能拖垮整体执行；只能 warn
         try {
-            if (Files.exists(ctx.resultPath())) {
-                resultParserService.parse(ctx.resultPath(), history);
-                log.info("result.json 解析完成 executionId={}", ctx.executionId());
+            ExecutionHistory history = historyMapper.selectById(ctx.executionId());
+            if (history == null) {
+                history = newExecutionHistory(ctx.request(), ctx.executionId(), ctx.script(), ctx.tenant(),
+                        ctx.params(), ctx.executionDir(), ctx.stdoutPath(), ctx.stderrPath(),
+                        ctx.resultPath(), ctx.timeoutSeconds());
             }
-        } catch (Exception ex) {
-            log.warn("result.json 解析失败 executionId={}: {}", ctx.executionId(), ex.getMessage());
-        }
 
-        // artifact 扫描：失败也不影响主流程
-        try {
-            int registered = artifactService.scanAndRegister(history);
-            if (registered > 0) {
-                log.info("Artifact 扫描完成 executionId={} 文件数={}",
-                        ctx.executionId(), registered);
+            // 状态决策：cancel / timeout / ok 三者互斥，cancel 优先
+            boolean cancelled = processResult.cancelled();
+            boolean timedOut = processResult.timeout();
+            boolean ok = processResult.ok();
+            ExecutionStatus status;
+            if (cancelled) {
+                status = ExecutionStatus.CANCELLED;
+                log.info("任务已取消 executionId={}", ctx.executionId());
+            } else if (timedOut) {
+                status = ExecutionStatus.TIMEOUT;
+                log.warn("脚本执行超时 executionId={} timeout={}s",
+                        ctx.executionId(), ctx.timeoutSeconds());
+            } else {
+                status = ok ? ExecutionStatus.SUCCESS : ExecutionStatus.FAILED;
+                if (!ok) {
+                    log.warn("脚本执行失败 executionId={} exitCode={}",
+                            ctx.executionId(), processResult.exitCode());
+                } else {
+                    log.info("脚本执行成功 executionId={} 耗时={}ms",
+                            ctx.executionId(), processResult.durationMs());
+                }
             }
-        } catch (Exception ex) {
-            log.warn("Artifact 扫描失败 executionId={}: {}", ctx.executionId(), ex.getMessage());
-        }
 
-        // 先 unregister 再写库：cancel 接口通过 registry 查找执行；unregister 之后 cancel
-        // 立即返回 false；写库时不会再有人查到「RUNNING 但没活进程」。
-        runningRegistry.unregister(ctx.executionId());
+            // drain 失败提示：stdout 或 stderr 写入异常时不阻塞主流程，但要让运维看到
+            if (processResult.drainFailed()) {
+                log.warn("执行输出 drain 不完整 executionId={}（stdout 或 stderr 写入异常）",
+                        ctx.executionId());
+            }
 
-        // captureSnapshot 已经把 RUNNING 行 insert 到 DB；这里只 update 最终结果。
-        // PRECHECK_FAILED 路径走 runPrecheckOrRecordFailure 的 insert，不需要再 insert。
-        if (historyMapper.selectById(ctx.executionId()) == null) {
-            historyMapper.insert(history);
-        } else {
-            historyMapper.updateById(history);
+            history.setEndTime(LocalDateTime.now());
+            history.setDurationMs(processResult.durationMs());
+            history.setExitCode(processResult.exitCode());
+            history.setTimeout(timedOut);
+            history.setSuccess(ok);
+            history.setStatus(status.name());
+
+            // result.json 解析失败不能拖垮整体执行；只能 warn
+            try {
+                if (Files.exists(ctx.resultPath())) {
+                    resultParserService.parse(ctx.resultPath(), history);
+                    log.info("result.json 解析完成 executionId={}", ctx.executionId());
+                }
+            } catch (Exception ex) {
+                log.warn("result.json 解析失败 executionId={}: {}", ctx.executionId(), ex.getMessage());
+            }
+
+            // artifact 扫描：失败也不影响主流程
+            try {
+                int registered = artifactService.scanAndRegister(history);
+                if (registered > 0) {
+                    log.info("Artifact 扫描完成 executionId={} 文件数={}",
+                            ctx.executionId(), registered);
+                }
+            } catch (Exception ex) {
+                log.warn("Artifact 扫描失败 executionId={}: {}", ctx.executionId(), ex.getMessage());
+            }
+
+            // 先 unregister 再写库：cancel 接口通过 registry 查找执行；unregister 之后 cancel
+            // 立即返回 false；写库时不会再有人查到「RUNNING 但没活进程」。
+            runningRegistry.unregister(ctx.executionId());
+
+            // captureSnapshot 已经把 RUNNING 行 insert 到 DB；这里只 update 最终结果。
+            // PRECHECK_FAILED 路径走 runPrecheckOrRecordFailure 的 insert，不需要再 insert。
+            if (historyMapper.selectById(ctx.executionId()) == null) {
+                historyMapper.insert(history);
+            } else {
+                historyMapper.updateById(history);
+            }
+            return history;
+        } finally {
+            // 删除临时 kinit wrapper：执行结束 / 异常 / 取消都必须删，
+            // 防止 0700 文件在 executionDir 残留到 Cleanup 阶段（暴露 keytab 路径）。
+            if (ctx.wrapperPath() != null) {
+                try {
+                    Files.deleteIfExists(ctx.wrapperPath());
+                } catch (IOException ioe) {
+                    log.warn("删除临时 kinit wrapper 失败 executionId={} path={}: {}",
+                            ctx.executionId(), ctx.wrapperPath(), ioe.getMessage());
+                }
+            }
         }
-        return history;
     }
 
     // ======================================================================
@@ -482,8 +520,34 @@ public class ScriptExecutor {
     /**
      * 写一个 _kinit_wrap.sh 来包一层 kinit；调用方需保证 wrapper 写在 executionDir 内（受控目录）。
      */
-    private List<String> buildKinitWrappedCommand(ExecutionContext ctx) throws IOException {
-        Path wrapper = ctx.executionDir().resolve("_kinit_wrap.sh");
+    /**
+     * 生成 kinit wrapper 并返回对应的命令行。
+     *
+     * <p>wrapper 写到 {@code executionDir} 内的临时文件，文件名带随机后缀
+     * （{@code Files.createTempFile}），避免重跑 / 并发时冲突。文件权限设为 0700：
+     * 只允许 owner 读写执行，避免其他本地用户读到 wrapper 中的 keytab 路径。
+     *
+     * <p>wrapper 文件路径写入 {@link ExecutionContext#wrapperPath()}，
+     * 由 {@link #finalizeExecution} 在 finally 中删除，避免执行失败 / 取消时残留。
+     *
+     * <p>为何仍写 wrapper 而不是 in-memory pipe：kinit + 业务脚本必须串行
+     * 在同一进程内运行（保证 TGT 已就绪），ProcessBuilder 难以表达这种组合。
+     * wrapper 模式同时避免了 `bash -c "kinit && exec ..."` 形式（用户参数注入风险）。
+     */
+    /**
+     * 在指定 executionDir 内创建一个 0700 权限的临时 wrapper，并返回其路径。
+     * 由调用方把路径写入 ExecutionContext，让 finalizeExecution 的 finally 删除。
+     */
+    private Path createKinitWrapper(ExecutionContext ctx) throws IOException {
+        Path wrapper = Files.createTempFile(ctx.executionDir(), "kinit_wrap_", ".sh");
+        try {
+            Files.setPosixFilePermissions(wrapper, java.util.EnumSet.of(
+                    java.nio.file.attribute.PosixFilePermission.OWNER_READ,
+                    java.nio.file.attribute.PosixFilePermission.OWNER_WRITE,
+                    java.nio.file.attribute.PosixFilePermission.OWNER_EXECUTE));
+        } catch (UnsupportedOperationException ignored) {
+            // 非 POSIX 文件系统（理论上不会，部署目标是 Linux）：跳过权限设置
+        }
         String keytab = ctx.tenant().getKeytabPath().replace("'", "'\\''");
         String principal = ctx.tenant().getPrincipal().replace("'", "'\\''");
         String scriptPath = ctx.scriptPath().toString().replace("'", "'\\''");
@@ -492,7 +556,10 @@ public class ScriptExecutor {
                         "kinit -kt '" + keytab + "' '" + principal + "' || exit 127\n" +
                         "exec \"" + scriptPath + "\" \"$@\"\n",
                 StandardCharsets.UTF_8);
-        new File(wrapper.toString()).setExecutable(true);
+        return wrapper;
+    }
+
+    private List<String> buildKinitWrappedCommand(Path wrapper, ExecutionContext ctx) {
         List<String> cmd = new ArrayList<>();
         cmd.add("bash");
         cmd.add(wrapper.toString());

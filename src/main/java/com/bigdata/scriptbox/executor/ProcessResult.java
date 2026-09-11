@@ -11,7 +11,9 @@ package com.bigdata.scriptbox.executor;
  *   <li>{@code cancelled} — 是否因外部 cancel 被强杀；</li>
  *   <li>{@code durationMs} — 从进程启动到结束的耗时；</li>
  *   <li>{@code stdoutPath} / {@code stderrPath} — 输出落盘路径（运行时被引用，
- *       防止外部后续清理误删）。</li>
+ *       防止外部后续清理误删）；</li>
+ *   <li>{@code drainFailed} — stdout / stderr drain 线程是否任一发生过 IO 异常
+ *       （如目标文件不可写）。为 true 时仅作警示，不影响 exitCode 解读。</li>
  * </ul>
  *
  * <p>为何 {@code exitCode == -1}：Java {@code Process.exitValue()} 在进程
@@ -24,7 +26,8 @@ public record ProcessResult(
         boolean cancelled,
         long durationMs,
         java.nio.file.Path stdoutPath,
-        java.nio.file.Path stderrPath
+        java.nio.file.Path stderrPath,
+        boolean drainFailed
 ) {
     /** @return 是否成功完成（未超时未取消且退出码为 0） */
     public boolean ok() {
