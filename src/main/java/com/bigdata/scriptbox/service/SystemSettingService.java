@@ -3,7 +3,6 @@ package com.bigdata.scriptbox.service;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.bigdata.scriptbox.entity.SystemSetting;
 import com.bigdata.scriptbox.mapper.SystemSettingMapper;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -20,7 +19,12 @@ import java.util.List;
 @Service
 public class SystemSettingService {
 
-    @Autowired private SystemSettingMapper mapper;
+    private final SystemSettingMapper mapper;
+
+    /** 构造器注入：依赖显式化，字段 final 不可变。 */
+    public SystemSettingService(SystemSettingMapper mapper) {
+        this.mapper = mapper;
+    }
 
     /**
      * 按 key 读取整数。缺失或解析失败返回 defaultValue。

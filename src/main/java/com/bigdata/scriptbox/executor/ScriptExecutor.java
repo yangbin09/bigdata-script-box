@@ -25,7 +25,6 @@ import com.bigdata.scriptbox.util.MdcContext;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.File;
@@ -75,25 +74,53 @@ public class ScriptExecutor {
 
     private static final Logger log = LoggerFactory.getLogger(ScriptExecutor.class);
 
-    @Autowired private ScriptBoxProperties props;
-    @Autowired private com.bigdata.scriptbox.service.ScriptService scriptService;
-    @Autowired private ExecutionHistoryMapper historyMapper;
-    @Autowired private TenantService tenantService;
-    @Autowired private GlobalVariableService globalVariableService;
-    @Autowired private PresetService presetService;
-    @Autowired private ResultParserService resultParserService;
-    @Autowired private FileUploadService fileUploadService;
-    @Autowired private PrecheckService precheckService;
-    @Autowired private RunningExecutionRegistry runningRegistry;
-    @Autowired private ArtifactService artifactService;
-    @Autowired private StoragePathService storagePathService;
-    @Autowired private SensitiveDataMasker sensitiveDataMasker;
-    @Autowired private ProcessRunner processRunner;
-
+    private final ScriptBoxProperties props;
+    private final com.bigdata.scriptbox.service.ScriptService scriptService;
+    private final ExecutionHistoryMapper historyMapper;
+    private final TenantService tenantService;
+    private final GlobalVariableService globalVariableService;
+    private final PresetService presetService;
+    private final ResultParserService resultParserService;
+    private final FileUploadService fileUploadService;
+    private final PrecheckService precheckService;
+    private final RunningExecutionRegistry runningRegistry;
+    private final ArtifactService artifactService;
+    private final StoragePathService storagePathService;
+    private final SensitiveDataMasker sensitiveDataMasker;
+    private final ProcessRunner processRunner;
     private final ObjectMapper mapper;
     private final AtomicLong counter = new AtomicLong(System.currentTimeMillis() * 1000L);
 
-    public ScriptExecutor(ObjectMapper mapper) {
+    /** 构造器注入：14 个依赖一次性收齐，字段全部 final。 */
+    public ScriptExecutor(ScriptBoxProperties props,
+                          com.bigdata.scriptbox.service.ScriptService scriptService,
+                          ExecutionHistoryMapper historyMapper,
+                          TenantService tenantService,
+                          GlobalVariableService globalVariableService,
+                          PresetService presetService,
+                          ResultParserService resultParserService,
+                          FileUploadService fileUploadService,
+                          PrecheckService precheckService,
+                          RunningExecutionRegistry runningRegistry,
+                          ArtifactService artifactService,
+                          StoragePathService storagePathService,
+                          SensitiveDataMasker sensitiveDataMasker,
+                          ProcessRunner processRunner,
+                          ObjectMapper mapper) {
+        this.props = props;
+        this.scriptService = scriptService;
+        this.historyMapper = historyMapper;
+        this.tenantService = tenantService;
+        this.globalVariableService = globalVariableService;
+        this.presetService = presetService;
+        this.resultParserService = resultParserService;
+        this.fileUploadService = fileUploadService;
+        this.precheckService = precheckService;
+        this.runningRegistry = runningRegistry;
+        this.artifactService = artifactService;
+        this.storagePathService = storagePathService;
+        this.sensitiveDataMasker = sensitiveDataMasker;
+        this.processRunner = processRunner;
         this.mapper = mapper;
     }
 

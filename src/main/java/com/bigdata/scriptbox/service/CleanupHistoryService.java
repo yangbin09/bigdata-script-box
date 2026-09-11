@@ -3,7 +3,6 @@ package com.bigdata.scriptbox.service;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.bigdata.scriptbox.entity.CleanupHistory;
 import com.bigdata.scriptbox.mapper.CleanupHistoryMapper;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -21,7 +20,12 @@ import java.util.List;
 @Service
 public class CleanupHistoryService {
 
-    @Autowired private CleanupHistoryMapper mapper;
+    private final CleanupHistoryMapper mapper;
+
+    /** 构造器注入：依赖显式化，字段 final 不可变。 */
+    public CleanupHistoryService(CleanupHistoryMapper mapper) {
+        this.mapper = mapper;
+    }
 
     /**
      * 写入一条审计记录。{@code createdAt} 为空时填入当前时间。

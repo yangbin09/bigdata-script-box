@@ -7,7 +7,6 @@ import com.bigdata.scriptbox.entity.ScriptParam;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -46,13 +45,19 @@ public class ScriptPackageService {
     private static final Logger log = LoggerFactory.getLogger(ScriptPackageService.class);
     private static final long MAX_ENTRY_BYTES = 1024L * 1024L; // 每个 entry 1 MB
 
-    @Autowired private ScriptBoxProperties props;
-    @Autowired private ScriptService scriptService;
-    @Autowired private ScriptVersionService versionService;
-
+    private final ScriptBoxProperties props;
+    private final ScriptService scriptService;
+    private final ScriptVersionService versionService;
     private final ObjectMapper mapper;
 
-    public ScriptPackageService(ObjectMapper mapper) {
+    /** 构造器注入：依赖显式化，字段 final 不可变。 */
+    public ScriptPackageService(ScriptBoxProperties props,
+                                ScriptService scriptService,
+                                ScriptVersionService versionService,
+                                ObjectMapper mapper) {
+        this.props = props;
+        this.scriptService = scriptService;
+        this.versionService = versionService;
         this.mapper = mapper;
     }
 

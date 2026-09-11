@@ -5,7 +5,6 @@ import com.bigdata.scriptbox.entity.ExecutionHistory;
 import com.bigdata.scriptbox.executor.ScriptExecutor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -33,8 +32,15 @@ public class BatchService {
     /** 硬上限，避免失控批次。 */
     private static final int MAX_ROWS = 200;
 
-    @Autowired private ScriptExecutor executor;
-    @Autowired private com.bigdata.scriptbox.mapper.ExecutionHistoryMapper historyMapper;
+    private final ScriptExecutor executor;
+    private final com.bigdata.scriptbox.mapper.ExecutionHistoryMapper historyMapper;
+
+    /** 构造器注入：依赖显式化，字段 final 不可变。 */
+    public BatchService(ScriptExecutor executor,
+                        com.bigdata.scriptbox.mapper.ExecutionHistoryMapper historyMapper) {
+        this.executor = executor;
+        this.historyMapper = historyMapper;
+    }
 
     /** 单调递增的 batchId 计数器（基于当前毫秒时间戳起步）。 */
     private final AtomicLong batchCounter = new AtomicLong(System.currentTimeMillis() * 1000L);

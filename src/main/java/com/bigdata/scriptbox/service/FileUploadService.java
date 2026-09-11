@@ -3,7 +3,6 @@ package com.bigdata.scriptbox.service;
 import com.bigdata.scriptbox.config.ScriptBoxProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -36,8 +35,14 @@ public class FileUploadService {
     /** 文件名合法字符集（白名单：字母 / 数字 / 点 / 下划线 / 短横）。 */
     private static final Pattern SAFE_NAME = Pattern.compile("[^A-Za-z0-9._-]");
 
-    @Autowired private ScriptBoxProperties props;
-    @Autowired private StoragePathService storagePathService;
+    private final ScriptBoxProperties props;
+    private final StoragePathService storagePathService;
+
+    /** 构造器注入：依赖显式化，字段 final 不可变。 */
+    public FileUploadService(ScriptBoxProperties props, StoragePathService storagePathService) {
+        this.props = props;
+        this.storagePathService = storagePathService;
+    }
 
     /**
      * 暂存一个上传文件，返回 token + 原名 + 暂存绝对路径 + 大小。
