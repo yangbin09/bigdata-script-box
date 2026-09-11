@@ -21,10 +21,10 @@ import com.bigdata.scriptbox.service.RunningExecutionRegistry.RunningExecution;
 import com.bigdata.scriptbox.service.SensitiveDataMasker;
 import com.bigdata.scriptbox.service.StoragePathService;
 import com.bigdata.scriptbox.service.TenantService;
+import com.bigdata.scriptbox.util.MdcContext;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -120,9 +120,11 @@ public class ScriptExecutor {
      */
     private ExecutionHistory executeWithScript(ExecutionRequest req, Script script) throws IOException {
         ExecutionContext ctx = prepareContext(req, script);
-        attachMdc(ctx);
-
-        try {
+        // MDC 在主流程开始前挂上：runPrecheckOrRecordFailure / captureSnapshot / startProcess
+        // 里的 log.info("开始执行脚本 ...") 都需要 executionId / scriptName 上下文；
+        // 用 MdcContext.try-with-resources 保证 finally cleanup，避免漏 remove
+        // 让池化线程把旧 executionId 串到下一次执行。
+        try (MdcContext ignored = buildMdcContext(ctx, req)) {
             // PreCheck 阶段独立处理：失败时也要把 PRECHECK_FAILED 写进 history
             ExecutionHistory precheckFailure = runPrecheckOrRecordFailure(ctx);
             if (precheckFailure != null) {
@@ -137,13 +139,6 @@ public class ScriptExecutor {
 
             ProcessResult processResult = startProcess(ctx);
             return finalizeExecution(ctx, processResult);
-        } finally {
-            // MDC 用完必须清理；不然池化线程会让旧 executionId 串到下一次执行
-            MDC.remove("executionId");
-            MDC.remove("scriptName");
-            MDC.remove("tenantName");
-            MDC.remove("batchId");
-            MDC.remove("scenarioId");
         }
     }
 
@@ -243,9 +238,7 @@ public class ScriptExecutor {
             }
         }
 
-        // 把批次 / 场景上下文也放进 MDC，便于按 batchId / scenarioId 在日志里检索
-        if (req.getBatchId() != null) MDC.put("batchId", req.getBatchId());
-        if (req.getScenarioId() != null) MDC.put("scenarioId", String.valueOf(req.getScenarioId()));
+        // 把批次 / 场景上下文也放进 MDC（移到 buildMdcContext 中按需 attach）
 
         return ExecutionContext.builder()
                 .executionId(executionId)
@@ -664,10 +657,24 @@ public class ScriptExecutor {
     // 辅助
     // ======================================================================
 
-    private void attachMdc(ExecutionContext ctx) {
-        MDC.put("executionId", String.valueOf(ctx.executionId()));
-        if (ctx.script() != null) MDC.put("scriptName", ctx.script().getName());
-        if (ctx.tenant() != null) MDC.put("tenantName", ctx.tenant().getName());
+    private MdcContext buildMdcContext(ExecutionContext ctx, ExecutionRequest req) {
+        // MDC 集中挂载：buildMdcContext 由 try-with-resources 调用，离开作用域时
+        // 自动 MDC.remove，避免历史代码里"漏 remove 一个 key 导致串号"的隐患。
+        // 任何后续如果加新 MDC key，只需在这里加一行。
+        java.util.LinkedHashMap<String, String> map = new java.util.LinkedHashMap<>();
+        map.put("executionId", String.valueOf(ctx.executionId()));
+        if (ctx.script() != null) map.put("scriptName", ctx.script().getName());
+        if (ctx.tenant() != null) map.put("tenantName", ctx.tenant().getName());
+        if (req.getBatchId() != null) map.put("batchId", req.getBatchId());
+        if (req.getScenarioId() != null) map.put("scenarioId", String.valueOf(req.getScenarioId()));
+        // 把 LinkedHashMap 拆成 flat varargs
+        String[] pairs = new String[map.size() * 2];
+        int idx = 0;
+        for (var e : map.entrySet()) {
+            pairs[idx++] = e.getKey();
+            pairs[idx++] = e.getValue();
+        }
+        return MdcContext.of(pairs);
     }
 
     private long nextExecutionId() {

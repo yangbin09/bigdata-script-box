@@ -1,12 +1,12 @@
 package com.bigdata.scriptbox.config;
 
+import com.bigdata.scriptbox.util.MdcContext;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.slf4j.MDC;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
@@ -42,8 +42,8 @@ public class RequestMdcFilter extends OncePerRequestFilter {
     /**
      * 实际过滤逻辑：把请求上下文注入 MDC，然后放行业务过滤器。
      *
-     * <p>即使下游过滤器抛异常，MDC 也会在 finally 中清理，避免线程复用导致
-     * 的串号。
+     * <p>即使下游过滤器抛异常，MDC 也会在 try-with-resources 关闭时清理，
+     * 避免线程复用导致的串号。
      *
      * @param req 当前 HTTP 请求
      * @param resp 当前 HTTP 响应
@@ -54,40 +54,31 @@ public class RequestMdcFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest req, HttpServletResponse resp,
                                     FilterChain chain) throws ServletException, IOException {
-        boolean changed = false;
-        try {
-            // requestUri 永远是当前请求，便于日志关联
-            MDC.put(KEY_REQUEST_URI, req.getRequestURI());
-            changed = true;
+        // 收集需要注入 MDC 的字段；用 MdcContext.try-with-resources 在 finally 中清理
+        java.util.LinkedHashMap<String, String> map = new java.util.LinkedHashMap<>();
+        map.put(KEY_REQUEST_URI, req.getRequestURI());
+        String execId = req.getParameter("executionId");
+        if (execId != null && !execId.isBlank()) map.put(KEY_EXECUTION_ID, execId);
+        String batch = req.getParameter("batchId");
+        if (batch != null && !batch.isBlank()) map.put(KEY_BATCH_ID, batch);
+        String scenario = req.getParameter("scenarioId");
+        if (scenario != null && !scenario.isBlank()) map.put(KEY_SCENARIO_ID, scenario);
 
-            // executionId 出现在 /execution/* 路径里（history detail / log tail）
-            String execId = req.getParameter("executionId");
-            if (execId != null && !execId.isBlank()) {
-                MDC.put(KEY_EXECUTION_ID, execId);
-            }
+        String[] pairs = new String[map.size() * 2];
+        int idx = 0;
+        for (var e : map.entrySet()) {
+            pairs[idx++] = e.getKey();
+            pairs[idx++] = e.getValue();
+        }
 
-            // batchId / scenarioId 通常来自 POST body，但 GET 也可能用 query 传
-            String batch = req.getParameter("batchId");
-            if (batch != null && !batch.isBlank()) MDC.put(KEY_BATCH_ID, batch);
-            String scenario = req.getParameter("scenarioId");
-            if (scenario != null && !scenario.isBlank()) MDC.put(KEY_SCENARIO_ID, scenario);
-
-            long start = System.currentTimeMillis();
-            try {
-                chain.doFilter(req, resp);
-            } finally {
-                if (log.isDebugEnabled()) {
-                    log.debug("HTTP {} {} -> {} ({} ms)",
-                            req.getMethod(), req.getRequestURI(), resp.getStatus(),
-                            System.currentTimeMillis() - start);
-                }
-            }
+        long start = System.currentTimeMillis();
+        try (MdcContext ignored = MdcContext.of(pairs)) {
+            chain.doFilter(req, resp);
         } finally {
-            if (changed) {
-                MDC.remove(KEY_EXECUTION_ID);
-                MDC.remove(KEY_BATCH_ID);
-                MDC.remove(KEY_SCENARIO_ID);
-                MDC.remove(KEY_REQUEST_URI);
+            if (log.isDebugEnabled()) {
+                log.debug("HTTP {} {} -> {} ({} ms)",
+                        req.getMethod(), req.getRequestURI(), resp.getStatus(),
+                        System.currentTimeMillis() - start);
             }
         }
     }
