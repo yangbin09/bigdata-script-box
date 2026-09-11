@@ -10,7 +10,6 @@ import com.bigdata.scriptbox.mapper.ScenarioMapper;
 import com.bigdata.scriptbox.mapper.ScenarioStepMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -31,9 +30,18 @@ public class ScenarioService {
 
     private static final Logger log = LoggerFactory.getLogger(ScenarioService.class);
 
-    @Autowired private ScenarioMapper scenarioMapper;
-    @Autowired private ScenarioStepMapper stepMapper;
-    @Autowired private ScriptExecutor executor;
+    private final ScenarioMapper scenarioMapper;
+    private final ScenarioStepMapper stepMapper;
+    private final ScriptExecutor executor;
+
+    /** 构造器注入：依赖显式化，字段 final 不可变。 */
+    public ScenarioService(ScenarioMapper scenarioMapper,
+                           ScenarioStepMapper stepMapper,
+                           ScriptExecutor executor) {
+        this.scenarioMapper = scenarioMapper;
+        this.stepMapper = stepMapper;
+        this.executor = executor;
+    }
 
     /**
      * 创建场景。{@code id} 与 {@code enabled} 同时为空时默认启用。

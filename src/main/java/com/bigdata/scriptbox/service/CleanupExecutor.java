@@ -6,7 +6,6 @@ import com.bigdata.scriptbox.mapper.ExecutionArtifactMapper;
 import com.bigdata.scriptbox.mapper.ExecutionHistoryMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -39,10 +38,21 @@ public class CleanupExecutor {
 
     private static final Logger log = LoggerFactory.getLogger(CleanupExecutor.class);
 
-    @Autowired private RunningExecutionRegistry runningRegistry;
-    @Autowired private ExecutionHistoryMapper historyMapper;
-    @Autowired private ExecutionArtifactMapper artifactMapper;
-    @Autowired private StoragePathService storagePathService;
+    private final RunningExecutionRegistry runningRegistry;
+    private final ExecutionHistoryMapper historyMapper;
+    private final ExecutionArtifactMapper artifactMapper;
+    private final StoragePathService storagePathService;
+
+    /** 构造器注入：依赖显式化，字段 final 不可变。 */
+    public CleanupExecutor(RunningExecutionRegistry runningRegistry,
+                           ExecutionHistoryMapper historyMapper,
+                           ExecutionArtifactMapper artifactMapper,
+                           StoragePathService storagePathService) {
+        this.runningRegistry = runningRegistry;
+        this.historyMapper = historyMapper;
+        this.artifactMapper = artifactMapper;
+        this.storagePathService = storagePathService;
+    }
 
     /**
      * 应用快照。分四步：执行目录 → 产物（孤儿）→ 应用日志 → 历史表行。

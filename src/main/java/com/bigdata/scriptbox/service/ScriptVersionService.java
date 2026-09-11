@@ -6,7 +6,6 @@ import com.bigdata.scriptbox.entity.Script;
 import com.bigdata.scriptbox.entity.ScriptVersion;
 import com.bigdata.scriptbox.mapper.ScriptMapper;
 import com.bigdata.scriptbox.mapper.ScriptVersionMapper;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -28,10 +27,21 @@ import java.util.List;
 @Service
 public class ScriptVersionService {
 
-    @Autowired private ScriptVersionMapper versionMapper;
-    @Autowired private ScriptMapper scriptMapper;
-    @Autowired private ScriptBoxProperties props;
-    @Autowired private StoragePathService storagePathService;
+    private final ScriptVersionMapper versionMapper;
+    private final ScriptMapper scriptMapper;
+    private final ScriptBoxProperties props;
+    private final StoragePathService storagePathService;
+
+    /** 构造器注入：依赖显式化，字段 final 不可变。 */
+    public ScriptVersionService(ScriptVersionMapper versionMapper,
+                                ScriptMapper scriptMapper,
+                                ScriptBoxProperties props,
+                                StoragePathService storagePathService) {
+        this.versionMapper = versionMapper;
+        this.scriptMapper = scriptMapper;
+        this.props = props;
+        this.storagePathService = storagePathService;
+    }
 
     /**
      * 给当前脚本正文拍一份快照。版本号在已有最大版本号基础上 +1。
