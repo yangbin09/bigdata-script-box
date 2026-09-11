@@ -40,6 +40,10 @@
         >上下文 {{ c }}</el-button>
       </el-button-group>
     </div>
+    <div v-if="regexError" class="sb-logpane-regex-error">
+      <el-icon><WarningFilled /></el-icon>
+      <span>{{ regexError }}</span>
+    </div>
 
     <div class="sb-logpane-chips">
       <span class="sb-logpane-chips-label">快速过滤:</span>
@@ -78,7 +82,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import {
-  Search, DocumentCopy, Download, CopyDocument, RefreshLeft
+  Search, DocumentCopy, Download, CopyDocument, RefreshLeft, WarningFilled
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 
@@ -267,6 +271,18 @@ function copyRaw() {
 .sb-logpane-search { flex: 1; min-width: 0; }
 .sb-logpane-regex { white-space: nowrap; }
 .sb-logpane-context { white-space: nowrap; }
+.sb-logpane-regex-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  padding: 4px 8px;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #c2410c;
+}
 .sb-logpane-chips {
   display: flex;
   align-items: center;
