@@ -46,6 +46,9 @@ public class ExecutionRequest {
     private String confirmToken;
     /** V2: 历史快照重跑时设为 true，跳过危险脚本的二次确认（原执行已经过授权）。 */
     private boolean bypassDangerousCheck;
+    /** 历史快照重跑标记：为 true 时脚本路径落在 executionDir 内（临时副本），
+     *  captureSnapshot 会跳过 scriptsRoot 路径校验。 */
+    private boolean rerunSnapshot;
 
     /** @return 脚本 ID */
     public Long getScriptId() { return scriptId; }
@@ -91,4 +94,8 @@ public class ExecutionRequest {
     public boolean isBypassDangerousCheck() { return bypassDangerousCheck; }
     /** @param bypassDangerousCheck 是否绕过危险脚本确认 */
     public void setBypassDangerousCheck(boolean bypassDangerousCheck) { this.bypassDangerousCheck = bypassDangerousCheck; }
+    /** @return 是否 snapshot 重跑（临时副本路径，不在 scriptsRoot 下） */
+    public boolean isRerunSnapshot() { return rerunSnapshot; }
+    /** @param rerunSnapshot 是否 snapshot 重跑 */
+    public void setRerunSnapshot(boolean rerunSnapshot) { this.rerunSnapshot = rerunSnapshot; }
 }

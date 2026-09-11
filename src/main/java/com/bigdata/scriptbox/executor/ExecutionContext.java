@@ -38,7 +38,10 @@ public record ExecutionContext(
         boolean kinitWrapped,
         int timeoutSeconds,
         /** 临时 kinit wrapper 文件路径；执行结束（成功/失败/取消）必须删除。null 表示未生成 wrapper。 */
-        Path wrapperPath
+        Path wrapperPath,
+        /** snapshot rerun 标记：为 true 时 captureSnapshot 跳过 scriptsRoot 路径校验，
+         *  因为 rerun 临时脚本副本落在 executionDir 内（同样受控，但不在 scriptsRoot 下）。 */
+        boolean rerunSnapshot
 ) {
     /** 构造后保持 Map 不可变（防御性拷贝，防止调用方后续修改 params）。 */
     public ExecutionContext {
@@ -66,6 +69,7 @@ public record ExecutionContext(
         private boolean kinitWrapped;
         private int timeoutSeconds = 600;
         private Path wrapperPath;
+        private boolean rerunSnapshot;
 
         public Builder executionId(long v) { this.executionId = v; return this; }
         public Builder request(ExecutionRequest v) { this.request = v; return this; }
@@ -81,11 +85,12 @@ public record ExecutionContext(
         public Builder kinitWrapped(boolean v) { this.kinitWrapped = v; return this; }
         public Builder timeoutSeconds(int v) { this.timeoutSeconds = v; return this; }
         public Builder wrapperPath(Path v) { this.wrapperPath = v; return this; }
+        public Builder rerunSnapshot(boolean v) { this.rerunSnapshot = v; return this; }
 
         public ExecutionContext build() {
             return new ExecutionContext(executionId, request, script, tenant, params,
                     executionDir, artifactDir, stdoutPath, stderrPath, resultPath,
-                    scriptPath, kinitWrapped, timeoutSeconds, wrapperPath);
+                    scriptPath, kinitWrapped, timeoutSeconds, wrapperPath, rerunSnapshot);
         }
     }
 }

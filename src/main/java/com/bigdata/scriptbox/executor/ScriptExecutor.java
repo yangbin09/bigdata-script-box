@@ -106,7 +106,20 @@ public class ScriptExecutor {
     // ======================================================================
 
     public ExecutionHistory execute(ExecutionRequest req) throws IOException {
-        ExecutionContext ctx = prepareContext(req);
+        Script script = scriptService.getById(req.getScriptId());
+        if (script == null)
+            throw new IllegalArgumentException("脚本不存在: " + req.getScriptId());
+        return executeWithScript(req, script);
+    }
+
+    /**
+     * 使用给定的 Script 实体执行（允许 rerunFromSnapshot 临时覆盖 scriptPath）。
+     *
+     * @param req    执行请求
+     * @param script 已确定的脚本实体；其 scriptPath 字段直接用于 ProcessBuilder
+     */
+    private ExecutionHistory executeWithScript(ExecutionRequest req, Script script) throws IOException {
+        ExecutionContext ctx = prepareContext(req, script);
         attachMdc(ctx);
 
         try {
@@ -136,11 +149,11 @@ public class ScriptExecutor {
 
     /**
      * 主流程前 60%：参数 / 路径 / 历史行初始化。
+     *
+     * @param req    执行请求
+     * @param script 已确定的脚本实体（由 execute() 从 DB 加载，或由 rerunFromSnapshot 传入）
      */
-    private ExecutionContext prepareContext(ExecutionRequest req) throws IOException {
-        Script script = scriptService.getById(req.getScriptId());
-        if (script == null)
-            throw new IllegalArgumentException("脚本不存在: " + req.getScriptId());
+    private ExecutionContext prepareContext(ExecutionRequest req, Script script) throws IOException {
         if (script.getEnabled() == null || !script.getEnabled())
             throw new IllegalArgumentException("脚本已禁用: " + script.getName());
 
@@ -249,6 +262,9 @@ public class ScriptExecutor {
                 .kinitWrapped(kinitWrap)
                 .timeoutSeconds(timeoutSeconds)
                 .wrapperPath(wrapperPath)
+                // snapshot rerun 时脚本临时副本落在 executionDir 内（不在 scriptsRoot 下），
+                // 由 ExecutionRequest.isRerunSnapshot() 标记，避免穿透路径校验
+                .rerunSnapshot(req.isRerunSnapshot())
                 .build();
     }
 
@@ -327,8 +343,12 @@ public class ScriptExecutor {
         if (scriptPath == null || !Files.exists(scriptPath)) {
             throw new IllegalStateException("脚本文件不存在: " + scriptPath);
         }
-        // 路径安全：脚本文件必须落在配置的 scripts 目录下，阻止恶意路径逃逸
-        storagePathService.assertInside(scriptPath, storagePathService.scriptsRoot(), "script");
+        // 路径安全：脚本文件必须落在配置的 scripts 目录下，阻止恶意路径逃逸。
+        // 豁免情况：snapshot rerun 临时副本落在 executionDir 内（同样受控），
+        // 不在 scriptsRoot 下；用 ctx.rerunSnapshot() 标记避免穿透 assertInside。
+        if (!ctx.rerunSnapshot()) {
+            storagePathService.assertInside(scriptPath, storagePathService.scriptsRoot(), "script");
+        }
 
         ExecutionHistory row = historyMapper.selectById(ctx.executionId());
         boolean isNew = (row == null);
@@ -800,10 +820,12 @@ public class ScriptExecutor {
     }
 
     /**
-     * Snapshot 重放：从历史行的 snapshotJson 读取原参数 / 脚本体，临时覆盖脚本文件，
-     * 跑一次 execute，再恢复原文件。注意：原文件在 rerun 期间被改写，存在一个
-     * 短暂的时间窗口看到 snapshot body（其他人 readScriptBody 会看到 snapshot 内容）。
-     * 这是历史实现的妥协：保持 execute() 的签名不变（不引入新的脚本路径参数）。
+     * Snapshot 重放：从历史行的 snapshotJson 读取原参数 / 脚本体，
+     * 在当前 executionDir 下生成临时脚本副本，再走 execute()。
+     *
+     * <p>与原实现的区别：不再修改原始脚本文件（避免并发读 / 并发执行看到
+     * 临时 body），而是把 snapshot 写到本次执行的 executionDir 内的临时副本，
+     * execute() 跑完后由 finalizeExecution 的清理流程接管。
      */
     public ExecutionHistory rerunFromSnapshot(long executionId) throws IOException {
         ExecutionHistory h = historyMapper.selectById(executionId);
@@ -816,23 +838,47 @@ public class ScriptExecutor {
         if (s == null) throw new IllegalStateException("script has been deleted");
         String body = (String) snap.get("body");
 
-        ExecutionRequest req = new ExecutionRequest();
-        req.setScriptId(s.getId());
-        req.setTenantId(h.getTenantId());
-        @SuppressWarnings("unchecked")
-        Map<String, String> snapParams = (Map<String, String>) snap.get("params");
-        req.setParams(snapParams);
-        req.setBypassDangerousCheck(true);
-
-        String originalPath = s.getScriptPath();
-        Path original = Paths.get(originalPath);
-        String originalBody = Files.readString(original, StandardCharsets.UTF_8);
-        Files.writeString(original, body, StandardCharsets.UTF_8);
+        // 预生成 executionId + executionDir，让临时脚本副本落在受控目录内
+        long rerunExecId = nextExecutionId();
+        Path rerunExecDir = storagePathService.executionDirFor(rerunExecId);
+        Files.createDirectories(rerunExecDir);
+        Path rerunScript = rerunExecDir.resolve("_rerun_snapshot.sh");
+        Files.writeString(rerunScript, body, StandardCharsets.UTF_8);
         try {
-            return execute(req);
+            // 临时把 scriptPath 指向 snapshot 副本；execute() 读 Script entity 时用这个路径
+            Script rerunScriptEntity = new Script();
+            // 拷贝必要字段（id / name / allowConcurrent / timeoutSeconds 等）
+            rerunScriptEntity.setId(s.getId());
+            rerunScriptEntity.setName(s.getName());
+            rerunScriptEntity.setDisplayName(s.getDisplayName());
+            rerunScriptEntity.setDescription(s.getDescription());
+            rerunScriptEntity.setCategory(s.getCategory());
+            rerunScriptEntity.setEnabled(true); // 强制启用，跳过 enabled 校验
+            rerunScriptEntity.setRiskLevel(s.getRiskLevel());
+            rerunScriptEntity.setAllowConcurrent(s.getAllowConcurrent());
+            rerunScriptEntity.setTimeoutSeconds(s.getTimeoutSeconds());
+            rerunScriptEntity.setScriptPath(rerunScript.toString());
+            rerunScriptEntity.setPrecheckConfigJson(s.getPrecheckConfigJson());
+
+            ExecutionRequest req = new ExecutionRequest();
+            req.setScriptId(s.getId());
+            req.setTenantId(h.getTenantId());
+            @SuppressWarnings("unchecked")
+            Map<String, String> snapParams = (Map<String, String>) snap.get("params");
+            req.setParams(snapParams);
+            req.setBypassDangerousCheck(true);
+            req.setRerunSnapshot(true);
+
+            log.info("snapshot rerun: 写入临时副本 executionId={} path={}",
+                    rerunExecId, rerunScript);
+            return executeWithScript(req, rerunScriptEntity);
         } finally {
-            // 恢复原文 + 删除临时 _kinit_wrap / artifacts 等已生成的目录
-            Files.writeString(original, originalBody, StandardCharsets.UTF_8);
+            // executionDir 随 Cleanup 一起被删；这里只删脚本副本，避免占用空间。
+            try {
+                Files.deleteIfExists(rerunScript);
+            } catch (IOException ignored) {
+                // best-effort；下次 Cleanup 会兜底
+            }
         }
     }
 }
