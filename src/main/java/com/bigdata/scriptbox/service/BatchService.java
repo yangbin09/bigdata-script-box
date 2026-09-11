@@ -19,24 +19,27 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Run the same script multiple times against different parameter rows.
- * Each row produces one ExecutionHistory row sharing a single batchId.
+ * 批量执行服务：用同一脚本对多组参数各跑一次，每组参数产生一条
+ * {@link ExecutionHistory}，共享同一个 batchId。
  *
- * Rows run sequentially by default (script executor calls can be slow and we
- * don't want to fork-bomb the box). The simple "submit all at once" path is
- * still available when concurrency > 1.
+ * <p>默认顺序执行：脚本执行器调用较慢且可能启子进程，避免批量并发把宿主机打爆；
+ * 当 {@code concurrency > 1} 时启用并行模式，最多 8 路并发。
  */
 @Service
 public class BatchService {
 
     private static final Logger log = LoggerFactory.getLogger(BatchService.class);
-    private static final int MAX_ROWS = 200; // hard cap to avoid runaway batches
+
+    /** 硬上限，避免失控批次。 */
+    private static final int MAX_ROWS = 200;
 
     @Autowired private ScriptExecutor executor;
     @Autowired private com.bigdata.scriptbox.mapper.ExecutionHistoryMapper historyMapper;
 
+    /** 单调递增的 batchId 计数器（基于当前毫秒时间戳起步）。 */
     private final AtomicLong batchCounter = new AtomicLong(System.currentTimeMillis() * 1000L);
 
+    /** 批量执行汇总（成功 / 失败 / 涉及到的 executionId 列表）。 */
     public static class BatchSummary {
         public String batchId;
         public int total;
@@ -46,16 +49,17 @@ public class BatchService {
     }
 
     /**
-     * Run a batch sequentially: each row gets its own ExecutionHistory; one fails
-     * does not abort the others.
+     * 顺序执行一批：每行一个 ExecutionHistory，单行失败不影响其它行。
      */
     public BatchSummary runSequential(Long scriptId, Long tenantId, Long presetId,
                                       List<Map<String, String>> rows) {
         return runSequential(scriptId, tenantId, presetId, rows, null);
     }
 
-    /** V2: confirmToken is forwarded to every row's ExecutionRequest so that
-     *  a DANGEROUS script's batch execution honours the operator's CONFIRM. */
+    /**
+     * 顺序执行（带确认 token）。当脚本被标记为 DANGEROUS 时，
+     * 每行的 {@link ExecutionRequest} 都会带上 confirmToken 以便执行器判断。
+     */
     public BatchSummary runSequential(Long scriptId, Long tenantId, Long presetId,
                                       List<Map<String, String>> rows, String confirmToken) {
         if (rows == null || rows.isEmpty()) throw new IllegalArgumentException("empty rows");
@@ -67,6 +71,7 @@ public class BatchService {
         summary.batchId = batchId;
         summary.total = rows.size();
 
+        log.info("batch: 顺序执行开始 batchId={} scriptId={} rows={}", batchId, scriptId, rows.size());
         for (int i = 0; i < rows.size(); i++) {
             Map<String, String> row = rows.get(i);
             ExecutionRequest req = new ExecutionRequest();
@@ -87,19 +92,21 @@ public class BatchService {
                 summary.failed++;
             }
         }
+        log.info("batch: 顺序执行完成 batchId={} succeeded={} failed={}", batchId, summary.succeeded, summary.failed);
         return summary;
     }
 
     /**
-     * Run a batch with a small concurrency. Each row is still tracked under the
-     * same batchId. Failures don't abort others.
+     * 并行执行一批：仍然共享 batchId，concurrency 上限 8。
      */
     public BatchSummary runParallel(Long scriptId, Long tenantId, Long presetId,
                                     List<Map<String, String>> rows, int concurrency) {
         return runParallel(scriptId, tenantId, presetId, rows, concurrency, null);
     }
 
-    /** V2: see {@link #runSequential(Long, Long, Long, List, String)} for confirmToken semantics. */
+    /**
+     * 并行执行（带确认 token），confirmToken 语义同顺序版。
+     */
     public BatchSummary runParallel(Long scriptId, Long tenantId, Long presetId,
                                     List<Map<String, String>> rows, int concurrency, String confirmToken) {
         if (rows == null || rows.isEmpty()) throw new IllegalArgumentException("empty rows");
@@ -119,6 +126,8 @@ public class BatchService {
         summary.batchId = batchId;
         summary.total = rows.size();
 
+        log.info("batch: 并行执行开始 batchId={} scriptId={} rows={} concurrency={}",
+                batchId, scriptId, rows.size(), concurrency);
         List<Future<?>> futures = new ArrayList<>();
         for (int i = 0; i < rows.size(); i++) {
             final int idx = i;
@@ -151,15 +160,22 @@ public class BatchService {
             try { f.get(); } catch (Exception ignored) {}
         }
         pool.shutdownNow();
+        log.info("batch: 并行执行完成 batchId={} succeeded={} failed={}",
+                batchId, summary.succeeded, summary.failed);
         return summary;
     }
 
-    /** Look up all history rows for a batchId, ordered by batchRowIndex. */
+    /**
+     * 查一个 batch 下所有 ExecutionHistory 行（按 batchRowIndex 升序）。
+     */
     public List<ExecutionHistory> findByBatch(String batchId) {
         return historyMapper.selectByBatchId(batchId);
     }
 
-    /** Map of ExecutionHistory to a UI-friendly summary line. */
+    /**
+     * 把 ExecutionHistory 列表压缩成 UI 友好的字段（id / scriptName / tenantName /
+     * success / status / exitCode / startTime / durationMs / batchRowIndex）。
+     */
     public List<Map<String, Object>> summarize(List<ExecutionHistory> rows) {
         List<Map<String, Object>> out = new ArrayList<>();
         for (ExecutionHistory h : rows) {

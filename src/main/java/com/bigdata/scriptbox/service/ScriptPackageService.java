@@ -11,7 +11,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -27,22 +26,25 @@ import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 
 /**
- * Script package import/export: produce and consume a ZIP file containing
- *   manifest.json
- *   script.sh
- *   params.json
+ * 脚本包（package）导入导出：生成 / 解析一个 ZIP 文件，包含
+ * <pre>
+ *   manifest.json   元信息（name / displayName / category / ...）
+ *   script.sh       脚本正文
+ *   params.json     形参定义
+ * </pre>
  *
- * Defenses:
- *   - ZIP Slip: every entry name is normalised and must resolve inside the
- *     target extraction directory.
- *   - Path traversal: name must not contain ".." or absolute path components.
- *   - Size limits: each entry <= 1 MB; total script body <= maxScriptBytes.
+ * <p>防御措施：
+ * <ul>
+ *   <li>ZIP Slip：每个 entry 名都归一化，且必须落在解压目录内；</li>
+ *   <li>路径穿越：entry 名不允许 {@code ..} 或绝对路径前缀；</li>
+ *   <li>大小限制：单 entry ≤ 1 MB；脚本正文 ≤ {@link ScriptBoxProperties#getMaxScriptBytes()}。</li>
+ * </ul>
  */
 @Service
 public class ScriptPackageService {
 
     private static final Logger log = LoggerFactory.getLogger(ScriptPackageService.class);
-    private static final long MAX_ENTRY_BYTES = 1024L * 1024L; // 1 MB per entry
+    private static final long MAX_ENTRY_BYTES = 1024L * 1024L; // 每个 entry 1 MB
 
     @Autowired private ScriptBoxProperties props;
     @Autowired private ScriptService scriptService;
@@ -54,6 +56,9 @@ public class ScriptPackageService {
         this.mapper = mapper;
     }
 
+    /**
+     * 把指定脚本打包成 ZIP 字节流（含 manifest.json / script.sh / params.json）。
+     */
     public byte[] export(Long scriptId) throws IOException {
         Script s = scriptService.getById(scriptId);
         if (s == null) throw new IllegalArgumentException("script not found: " + scriptId);
@@ -68,8 +73,7 @@ public class ScriptPackageService {
         manifest.put("description", s.getDescription());
         manifest.put("timeoutSeconds", s.getTimeoutSeconds());
         manifest.put("enabled", s.getEnabled());
-        // precheckConfigJson is meta about environment, not tenant/keytab state;
-        // safe to round-trip in the package.
+        // precheckConfigJson 是环境元信息，不涉及租户 / keytab 状态，包往返安全
         manifest.put("precheckConfigJson", s.getPrecheckConfigJson());
 
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
@@ -82,7 +86,9 @@ public class ScriptPackageService {
         return baos.toByteArray();
     }
 
-    /** Compute the export filename from a script id; used by the controller. */
+    /**
+     * 推导导出文件名（基于脚本 name + id）。非法字符替换为下划线。
+     */
     public String exportFilename(Long scriptId) {
         Script s = scriptService.getById(scriptId);
         if (s == null) return "script-" + scriptId + ".zip";
@@ -90,17 +96,18 @@ public class ScriptPackageService {
         return safe + "-" + scriptId + ".zip";
     }
 
-    /** Result of an import. */
+    /** 导入结果（成功 / 是否新建 / 是否因重名复制）。 */
     public static class ImportResult {
         public Script script;
-        public String name;             // name used (after de-dup)
-        public boolean created;         // true if a new row was inserted
-        public boolean copied;          // true if the supplied name collided and we created a copy
+        public String name;             // 实际使用的 name（去重后）
+        public boolean created;         // 是否新建了一行
+        public boolean copied;          // 是否因为重名被加了 "-copy-N" 后缀
     }
 
     /**
-     * Import a script package. ZIP entries must be exactly manifest.json, script.sh,
-     * params.json. Names colliding with existing scripts are auto-suffixed with "-copy-N".
+     * 导入一个脚本包。ZIP 必须恰好包含 manifest.json / script.sh / params.json。
+     * 与现有脚本重名会自动加 "-copy-N" 后缀（除非 {@code overwrite=true}，当前实现
+     * 总是非覆盖，新增副本）。
      */
     public ImportResult doImport(MultipartFile file, boolean overwrite) throws IOException {
         if (file == null || file.isEmpty()) throw new IllegalArgumentException("empty zip");
@@ -115,7 +122,7 @@ public class ScriptPackageService {
                 String name = e.getName();
                 if (name.contains("..") || name.startsWith("/") || name.contains("\\"))
                     throw new IllegalArgumentException("invalid entry name: " + name);
-                // Reject absolute paths or parent-relative components even after name() parsing.
+                // 即便 names() 已经过滤，也再 normalize 一次确保安全
                 Path normalised = Paths.get(name).normalize();
                 if (normalised.startsWith("..") || normalised.isAbsolute())
                     throw new IllegalArgumentException("zip slip attempt: " + name);
@@ -155,7 +162,6 @@ public class ScriptPackageService {
         List<ScriptParam> params = parseParamsJson(entries.get("params.json"));
 
         ImportResult result = new ImportResult();
-        // Resolve name conflict
         final String baseName = originalName;
         String name = baseName;
         java.util.Set<String> existingNames = new java.util.HashSet<>();
@@ -183,7 +189,7 @@ public class ScriptPackageService {
         InMemoryMultipartFile mf = new InMemoryMultipartFile(
                 "file", name + ".sh", "application/x-sh", bytes);
         Script saved = scriptService.create(s, mf);
-        // Re-apply precheck (create() doesn't persist it on the row).
+        // 重新落 precheckConfigJson（create() 默认不会回填这个字段）
         if (precheckCfg != null && !precheckCfg.isBlank()) {
             saved.setPrecheckConfigJson(precheckCfg);
             saved.setUpdateTime(java.time.LocalDateTime.now());
@@ -194,10 +200,11 @@ public class ScriptPackageService {
         result.script = saved;
         result.name = saved.getName();
         result.created = true;
+        log.info("package: 导入脚本 name={} copied={}", saved.getName(), result.copied);
         return result;
     }
 
-    /** Parse a params.json blob into a list of ScriptParam. Tolerant of malformed input. */
+    /** 把 params.json 解析为 ScriptParam 列表；容错处理格式异常（返回空列表）。 */
     private List<ScriptParam> parseParamsJson(byte[] bytes) {
         if (bytes == null || bytes.length == 0) return List.of();
         try {
@@ -229,6 +236,7 @@ public class ScriptPackageService {
         }
     }
 
+    /** ScriptParam → Map，导出时用。 */
     private List<Map<String, Object>> toParamMapList(List<ScriptParam> params) {
         List<Map<String, Object>> out = new ArrayList<>();
         for (ScriptParam p : params) {

@@ -10,20 +10,21 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * V2: persisted runtime settings. Stored in the {@code system_setting}
- * table; read through a typed {@code getInt}/{@code getLong} facade that
- * falls back to the supplied default when the row is missing or the value
- * doesn't parse. Writes upsert by primary key.
+ * V2: 持久化的运行时设置。存在 {@code system_setting} 表；通过类型化的
+ * {@code getInt} / {@code getLong} / {@code getString} / {@code getBoolean} 接口读取，
+ * 缺失或解析失败时回退到调用方提供的默认值。写入按主键 upsert。
  *
- * <p>This is intentionally simple — no caching layer. The cleanup
- * scheduler runs at most once per day, so a direct DB read per
- * invocation is fine and avoids stale-cache confusion.
+ * <p>故意不做缓存层：清理调度每天最多执行一次，每次直读数据库完全没问题，还能
+ * 避免"缓存里的旧值"与"刚刚改的设置"对不上的迷惑。
  */
 @Service
 public class SystemSettingService {
 
     @Autowired private SystemSettingMapper mapper;
 
+    /**
+     * 按 key 读取整数。缺失或解析失败返回 defaultValue。
+     */
     public Integer getInt(String key, Integer defaultValue) {
         String v = getRaw(key);
         if (v == null || v.isBlank()) return defaultValue;
@@ -31,6 +32,9 @@ public class SystemSettingService {
         catch (NumberFormatException nfe) { return defaultValue; }
     }
 
+    /**
+     * 按 key 读取长整数。缺失或解析失败返回 defaultValue。
+     */
     public Long getLong(String key, Long defaultValue) {
         String v = getRaw(key);
         if (v == null || v.isBlank()) return defaultValue;
@@ -38,26 +42,41 @@ public class SystemSettingService {
         catch (NumberFormatException nfe) { return defaultValue; }
     }
 
+    /**
+     * 按 key 读取字符串。缺失或空串返回 defaultValue。
+     */
     public String getString(String key, String defaultValue) {
         String v = getRaw(key);
         return (v == null || v.isBlank()) ? defaultValue : v;
     }
 
+    /**
+     * 按 key 读取布尔值。缺失或空串返回 defaultValue。
+     */
     public Boolean getBoolean(String key, Boolean defaultValue) {
         String v = getRaw(key);
         if (v == null || v.isBlank()) return defaultValue;
         return Boolean.parseBoolean(v.trim());
     }
 
+    /**
+     * 读原始字符串值（trim 由调用方决定）。
+     */
     public String getRaw(String key) {
         SystemSetting s = mapper.selectById(key);
         return s == null ? null : s.getSettingValue();
     }
 
+    /**
+     * 列出全部设置（按 key 升序）。
+     */
     public List<SystemSetting> listAll() {
         return mapper.selectList(new QueryWrapper<SystemSetting>().orderByAsc("setting_key"));
     }
 
+    /**
+     * 按 key upsert（更新或插入）。自动刷新 {@code update_time}。
+     */
     public SystemSetting upsert(String key, String value, String description) {
         if (key == null || key.isBlank()) throw new IllegalArgumentException("setting_key is required");
         SystemSetting existing = mapper.selectById(key);

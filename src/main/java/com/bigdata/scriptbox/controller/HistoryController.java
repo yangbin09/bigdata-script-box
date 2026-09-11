@@ -8,6 +8,12 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
+/**
+ * 执行历史查询接口。
+ *
+ * <p>提供最近执行列表（带可选过滤）、单条历史详情、以及「最近执行过的脚本」
+ * 摘要列表，供前端首页或仪表盘使用。
+ */
 @RestController
 @RequestMapping("/api/history")
 public class HistoryController {
@@ -15,16 +21,18 @@ public class HistoryController {
     @Autowired private HistoryService historyService;
 
     /**
-     * Recent executions with optional filters.
+     * 查询执行历史，支持多维过滤。
      *
-     * Query params:
-     *   limit        — cap on rows (1..500, default 100)
-     *   scriptId     — filter by script
-     *   tenantId     — filter by tenant
-     *   status       — success | failed | timeout | cancelled (maps to the unified labels)
-     *   keyword      — substring match against scriptName / tenantName / stdout / stderr
-     *   from         — yyyy-MM-dd (inclusive lower bound on start_time)
-     *   to           — yyyy-MM-dd (exclusive upper bound on start_time, ie to=2026-01-15 keeps 1/14)
+     * <p>查询参数：
+     * <ul>
+     *   <li>{@code limit} — 行数上限（1..500，默认 100）；</li>
+     *   <li>{@code scriptId} — 按脚本过滤；</li>
+     *   <li>{@code tenantId} — 按租户过滤；</li>
+     *   <li>{@code status} — 状态过滤（success | failed | timeout | cancelled）；</li>
+     *   <li>{@code keyword} — 对脚本名 / 租户名 / stdout / stderr 做子串匹配；</li>
+     *   <li>{@code from} — 起始日期（含），格式 yyyy-MM-dd；</li>
+     *   <li>{@code to} — 结束日期（不含），例如 {@code to=2026-01-15} 会保留 1/14。</li>
+     * </ul>
      */
     @GetMapping
     public ApiResponse<List<ExecutionHistory>> list(@RequestParam(defaultValue = "100") int limit,
@@ -41,6 +49,12 @@ public class HistoryController {
         return ApiResponse.ok(historyService.listFiltered(limit, scriptId, tenantId, status, keyword, from, to));
     }
 
+    /**
+     * 根据主键查询一条历史。
+     *
+     * @param id 历史主键
+     * @return 历史详情
+     */
     @GetMapping("/{id}")
     public ApiResponse<ExecutionHistory> get(@PathVariable Long id) {
         ExecutionHistory h = historyService.getById(id);
@@ -49,8 +63,10 @@ public class HistoryController {
     }
 
     /**
-     * Distinct scripts recently executed, ordered by latest execution.
-     * Each entry is the minimal Script fields + last execution timestamp.
+     * 最近执行过的脚本（按最近一次执行时间倒序），每条仅返回关键字段。
+     *
+     * @param limit 返回条数（夹到 1..20，默认 6）
+     * @return 摘要列表
      */
     @GetMapping("/recent-scripts")
     public ApiResponse<List<HistoryService.RecentScript>> recentScripts(@RequestParam(defaultValue = "6") int limit) {

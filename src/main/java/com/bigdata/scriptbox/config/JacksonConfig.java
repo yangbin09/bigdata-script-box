@@ -8,7 +8,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * 共享 {@link ObjectMapper} Bean。
+ * 共享 {@link ObjectMapper} Bean 配置。
  *
  * <p>为什么需要单独的 Jackson 配置：
  * <ol>
@@ -27,6 +27,19 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class JacksonConfig {
 
+    /**
+     * 注册统一的 ObjectMapper Bean。
+     *
+     * <p>关键设置：
+     * <ul>
+     *   <li>注册 {@link JavaTimeModule}，支持 {@code LocalDateTime} 等 Java 8 时间类型；</li>
+     *   <li>禁用时间戳序列化（统一 ISO-8601 字符串）；</li>
+     *   <li>关闭「未知属性失败」以便向前兼容新增字段；</li>
+     *   <li>允许空字符串视作 null 对象。</li>
+     * </ul>
+     *
+     * @return 配置完成的 ObjectMapper
+     */
     @Bean
     public ObjectMapper scriptboxObjectMapper() {
         ObjectMapper mapper = new ObjectMapper();

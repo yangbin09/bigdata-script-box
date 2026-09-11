@@ -125,9 +125,12 @@ public class ScriptExecutor {
             ProcessResult processResult = startProcess(ctx);
             return finalizeExecution(ctx, processResult);
         } finally {
+            // MDC 用完必须清理；不然池化线程会让旧 executionId 串到下一次执行
             MDC.remove("executionId");
             MDC.remove("scriptName");
             MDC.remove("tenantName");
+            MDC.remove("batchId");
+            MDC.remove("scenarioId");
         }
     }
 
@@ -211,6 +214,10 @@ public class ScriptExecutor {
                 validated.put(e.getKey(), e.getValue());
             }
         }
+
+        // 把批次 / 场景上下文也放进 MDC，便于按 batchId / scenarioId 在日志里检索
+        if (req.getBatchId() != null) MDC.put("batchId", req.getBatchId());
+        if (req.getScenarioId() != null) MDC.put("scenarioId", String.valueOf(req.getScenarioId()));
 
         return ExecutionContext.builder()
                 .executionId(executionId)

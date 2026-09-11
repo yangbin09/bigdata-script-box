@@ -17,7 +17,7 @@ import java.util.concurrent.TimeUnit;
  * 进程执行器。
  *
  * <p>封装 ProcessBuilder 启动 + stdout/stderr 异步消费 + 超时 + 取消 + 退出码
- * 这些「通用样板」，让 ScriptExecutor 只关心业务参数。
+ * 这些"通用样板"，让 ScriptExecutor 只关心业务参数。
  *
  * <p>关键设计点：
  * <ol>
@@ -59,8 +59,8 @@ public class ProcessRunner {
      *   <li>确保 {@link ProcessRequest#stdoutPath()} / {@link ProcessRequest#stderrPath()}
      *       的父目录存在（{@code Files.createDirectories}）。</li>
      *   <li>确保环境变量、命令行安全（不应拼接 bash -c）。</li>
- *       <li>调用 {@link RunningExecutionRegistry#register} 后再调用本方法，
- *       便于 cancel 能在中途 fire。</li>
+     *   <li>调用 {@link RunningExecutionRegistry#register} 后再调用本方法，
+     *       便于 cancel 能在中途 fire。</li>
      * </ul>
      */
     public ProcessResult run(long executionId, ProcessRequest req) throws IOException {
@@ -117,6 +117,7 @@ public class ProcessRunner {
         } catch (IllegalThreadStateException ex) {
             exitCode = -1;
         }
+        // 超时或取消的进程没有合法退出码；统一置 -1 让调用方靠 timeout/cancelled 字段判断
         if (timedOut || cancelled) exitCode = -1;
 
         long duration = System.currentTimeMillis() - startMs;
@@ -126,6 +127,11 @@ public class ProcessRunner {
     /**
      * 异步 drain 进程输出流到目标文件。线程退出原因：流 EOF、IO 异常或线程被中断。
      * 异常仅记录 WARN，不向上抛（stdout/stderr 写入失败不应影响主流程）。
+     *
+     * @param in 进程输出流
+     * @param target 目标文件
+     * @param label 日志标签，便于排查是哪个 drain
+     * @return 已启动的线程
      */
     private Thread drainAsync(java.io.InputStream in, Path target, String label) {
         Thread t = new Thread(() -> {
@@ -147,6 +153,11 @@ public class ProcessRunner {
         return t;
     }
 
+    /**
+     * 带超时的 join。中断不抛，仅恢复线程中断标志。
+     *
+     * @param t 线程
+     */
     private static void joinQuietly(Thread t) {
         try {
             t.join(DRAIN_JOIN_MS);

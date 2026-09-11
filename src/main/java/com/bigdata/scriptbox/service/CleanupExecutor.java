@@ -13,34 +13,26 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
 
 /**
- * V2: the actual deletion half of the manual cleanup flow. Given a
- * {@link PreviewStore.CleanupPreview} snapshot, walks each candidate
- * one-by-one and applies the safety checks described in
- * {@link com.bigdata.scriptbox.service.PreviewStore.CleanupPreview}:
+ * V2: 手动清理流的"删除侧"。接收 {@link PreviewStore.CleanupPreview} 快照，
+ * 逐项应用 {@link PreviewStore.CleanupPreview} 中描述的安全防护：
  *
  * <ul>
- *   <li>The candidate's path is normalized + realPath'd with
- *       {@code NOFOLLOW_LINKS}; if it falls outside the
- *       controlled root recorded in the preview, it is <b>skipped</b>
- *       (never deleted). We refuse to chase symlinks to escape the
- *       sandbox.</li>
- *   <li>Soft-links are skipped outright — they may legitimately point
- *       elsewhere, and following them is the easiest way to delete
- *       something the operator didn't intend.</li>
- *   <li>Per-item failures are caught and recorded; one bad delete
- *       does not abort the run.</li>
- *   <li>The corresponding row in {@code execution_artifact} /
- *       {@code file_upload} / {@code execution_history} is removed
- *       alongside the on-disk file.</li>
+ *   <li>对每个候选路径做 normalize + realPath（{@code NOFOLLOW_LINKS}）；若解析出的真实路径
+ *       不在快照记录的控制根目录内，直接跳过（绝不删除），防止通过符号链接逃逸沙箱。</li>
+ *   <li>软链接一律跳过：它们合法地指向别处，跟着它们走最容易删掉运维不想删的内容。</li>
+ *   <li>单条失败被捕获并记录，不影响整个批次继续运行。</li>
+ *   <li>删除文件/目录时，连同 {@code execution_artifact} / {@code file_upload} /
+ *       {@code execution_history} 表对应行一起清掉。</li>
  * </ul>
  *
- * <p>Returns a {@link CleanupReport} that the UI renders after the run.
- * The caller is responsible for writing one row to {@code cleanup_history}.
+ * <p>返回 {@link CleanupReport}，由 UI 渲染。调用方负责把一行审计写入
+ * {@code cleanup_history} 表（由 {@link CleanupService#execute(String, String)} 完成）。
  */
 @Service
 public class CleanupExecutor {
@@ -52,20 +44,24 @@ public class CleanupExecutor {
     @Autowired private ExecutionArtifactMapper artifactMapper;
     @Autowired private StoragePathService storagePathService;
 
+    /**
+     * 应用快照。分四步：执行目录 → 产物（孤儿）→ 应用日志 → 历史表行。
+     * 每一步都独立处理异常，单条失败不会中断其他候选的处理。
+     */
     public CleanupReport execute(PreviewStore.CleanupPreview preview) {
         long startMs = System.currentTimeMillis();
         CleanupReport report = new CleanupReport();
         report.previewId = preview.getPreviewId();
         report.startedAtIso = java.time.Instant.now().toString();
 
-        // 1. Execution dirs — one directory per execution.
+        // 1. 执行目录（按 execution 一刀切）
         for (PreviewStore.CandidateOutcome c : preview.executionDirs) {
             try {
                 if (c.flag != PreviewStore.CandidateOutcome.Status.CANDIDATE) {
                     report.skipped.add(skipLine(c));
                     continue;
                 }
-                Path p = java.nio.file.Paths.get(c.path);
+                Path p = Paths.get(c.path);
                 long freed = deleteExecutionDir(p, preview.controlledPaths.executionsRoot);
                 if (freed < 0) {
                     c.flag = PreviewStore.CandidateOutcome.Status.SKIPPED_ESCAPE;
@@ -83,17 +79,15 @@ public class CleanupExecutor {
             }
         }
 
-        // 2. Artifacts — files inside each execution's artifacts/ dir.
-        //    These are removed as part of step 1, so this loop is mostly
-        //    a no-op safety net for orphans (e.g. an artifact row whose
-        //    parent dir got removed out-of-band).
+        // 2. 产物（孤儿）：执行目录已被删除的产物行；正常流程下基本是空走，主要
+        //    兜底手工误删的执行目录造成的孤儿产物记录。
         for (PreviewStore.CandidateOutcome c : preview.artifacts) {
             try {
                 if (c.flag != PreviewStore.CandidateOutcome.Status.CANDIDATE) {
                     report.skipped.add(skipLine(c));
                     continue;
                 }
-                Path p = java.nio.file.Paths.get(c.path);
+                Path p = Paths.get(c.path);
                 long freed = deleteFileSafely(p, preview.controlledPaths.executionsRoot);
                 if (freed < 0) {
                     report.skipped.add(skipLine(c));
@@ -109,7 +103,7 @@ public class CleanupExecutor {
             }
         }
 
-        // 3. Application logs — files under the configured logsDir.
+        // 3. 应用日志：logsEnabled 才走这一步
         if (preview.logsEnabled && preview.controlledPaths.logsRoot != null) {
             for (PreviewStore.CandidateOutcome c : preview.logs) {
                 try {
@@ -117,7 +111,7 @@ public class CleanupExecutor {
                         report.skipped.add(skipLine(c));
                         continue;
                     }
-                    Path p = java.nio.file.Paths.get(c.path);
+                    Path p = Paths.get(c.path);
                     long freed = deleteFileSafely(p, preview.controlledPaths.logsRoot);
                     if (freed < 0) {
                         report.skipped.add(skipLine(c));
@@ -131,9 +125,8 @@ public class CleanupExecutor {
             }
         }
 
-        // 4. Histories whose execution dir no longer exists on disk but
-        //    whose DB row is still around (preview didn't catch them
-        //    above because no execution dir matched).
+        // 4. 历史表行兜底：执行目录已经不存在（可能因为被手工删掉），但 DB 还在
+        //    的孤儿 history 行在这里集中删掉。
         for (PreviewStore.CandidateOutcome c : preview.histories) {
             try {
                 if (c.flag != PreviewStore.CandidateOutcome.Status.CANDIDATE) {
@@ -155,9 +148,12 @@ public class CleanupExecutor {
         return report;
     }
 
+    /**
+     * 删除一条 history 行，同时把关联的产物行一并清掉，避免孤儿引用。
+     * 失败抛 RuntimeException 由调用方 catch 并写入报告的 failed 列表。
+     */
     private void wipeHistoryRow(long historyId) {
         try {
-            // Drop child artifact rows first so we don't leave orphan references.
             artifactMapper.delete(new QueryWrapper<ExecutionArtifact>().eq("execution_id", historyId));
             historyMapper.deleteById(historyId);
         } catch (Exception e) {
@@ -167,9 +163,8 @@ public class CleanupExecutor {
     }
 
     /**
-     * Delete the whole execution dir for {@code executionId}. Returns the
-     * number of bytes actually freed, or {@code -1} if the path failed
-     * any safety check.
+     * 删除整个执行目录。返回释放字节数；返回 {@code -1} 表示该路径未通过任何安全检查
+     * （非数字目录名、运行中、被 symlink 跳出沙箱等）。
      */
     private long deleteExecutionDir(Path path, String controlledRoot) {
         if (path == null || controlledRoot == null) return -1;
@@ -178,14 +173,14 @@ public class CleanupExecutor {
             Path abs = path.toAbsolutePath().normalize();
             if (!Files.exists(abs)) return 0;
             Path real = abs.toRealPath(LinkOption.NOFOLLOW_LINKS);
-            Path root = java.nio.file.Paths.get(controlledRoot).toAbsolutePath().normalize();
+            Path root = Paths.get(controlledRoot).toAbsolutePath().normalize();
             if (!storagePathService.isInsideReal(real, root)) return -1;
-            // Re-check the parsed id is still not running (race window).
+            // 二次确认不是运行中的执行（防止 preview 之后被启动）
             String name = path.getFileName() == null ? "" : path.getFileName().toString();
             try {
                 long execId = Long.parseLong(name);
                 if (runningRegistry.get(execId) != null) return -1;
-            } catch (NumberFormatException ignored) { /* not numeric — skip id check */ }
+            } catch (NumberFormatException ignored) { /* 非数字目录名，跳过 id 检查 */ }
 
             long bytes = directorySize(real);
             deleteRecursively(real);
@@ -196,6 +191,9 @@ public class CleanupExecutor {
         }
     }
 
+    /**
+     * 安全删除一个文件：路径必须在控制根目录下，不是软链接。返回释放字节数；失败 -1。
+     */
     private long deleteFileSafely(Path path, String controlledRoot) {
         if (path == null || controlledRoot == null) return -1;
         try {
@@ -203,7 +201,7 @@ public class CleanupExecutor {
             Path abs = path.toAbsolutePath().normalize();
             if (!Files.exists(abs)) return 0;
             Path real = abs.toRealPath(LinkOption.NOFOLLOW_LINKS);
-            Path root = java.nio.file.Paths.get(controlledRoot).toAbsolutePath().normalize();
+            Path root = Paths.get(controlledRoot).toAbsolutePath().normalize();
             if (!storagePathService.isInsideReal(real, root)) return -1;
             long size = 0;
             try { size = Files.size(real); } catch (IOException ignored) {}
@@ -215,6 +213,7 @@ public class CleanupExecutor {
         }
     }
 
+    /** 递归统计目录大小（跳过软链接）。 */
     private long directorySize(Path dir) {
         long total = 0;
         try (Stream<Path> stream = Files.walk(dir)) {
@@ -227,6 +226,7 @@ public class CleanupExecutor {
         return total;
     }
 
+    /** 递归删除（先删深层，叶子在前）。 */
     private void deleteRecursively(Path p) throws IOException {
         if (!Files.exists(p)) return;
         try (Stream<Path> stream = Files.walk(p)) {
@@ -235,10 +235,12 @@ public class CleanupExecutor {
         }
     }
 
+    /** 把跳过原因压成一行日志。 */
     private String skipLine(PreviewStore.CandidateOutcome c) {
         return (c.path == null ? "(row id=" + c.id + ")" : c.path) + " — " + c.reason;
     }
 
+    /** 把失败原因包装为 SkipFail（路径 + 异常类名 + message）。 */
     private SkipFail failLine(PreviewStore.CandidateOutcome c, Exception e) {
         SkipFail sf = new SkipFail();
         sf.path = c.path;
@@ -246,11 +248,13 @@ public class CleanupExecutor {
         return sf;
     }
 
+    /** 单条失败项（路径 + 失败原因）。 */
     public static class SkipFail {
         public String path;
         public String reason;
     }
 
+    /** 单次清理执行报告（删除 / 跳过 / 失败 / 释放字节 / 耗时）。 */
     public static class CleanupReport {
         public String previewId;
         public String startedAtIso;
@@ -269,6 +273,9 @@ public class CleanupExecutor {
         public int skippedCount() { return skipped.size(); }
         public int failedCount()  { return failed.size(); }
 
+        /**
+         * 根据 failed 是否为空设置 result（SUCCESS / PARTIAL）。
+         */
         public void computeResult() {
             if (failed != null && !failed.isEmpty())
                 result = com.bigdata.scriptbox.model.CleanupResult.PARTIAL;

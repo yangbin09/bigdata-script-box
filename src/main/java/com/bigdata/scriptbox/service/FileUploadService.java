@@ -1,6 +1,8 @@
 package com.bigdata.scriptbox.service;
 
 import com.bigdata.scriptbox.config.ScriptBoxProperties;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -16,33 +18,39 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 
 /**
- * Two-step file parameter flow:
- *  1. savePending — stash the upload under ./data/uploads/{uuid}/{safeName}
- *     Returns {token, originalName, absolutePath}. UI shows the token back.
- *  2. promoteForExecution — when the execution starts, copy pending files
- *     into ./data/executions/{execId}/input/{safeName} and return the new
- *     absolute paths. These are the paths we hand to the shell.
+ * 两步式文件参数上传流程：
+ * <ol>
+ *   <li>{@link #savePending(MultipartFile)} —— 把上传暂存到 {@code ./data/uploads/<uuid>/<safeName>}，
+ *       返回 {@code {token, originalName, absolutePath}}；UI 把 token 带回给执行请求。</li>
+ *   <li>{@link #promoteForExecution(Long, Map)} —— 执行开始时，把 pending 文件复制到
+ *       {@code ./data/executions/<execId>/input/<safeName>}，返回新的绝对路径（即真正传给 shell 的路径）。</li>
+ * </ol>
  *
- * Both endpoints validate filename (no `..`, no path separators) and cap size.
+ * <p>两个端点都会校验文件名（不允许 {@code ..}、路径分隔符）并对大小做限制。
  */
 @Service
 public class FileUploadService {
 
+    private static final Logger log = LoggerFactory.getLogger(FileUploadService.class);
+
+    /** 文件名合法字符集（白名单：字母 / 数字 / 点 / 下划线 / 短横）。 */
     private static final Pattern SAFE_NAME = Pattern.compile("[^A-Za-z0-9._-]");
 
-    @Autowired
-    private ScriptBoxProperties props;
+    @Autowired private ScriptBoxProperties props;
+    @Autowired private StoragePathService storagePathService;
 
-    @Autowired
-    private StoragePathService storagePathService;
-
+    /**
+     * 暂存一个上传文件，返回 token + 原名 + 暂存绝对路径 + 大小。
+     *
+     * @throws IllegalArgumentException 文件为空 / 超大 / 名称非法
+     */
     public Map<String, Object> savePending(MultipartFile file) throws IOException {
         if (file == null || file.isEmpty()) throw new IllegalArgumentException("empty file");
         long max = props.getMaxInputFileBytes();
         if (file.getSize() > max) throw new IllegalArgumentException("file too large (max " + max + " bytes)");
 
         String original = file.getOriginalFilename() == null ? "upload.bin" : file.getOriginalFilename();
-        // Validate first using the raw original so we can reject path components
+        // 先用原始名做校验：拒绝任何包含 .. 或路径分隔符的"文件名"
         if (original.contains("..") || original.contains("/") || original.contains("\\")) {
             throw new IllegalArgumentException("invalid filename: " + original);
         }
@@ -66,13 +74,21 @@ public class FileUploadService {
         out.put("originalName", base);
         out.put("absolutePath", target.toString());
         out.put("size", file.getSize());
+        log.info("upload: 文件暂存 token={} originalName={} size={} bytes", token, base, file.getSize());
         return out;
     }
 
     /**
-     * Resolve a list of {paramName -> pendingAbsolutePath} into absolute paths
-     * under {executionsDir}/{execId}/input/. Each file is copied, and the
-     * returned map maps paramName -> newAbsolutePath (the path the script sees).
+     * 把 {@code paramName -> pendingAbsolutePath} 的入参复制到
+     * {@code <executionsDir>/<execId>/input/}，返回每个参数名对应的"shell 看到"
+     * 的新绝对路径。
+     *
+     * <p>安全约束：
+     * <ul>
+     *   <li>源文件必须存在；</li>
+     *   <li>源路径必须落在 {@code pendingUploadsRoot} 内（防止客户端伪造路径）；</li>
+     *   <li>目标路径必须同时落在 input dir 和 executionsRoot 内（{@link StoragePathService#assertInside} 校验）。</li>
+     * </ul>
      */
     public Map<String, String> promoteForExecution(Long executionId, Map<String, String> pendingByParam) throws IOException {
         Map<String, String> out = new LinkedHashMap<>();
@@ -90,15 +106,14 @@ public class FileUploadService {
             try { srcPath = Paths.get(src).toAbsolutePath(); }
             catch (Exception ex) { throw new IllegalArgumentException("invalid file input for " + param); }
             if (!Files.exists(srcPath)) throw new IllegalArgumentException("uploaded file not found: " + src);
-            // Resolve the file from a known-safe root: only accept files under
-            // {dataDir}/uploads/ — clients cannot force us to read arbitrary paths.
+            // 源路径必须从已知安全的 uploads 根解析 —— 客户端无法诱导我们读任意路径
             if (!srcPath.startsWith(uploadsRoot)) {
                 throw new IllegalArgumentException(
                         "file input must come from the upload endpoint: " + src);
             }
             String name = srcPath.getFileName().toString();
             Path target = execDir.resolve(name);
-            // 路径校验：目标必须同时落在 input dir 和 executionsRoot 之内
+            // 路径校验：目标必须同时落在 input dir 与 executionsRoot 之内
             storagePathService.assertInside(target, execDir, "input file");
             if (!execDir.toAbsolutePath().startsWith(executionsRoot)) {
                 throw new IllegalStateException("input dir escapes executions root");
@@ -109,8 +124,10 @@ public class FileUploadService {
         return out;
     }
 
-    /** Best-effort cleanup of {execId}/input/ after the execution finishes.
-     *  静默忽略所有异常：清理失败不应影响主流程。*/
+    /**
+     * 尽力清理 {@code <execId>/input/} 目录（执行结束后调用）。所有异常静默吞掉：
+     * 清理失败不应影响主流程。
+     */
     public void cleanup(Long executionId) {
         try {
             Path inputDir = storagePathService.inputDirFor(executionId);
@@ -123,8 +140,10 @@ public class FileUploadService {
         } catch (Exception ignored) {}
     }
 
-    /** Cleanup the pending upload root referenced by an absolute path (if any).
-     *  静默忽略所有异常：清理失败不应影响主流程。*/
+    /**
+     * 尽力清理 pending 上传目录（按绝对路径推断 token 目录）。
+     * 所有异常静默吞掉。
+     */
     public void cleanupPending(String absolutePath) {
         if (absolutePath == null) return;
         try {

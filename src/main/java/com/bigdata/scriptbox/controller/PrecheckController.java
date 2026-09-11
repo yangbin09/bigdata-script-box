@@ -11,6 +11,12 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
 
+/**
+ * 执行前检查接口。
+ *
+ * <p>仅做一件事：跑 PreCheck（Kerberos / 命令 / 文件 / 目录可写）并返回结果，
+ * 不实际启动脚本。供前端在「执行」按钮点击前做预检，或者独立调试使用。
+ */
 @RestController
 @RequestMapping("/api/scripts/{scriptId}/precheck")
 public class PrecheckController {
@@ -20,8 +26,11 @@ public class PrecheckController {
     @Autowired private PrecheckService precheckService;
 
     /**
-     * Run the pre-execution checks without actually executing the script.
-     * Body: { "tenantId": ... }
+     * 触发执行前检查。请求体：{@code { "tenantId": ... }}。
+     *
+     * @param scriptId 脚本 ID（路径变量）
+     * @param body 请求体，含 tenantId
+     * @return Precheck 结果
      */
     @PostMapping
     public ApiResponse<Map<String, Object>> run(@PathVariable Long scriptId,

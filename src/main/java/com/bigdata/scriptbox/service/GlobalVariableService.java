@@ -3,6 +3,8 @@ package com.bigdata.scriptbox.service;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.bigdata.scriptbox.entity.GlobalVariable;
 import com.bigdata.scriptbox.mapper.GlobalVariableMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -13,29 +15,40 @@ import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
- * Site-wide variables injected into ProcessBuilder.environment() before each
- * script execution. Variable keys must be [A-Za-z_][A-Za-z0-9_]* to avoid
- * breaking the shell environment contract. Sensitive values are never
- * logged or surfaced in API results — they are masked at the list endpoint.
+ * 全局变量服务。
+ *
+ * <p>每次脚本执行前把本表中"启用"的项目注入到
+ * {@link ProcessBuilder#environment()}。变量 key 必须匹配
+ * {@code [A-Za-z_][A-Za-z0-9_]*} 以保证 shell 环境契约；敏感值从不写到日志
+ * 与 API 响应里，列表接口自动遮罩。
  */
 @Service
 public class GlobalVariableService {
 
+    private static final Logger log = LoggerFactory.getLogger(GlobalVariableService.class);
+
+    /** 环境变量名合法字符集。 */
     private static final Pattern KEY_PATTERN = Pattern.compile("^[A-Za-z_][A-Za-z0-9_]*$");
 
     @Autowired
     private GlobalVariableMapper variableMapper;
 
+    /**
+     * 列出全部变量（含禁用项）。按 ID 升序。
+     */
     public List<GlobalVariable> listAll() {
         return variableMapper.selectList(new QueryWrapper<GlobalVariable>().orderByAsc("id"));
     }
 
+    /**
+     * 列出启用的变量（执行环境注入用）。
+     */
     public List<GlobalVariable> listEnabled() {
         return variableMapper.selectEnabled();
     }
 
     /**
-     * Return a sanitized view for the UI: enabled list with sensitive values masked.
+     * 列表接口的脱敏视图：敏感值显示为 {@code ******}，非敏感项原样返回。
      */
     public List<Map<String, Object>> listSummary() {
         return listAll().stream().map(v -> {
@@ -45,7 +58,7 @@ public class GlobalVariableService {
             out.put("description", v.getDescription());
             out.put("sensitive", Boolean.TRUE.equals(v.getSensitive()));
             out.put("enabled", v.getEnabled() == null ? Boolean.TRUE : v.getEnabled());
-            // Mask sensitive values; for non-sensitive, surface as-is so user can read.
+            // 敏感变量值永远不回明文；用占位符 + hasValue 标记是否真的设了
             if (Boolean.TRUE.equals(v.getSensitive())) {
                 out.put("variableValue", "******");
                 out.put("variableValueSet", v.getVariableValue() != null && !v.getVariableValue().isEmpty());
@@ -57,10 +70,16 @@ public class GlobalVariableService {
         }).toList();
     }
 
+    /**
+     * 按 ID 查询单个变量（返回明文，调用方负责遮罩）。
+     */
     public GlobalVariable get(Long id) {
         return variableMapper.selectById(id);
     }
 
+    /**
+     * 创建一个全局变量。重复 key 拒绝。
+     */
     public GlobalVariable create(String key, String value, String description, boolean sensitive, boolean enabled) {
         validateKey(key);
         if (variableMapper.selectCount(new QueryWrapper<GlobalVariable>().eq("variable_key", key)) > 0)
@@ -75,9 +94,13 @@ public class GlobalVariableService {
         v.setCreateTime(now);
         v.setUpdateTime(now);
         variableMapper.insert(v);
+        log.info("新增全局变量，variableKey={}，sensitive={}", key, sensitive);
         return v;
     }
 
+    /**
+     * 更新一个全局变量。key 为空表示不动。
+     */
     public GlobalVariable update(Long id, String key, String value, String description,
                                  boolean sensitive, boolean enabled) {
         GlobalVariable v = variableMapper.selectById(id);
@@ -100,14 +123,17 @@ public class GlobalVariableService {
         return v;
     }
 
+    /**
+     * 删除一个全局变量。
+     */
     public void delete(Long id) {
         variableMapper.deleteById(id);
+        log.info("删除全局变量，variableId={}", id);
     }
 
     /**
-     * Inject all enabled variables into the ProcessBuilder's environment map.
-     * Returned as a new mutable LinkedHashMap so callers can layer their own
-     * overrides (e.g. test mocks). Does NOT include disabled or missing keys.
+     * 收集全部启用项到 {@code Map<String, String>}，注入到 ProcessBuilder 环境。
+     * 返回的是新 Map，调用方可自由覆盖（mock 测试场景）。
      */
     public Map<String, String> envForExecution() {
         Map<String, String> env = new LinkedHashMap<>();
@@ -118,7 +144,7 @@ public class GlobalVariableService {
         return env;
     }
 
-    /** Mask value if sensitive. Used in dry-run and preview. */
+    /** 单条遮罩（仅用于预览 / 详情接口），返回脱敏后的字符串。 */
     public String maskedValue(GlobalVariable v) {
         if (v == null) return "";
         if (Boolean.TRUE.equals(v.getSensitive())) {
@@ -127,6 +153,9 @@ public class GlobalVariableService {
         return v.getVariableValue() == null ? "" : v.getVariableValue();
     }
 
+    /**
+     * 校验变量名：必填、长度限制、字符集匹配。
+     */
     private void validateKey(String key) {
         if (key == null || key.isBlank()) throw new IllegalArgumentException("variable key is required");
         if (!KEY_PATTERN.matcher(key).matches())

@@ -4,7 +4,6 @@ import com.bigdata.scriptbox.entity.ExecutionHistory;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.nio.file.Files;
@@ -13,20 +12,21 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Parses optional result.json produced by a script. Format:
+ * 解析脚本可选输出的 result.json。格式约定：
+ * <pre>{@code
  *   { "status": "SUCCESS|FAILED|WARNING", "message": "...", "data": {...} }
- * The "data" object is opaque — the platform renders key/value pairs without
- * trying to interpret them. If the file is missing, malformed, or too large,
- * the script execution result is unaffected; only a log warning is emitted.
+ * }</pre>
+ *
+ * <p>"data" 段是不透明对象 —— 平台原样展示 key/value，不尝试解释。
+ * 文件缺失 / 格式错误 / 过大都不会影响脚本执行的最终结论，仅 WARN 日志告警。
  */
 @Service
 public class ResultParserService {
 
     private static final Logger log = LoggerFactory.getLogger(ResultParserService.class);
-    private static final long MAX_BYTES = 1024L * 1024L; // 1 MB cap
 
-    @Autowired
-    private com.bigdata.scriptbox.config.ScriptBoxProperties props;
+    /** 单文件 1 MB 硬上限，超出视为脚本异常输出，不再尝试解析。 */
+    private static final long MAX_BYTES = 1024L * 1024L;
 
     private final ObjectMapper mapper;
 
@@ -35,9 +35,11 @@ public class ResultParserService {
     }
 
     /**
-     * Reads result.json at the given path. If it exists and is parseable, mutates
-     * `history` to store the raw JSON string and overlays the status string.
-     * If anything fails, logs a warning and returns without throwing.
+     * 读取 result.json；若存在且可解析，把原始 JSON 串写入
+     * {@code history.resultJson}，并按脚本的 status 字段覆盖执行器写入的 status
+     * （仅 SUCCESS 才覆盖，避免把 timeout 错误降级为 WARNING）。
+     *
+     * <p>任何异常只 WARN 不会抛 —— result.json 是脚本侧的副产物，不应干扰主流程。
      */
     public void parse(Path resultFile, ExecutionHistory history) {
         if (resultFile == null || history == null) return;
@@ -57,20 +59,20 @@ public class ResultParserService {
             if (status != null) {
                 String s = String.valueOf(status).toUpperCase();
                 if ("SUCCESS".equals(s) || "FAILED".equals(s) || "WARNING".equals(s)) {
-                    // Overlay status only when script says SUCCESS, otherwise keep
-                    // the executor-derived canonical value (so e.g. timeout doesn't get
-                    // downgraded to WARNING).
+                    // 只有当脚本显式声明 SUCCESS 才覆盖执行器写下的状态；
+                    // timeout / cancelled 等不应被 result.json 降级成 WARNING。
                     if ("SUCCESS".equals(s)) history.setStatus("SUCCESS");
                 }
             }
             history.setResultJson(mapper.writeValueAsString(obj));
+            log.info("result.json: 已解析 historyId={} size={} bytes", history.getId(), size);
         } catch (Exception ex) {
             log.warn("result.json parse failed for {}: {}", resultFile, ex.getMessage());
         }
     }
 
     /**
-     * Read raw result.json for an execution history row. Returns null if absent.
+     * 读取 result.json 原始字符串。文件不存在或过大返回 null / 错误占位串。
      */
     public String readRaw(ExecutionHistory h) {
         if (h == null || h.getResultJsonPath() == null) return null;
@@ -87,7 +89,7 @@ public class ResultParserService {
         }
     }
 
-    /** Parse result.json into a Map<String,Object> for the frontend. */
+    /** 把 result.json 解析成 Map 给前端展示；解析失败返回 null。 */
     public Map<String, Object> readStructured(ExecutionHistory h) {
         String raw = readRaw(h);
         if (raw == null) return null;

@@ -13,7 +13,7 @@ import java.util.regex.Pattern;
 /**
  * 敏感数据统一脱敏。
  *
- * <p>项目里至少有三个地方需要「把敏感值替换成 {@code ******}」：
+ * <p>项目里至少有三个地方需要"把敏感值替换成 {@code ******}":
  * <ol>
  *   <li>DryRun / Preview 时把敏感 GlobalVariable 的真实值遮掉。</li>
  *   <li>Snapshot 写入 execution_history 时同样要遮掉（snapshot 被持久化，
@@ -28,7 +28,7 @@ import java.util.regex.Pattern;
  *   <li>键（Keytab 路径、敏感 GlobalVariable 名称）不被遮；只遮值。</li>
  *   <li>空值 / null 不动。</li>
  *   <li>显式以全局变量记录的 {@code sensitive=true} 项才会被遮。</li>
- *   <li>命令行的脱敏按「白名单字段名」规则：参数名包含 password / token /
+ *   <li>命令行的脱敏按"白名单字段名"规则：参数名包含 password / token /
  *       secret / keytab-path / credential 的，后面那个值替换为 {@code ******}。</li>
  * </ul>
  */

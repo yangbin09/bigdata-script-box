@@ -10,12 +10,20 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * 执行历史查询服务。
+ *
+ * <p>提供按过滤条件的历史查询、最近脚本摘要等只读能力。
+ */
 @Service
 public class HistoryService {
 
     @Autowired
     private ExecutionHistoryMapper historyMapper;
 
+    /**
+     * 最近 N 条历史。
+     */
     public List<ExecutionHistory> listRecent(int limit) {
         return historyMapper.selectList(
                 new QueryWrapper<ExecutionHistory>()
@@ -24,10 +32,8 @@ public class HistoryService {
     }
 
     /**
-     * Filtered query: by scriptId, tenantId, status (success/failed/timeout), keyword (substring
-     * against script/tenant name), date range (start_time inclusive on the lower bound, exclusive
-     * on the upper bound to keep the daily partitioning clean), all combined with AND. Status is
-     * the canonical short name used by the unified status vocabulary.
+     * 多维过滤查询：按 scriptId / tenantId / 状态 / 关键字 / 日期范围，全部 AND。
+     * 状态参数是规范化短串（success / failed / timeout / cancelled）。
      */
     public List<ExecutionHistory> listFiltered(int limit, Long scriptId, Long tenantId,
                                                 String status, String keyword,
@@ -42,12 +48,12 @@ public class HistoryService {
                 case "success"   -> q.eq("success", true).eq("timeout", false);
                 case "failed"    -> q.eq("success", false).eq("timeout", false);
                 case "timeout"   -> q.eq("timeout", true);
-                // V2: CANCELLED is the canonical status string written by the
-                // executor when the cancel endpoint flips the registry flag.
+                // V2: CANCELLED 是 cancel 接口触发时写库的规范化状态串
                 case "cancelled" -> q.eq("status", "CANCELLED");
-                default -> { /* ignore unknown status */ }
+                default -> { /* 未知状态忽略 */ }
             }
         }
+        // from 含当天，to 不含当天：避免 [from, to] 闭区间让跨日的批次翻倍
         if (from != null) q.ge("start_time", from.atStartOfDay());
         if (to != null) q.lt("start_time", to.plusDays(1).atStartOfDay());
         if (keyword != null && !keyword.isBlank()) {
@@ -57,13 +63,16 @@ public class HistoryService {
         return historyMapper.selectList(q);
     }
 
+    /**
+     * 按 ID 查询单条历史。
+     */
     public ExecutionHistory getById(Long id) {
         return historyMapper.selectById(id);
     }
 
     /**
-     * Distinct scripts recently executed. Done in Java rather than SQL because H2 doesn't have
-     * window functions in the version we ship with; the per-script scan is bounded by LIMIT 6.
+     * 最近执行过的脚本（按最近一次执行时间倒序）。在 Java 层做去重是因为 H2
+     * 当前版本不带窗口函数；单脚本只扫到目标 limit 条即可停。
      */
     public List<RecentScript> recentScripts(int limit) {
         List<ExecutionHistory> recent = historyMapper.selectList(
@@ -88,9 +97,7 @@ public class HistoryService {
     }
 
     /**
-     * Reduce a history row into the canonical short status string used by
-     * the UI. Mirrors statusOfHistory() on the frontend so the recent-card
-     * tags stay consistent with the rest of the table.
+     * 把 history 行归一化成 UI 用的状态短串；与前端 statusOfHistory() 对齐。
      */
     private static String deriveStatus(ExecutionHistory h) {
         if (h == null) return "UNKNOWN";
@@ -102,14 +109,13 @@ public class HistoryService {
         return "failed";
     }
 
+    /** 「最近执行过的脚本」摘要。 */
     public static class RecentScript {
         public Long id;
         public String scriptName;
         public String lastTenantName;
         public Boolean lastSuccess;
-        // V2: full status string (SUCCESS / FAILED / TIMEOUT / CANCELLED /
-        // RUNNING) so the UI can render the right tag color instead of
-        // collapsing timeout/cancel into "失败".
+        /** V2: 全状态（SUCCESS / FAILED / TIMEOUT / CANCELLED / RUNNING）。 */
         public String lastStatus;
         public LocalDateTime lastStartTime;
     }

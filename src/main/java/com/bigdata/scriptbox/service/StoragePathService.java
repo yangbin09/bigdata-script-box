@@ -29,9 +29,9 @@ import java.nio.file.Paths;
  * <ul>
  *   <li>绝对路径生成方法（{@link #scriptFilePath}、{@link #keytabPath}、
  *       {@link #executionDirFor}、{@link #artifactsDirFor}、{@link #inputDirFor}、
- *       {@link #pendingUploadDir}）</li>
- *   <li>路径安全校验方法（{@link #assertInside}、{@link #assertInsideReal}）</li>
- *   <li>目录遍历辅助（{@link #safeList}）</li>
+ *       {@link #pendingUploadDir}）；</li>
+ *   <li>路径安全校验方法（{@link #assertInside}、{@link #isInsideReal}）；</li>
+ *   <li>目录遍历辅助（{@link #safeList}）。</li>
  * </ul>
  *
  * <p>为什么不直接用 {@code FileSystems.getDefault().getPathMatcher()}：
@@ -88,17 +88,17 @@ public class StoragePathService {
         return Paths.get(props.getDataDir()).toAbsolutePath().normalize();
     }
 
-    /** 单个脚本的磁盘路径：{@code <scriptsRoot>/<id>/script.sh} */
+    /** 单个脚本的磁盘路径：{@code <scriptsRoot>/<id>/script.sh}。 */
     public Path scriptFilePath(long scriptId) {
         return scriptsRoot().resolve(String.valueOf(scriptId)).resolve("script.sh");
     }
 
-    /** keytab 实际路径：{@code <keytabsRoot>/tenant_<id>_<uuid>.keytab} */
+    /** keytab 实际路径：{@code <keytabsRoot>/tenant_<id>_<uuid>.keytab}。 */
     public Path keytabPath(long tenantId, String suffix) {
         return keytabsRoot().resolve("tenant_" + tenantId + "_" + suffix + ".keytab");
     }
 
-    /** 执行目录：{@code <executionsRoot>/<execId>} */
+    /** 执行目录：{@code <executionsRoot>/<execId>}。 */
     public Path executionDirFor(long executionId) {
         return executionsRoot().resolve(String.valueOf(executionId));
     }
@@ -113,12 +113,12 @@ public class StoragePathService {
         return executionDirFor(executionId).resolve(INPUT_SUBDIR);
     }
 
-    /** 待上传根：{@code <dataRoot>/uploads/<token>} */
+    /** 待上传根：{@code <dataRoot>/uploads/<token>}。 */
     public Path pendingUploadDir(String token) {
         return dataRoot().resolve(PENDING_UPLOAD_SUBDIR).resolve(token);
     }
 
-    /** 待上传根：{@code <dataRoot>/uploads} */
+    /** 待上传根：{@code <dataRoot>/uploads}。 */
     public Path pendingUploadsRoot() {
         return dataRoot().resolve(PENDING_UPLOAD_SUBDIR);
     }
@@ -130,6 +130,10 @@ public class StoragePathService {
     /**
      * 断言 {@code child} 在 {@code controlledRoot} 之下（按 {@code toAbsolutePath().normalize()}
      * 比较前缀），否则抛 {@link BusinessException}。适用于路径尚未在磁盘上、只需语法层校验的场景。
+     *
+     * @param child 待校验路径
+     * @param controlledRoot 受控根
+     * @param what 路径语义（用于错误信息）
      */
     public void assertInside(Path child, Path controlledRoot, String what) {
         if (child == null || controlledRoot == null) {
@@ -148,10 +152,15 @@ public class StoragePathService {
      * 强安全版：使用 {@link Path#toRealPath(LinkOption...)} 解析符号链接后比较前缀。
      * 适用于清理 / 删除场景，避免攻击者构造软链越过 controlledRoot。
      * 若任一路径不存在，返回 false（不抛异常，由调用方决定跳过还是失败）。
+     *
+     * @param child 待校验路径
+     * @param controlledRoot 受控根
+     * @return true 表示确实在受控目录下
      */
     public boolean isInsideReal(Path child, Path controlledRoot) {
         if (child == null || controlledRoot == null) return false;
         try {
+            // NOFOLLOW_LINKS：不要解析链接的"真实"目标，避免 TOCTOU 绕过
             Path realChild = child.toAbsolutePath().normalize().toRealPath(LinkOption.NOFOLLOW_LINKS);
             Path realRoot = controlledRoot.toAbsolutePath().normalize().toRealPath(LinkOption.NOFOLLOW_LINKS);
             return realChild.startsWith(realRoot);

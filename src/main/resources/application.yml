@@ -56,7 +56,9 @@ scriptbox:
   retention-history-days: 30
   retention-artifact-days: 30
   retention-execution-days: 30
-  retention-log-days: 7
+  # 应用日志保留天数：与 Logback TimeBasedRollingPolicy 的 maxHistory=3 对齐；
+  # 0 表示禁用清理（但 Logback 仍按 3 天滚动，不受此值影响）。
+  retention-log-days: 3
   # Directory where logback-spring.xml writes the rolling application log.
   # Cleanup will only operate on this directory if it actually exists.
   logs-dir: ./logs

@@ -15,10 +15,14 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * CRUD + apply for script parameter presets. A preset is just a name + the
- * full param map JSON captured at the moment of save. We do not normalize
- * against the current script schema at save time, so removed/renamed params
- * are silently ignored on apply, and added params fall back to their default.
+ * 脚本预设服务。
+ *
+ * <p>一个预设 = 名字 + 一份捕获当时的完整参数 Map JSON。保存时不与当前脚本
+ * 的 ScriptParam 定义做归一化校验，所以：
+ * <ul>
+ *   <li>脚本删除了某个参数 → 应用预设时静默忽略；</li>
+ *   <li>脚本新增了某个参数 → 缺值时回退到 {@code defaultValue}；</li>
+ * </ul>
  */
 @Service
 public class PresetService {
@@ -32,16 +36,26 @@ public class PresetService {
         this.mapper = mapper;
     }
 
+    /**
+     * 列出脚本的全部预设。
+     */
     public List<ScriptPreset> listByScript(Long scriptId) {
         return presetMapper.selectByScriptId(scriptId);
     }
 
+    /**
+     * 按 (scriptId, presetId) 查询。校验所属一致性，避免把别的脚本的预设
+     * 通过 URL 拼错过来访问到。
+     */
     public ScriptPreset get(Long scriptId, Long presetId) {
         ScriptPreset p = presetMapper.selectById(presetId);
         if (p == null || !p.getScriptId().equals(scriptId)) return null;
         return p;
     }
 
+    /**
+     * 创建一个预设。params 序列化为稳定的 string → string 形态。
+     */
     public ScriptPreset create(Long scriptId, String name, String description, Map<String, ?> params) {
         if (name == null || name.isBlank()) throw new IllegalArgumentException("preset name is required");
         ScriptPreset p = new ScriptPreset();
@@ -56,6 +70,9 @@ public class PresetService {
         return p;
     }
 
+    /**
+     * 更新一个预设；name / description / params 任一为空表示不动。
+     */
     public ScriptPreset update(Long scriptId, Long presetId, String name, String description, Map<String, ?> params) {
         ScriptPreset p = get(scriptId, presetId);
         if (p == null) throw new IllegalArgumentException("preset not found");
@@ -67,13 +84,19 @@ public class PresetService {
         return p;
     }
 
+    /**
+     * 删除一个预设。
+     */
     public void delete(Long scriptId, Long presetId) {
         ScriptPreset p = get(scriptId, presetId);
         if (p == null) return;
         presetMapper.deleteById(presetId);
     }
 
-    /** Return the params as a flat string map, regardless of how they were captured. */
+    /**
+     * 把预设的参数 JSON 解析为扁平 {@code Map<String, String>}，供执行器合并。
+     * 容错：解析失败返回空 Map（不会因此中断执行）。
+     */
     public Map<String, String> applyParams(ScriptPreset p) {
         if (p == null || p.getParamsJson() == null || p.getParamsJson().isBlank()) return Map.of();
         try {
@@ -91,7 +114,7 @@ public class PresetService {
         }
     }
 
-    /** All presets for a script as a {id, name} list (used by the execute drawer dropdown). */
+    /** 摘要：执行抽屉下拉用的 id/name/description 列表。 */
     public List<Map<String, Object>> listSummary(Long scriptId) {
         List<ScriptPreset> list = listByScript(scriptId);
         return list.stream().map(p -> {
@@ -103,13 +126,14 @@ public class PresetService {
         }).toList();
     }
 
+    /** 删除某脚本的全部预设（脚本删除时由 {@link ScriptService#delete} 触发）。 */
     public void deleteAllForScript(Long scriptId) {
         presetMapper.delete(new QueryWrapper<ScriptPreset>().eq("script_id", scriptId));
     }
 
     private String serialize(Map<String, ?> params) {
         try {
-            // Always serialize as string→string for stable on-disk shape.
+            // 始终序列化为 string → string，磁盘形态稳定，便于 diff / 日志
             Map<String, String> flat = new LinkedHashMap<>();
             if (params != null) {
                 for (Map.Entry<String, ?> e : params.entrySet()) {

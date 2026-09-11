@@ -11,18 +11,17 @@ import java.util.Map;
 /**
  * 单次执行的所有运行时上下文。
  *
- * <p>为什么需要这个 record：
+ * <p>把 {@code ScriptExecutor.execute} 内部原本散落在方法体中的 8+ 个相互依赖字段
+ * （executionId / script / tenant / params / execDir / artifactDir / env / process）
+ * 抽成一个不可变 record，便于：
  * <ol>
- *   <li>原 {@code ScriptExecutor.execute(ExecutionRequest)} 在内部拼装 8 个相互依赖的字段
- *       （executionId / script / tenant / params / execDir / artifactDir / env / process），
- *       把 280 行方法签名上的临时变量都暴露在方法体中，可读性差。</li>
- *   <li>在多处辅助方法（{@code buildCommand}、{@code setupEnv}、{@code drain}）之间传递时
- *       容易出现「忘记一个字段就编译失败」的问题。</li>
- *   <li>未来要做的快照 / 重放 / 异步审计都需要一个不可变快照，record 是天然载体。</li>
+ *   <li>在 {@code buildCommand} / {@code setupEnv} / drain 等辅助方法之间传递；</li>
+ *   <li>未来做执行快照 / 重放 / 异步审计时直接序列化；</li>
+ *   <li>显著降低原方法签名上的复杂度。</li>
  * </ol>
  *
- * <p>注意：本类不是万能「参数对象」，它只承载执行生命周期所需的数据；超出范围
- * 的字段（如 ResultParser、ArtifactService）继续走依赖注入。
+ * <p>注意：本类不是万能参数对象，只承载执行生命周期所需的数据；ResultParser、
+ * ArtifactService 等仍走依赖注入。
  */
 public record ExecutionContext(
         long executionId,
@@ -39,7 +38,7 @@ public record ExecutionContext(
         boolean kinitWrapped,
         int timeoutSeconds
 ) {
-    /** 构造后保持 Map 不可变（防御性拷贝）。 */
+    /** 构造后保持 Map 不可变（防御性拷贝，防止调用方后续修改 params）。 */
     public ExecutionContext {
         params = params == null ? Map.of() : Map.copyOf(params);
     }
@@ -49,6 +48,7 @@ public record ExecutionContext(
         return new Builder();
     }
 
+    /** 构造器：链式调用，按需填字段。 */
     public static final class Builder {
         private long executionId;
         private ExecutionRequest request;

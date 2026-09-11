@@ -1,11 +1,11 @@
 package com.bigdata.scriptbox.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.bigdata.scriptbox.config.ScriptBoxProperties;
 import com.bigdata.scriptbox.entity.Script;
 import com.bigdata.scriptbox.entity.ScriptVersion;
 import com.bigdata.scriptbox.mapper.ScriptMapper;
 import com.bigdata.scriptbox.mapper.ScriptVersionMapper;
-import com.bigdata.scriptbox.config.ScriptBoxProperties;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,9 +19,11 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * Append-only history of script body changes. rollback does NOT delete the
- * current version; it creates a new version whose content equals the older
- * version. Old rows are kept indefinitely.
+ * 脚本正文历史快照服务。
+ *
+ * <p>Append-only：每次保存脚本正文都追加一行版本记录；rollback 也只是把旧
+ * 版本内容写到磁盘 + 追加一行新版本行，旧行永远保留。versionNo 从 1 开始按
+ * 脚本单调递增。
  */
 @Service
 public class ScriptVersionService {
@@ -32,8 +34,11 @@ public class ScriptVersionService {
     @Autowired private StoragePathService storagePathService;
 
     /**
-     * Take a snapshot of the script's CURRENT body. Called after create /
-     * body-save / import-override. versionNo is 1-based monotonic per script.
+     * 给当前脚本正文拍一份快照。版本号在已有最大版本号基础上 +1。
+     *
+     * @param scriptId 脚本 ID
+     * @param remark 备注（"initial" / "body edit" / "rollback to v3" 等）
+     * @return 新建的版本记录
      */
     @Transactional
     public ScriptVersion snapshot(Long scriptId, String remark) throws IOException {
@@ -52,18 +57,23 @@ public class ScriptVersionService {
         return v;
     }
 
+    /**
+     * 列出某脚本的全部版本（按 version_no 降序）。
+     */
     public List<ScriptVersion> listByScript(Long scriptId) {
         return versionMapper.selectByScriptId(scriptId);
     }
 
+    /**
+     * 查询某脚本的指定版本号。
+     */
     public ScriptVersion get(Long scriptId, Integer versionNo) {
         return versionMapper.selectOne(new QueryWrapper<ScriptVersion>()
                 .eq("script_id", scriptId).eq("version_no", versionNo));
     }
 
     /**
-     * Roll back to an older version: write its content to disk as the current body
-     * AND create a new version row (versionNo = max+1) so history stays append-only.
+     * 回滚到指定版本：把旧版本内容写到磁盘 + 追加一行新版本（保持 append-only）。
      */
     @Transactional
     public ScriptVersion rollback(Long scriptId, Integer versionNo) throws IOException {
@@ -80,11 +90,14 @@ public class ScriptVersionService {
         return snapshot(scriptId, "rollback to v" + versionNo);
     }
 
+    /**
+     * 删除某脚本的全部版本（脚本删除时由 {@link ScriptService#delete} 触发）。
+     */
     public void deleteAllForScript(Long scriptId) {
         versionMapper.delete(new QueryWrapper<ScriptVersion>().eq("script_id", scriptId));
     }
 
-    /** Same on-disk layout as ScriptService#persistScriptBody. */
+    /** 与 ScriptService.persistScriptBody 保持相同的磁盘布局。 */
     private Path scriptFilePath(Long scriptId) {
         return storagePathService.scriptFilePath(scriptId);
     }

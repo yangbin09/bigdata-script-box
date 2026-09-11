@@ -39,6 +39,18 @@ public class RequestMdcFilter extends OncePerRequestFilter {
     public static final String KEY_SCENARIO_ID = "scenarioId";
     public static final String KEY_REQUEST_URI = "requestUri";
 
+    /**
+     * 实际过滤逻辑：把请求上下文注入 MDC，然后放行业务过滤器。
+     *
+     * <p>即使下游过滤器抛异常，MDC 也会在 finally 中清理，避免线程复用导致
+     * 的串号。
+     *
+     * @param req 当前 HTTP 请求
+     * @param resp 当前 HTTP 响应
+     * @param chain 过滤器链
+     * @throws ServletException 透传自下游
+     * @throws IOException 透传自下游
+     */
     @Override
     protected void doFilterInternal(HttpServletRequest req, HttpServletResponse resp,
                                     FilterChain chain) throws ServletException, IOException {

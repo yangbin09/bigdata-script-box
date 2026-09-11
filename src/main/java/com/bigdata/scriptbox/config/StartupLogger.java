@@ -26,14 +26,25 @@ public class StartupLogger {
     private final ScriptBoxProperties props;
     private final StoragePathService storagePathService;
 
+    /**
+     * 构造启动日志器。
+     *
+     * @param props 应用配置项
+     * @param storagePathService 路径解析服务（用于把相对路径转绝对路径）
+     */
     public StartupLogger(ScriptBoxProperties props, StoragePathService storagePathService) {
         this.props = props;
         this.storagePathService = storagePathService;
     }
 
+    /**
+     * 监听 {@link ApplicationReadyEvent} 事件，输出启动就绪的关键信息。
+     *
+     * @param event Spring Boot 启动就绪事件
+     */
     @EventListener(ApplicationReadyEvent.class)
     public void onReady(ApplicationReadyEvent event) {
-        log.info("应用已就绪：mock={} max-concurrent={} retention(history={}d, artifact={}d, execution={}d, log={}d)",
+        log.info("BigData Script Box 启动完成，运行模式={}，并发上限={}，保留天数(history={}d, artifact={}d, execution={}d, log={}d)",
                 props.isMock(),
                 props.getMaxConcurrent(),
                 props.getRetentionHistoryDays(),
@@ -46,11 +57,18 @@ public class StartupLogger {
         log.info("日志路径：logs={}", safePath(storagePathService::logsRoot));
     }
 
+    /** 内部函数式接口：用于把路径解析包装成字符串。 */
     @FunctionalInterface
     private interface PathSupplier {
         Path get();
     }
 
+    /**
+     * 安全解析路径并转字符串；任何异常都不会中断启动流程。
+     *
+     * @param p 路径供应器
+     * @return 路径字符串；异常时返回 {@code <unavailable: ...>}
+     */
     private static String safePath(PathSupplier p) {
         try { return String.valueOf(p.get()); }
         catch (Exception e) { return "<unavailable: " + e.getMessage() + ">"; }

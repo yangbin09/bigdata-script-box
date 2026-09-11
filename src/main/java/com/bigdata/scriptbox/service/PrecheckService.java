@@ -32,10 +32,9 @@ import java.util.Map;
  * }
  * }</pre>
  *
- * <p>未知 / 缺失字段静默忽略；空配置等同「无 PreCheck」。
+ * <p>未知 / 缺失字段静默忽略；空配置等同"无 PreCheck"。
  *
- * <p>如何新增检查类型：实现 {@link PrecheckStrategy} 接口即可，
- * 本类无需改动。
+ * <p>如何新增检查类型：实现 {@link PrecheckStrategy} 接口即可，本类无需改动。
  */
 @Service
 public class PrecheckService {
@@ -50,8 +49,10 @@ public class PrecheckService {
         this.mapper = mapper;
     }
 
+    /** 单条检查结果（与前端 CheckResult 对齐）。 */
     public static class CheckResult {
-        public String name;       // 显示名，例如 "Kerberos" / "command:spark-sql" / "file:/opt/client/bigdata_env"
+        /** 显示名，例如 "Kerberos" / "command:spark-sql" / "file:/opt/client/bigdata_env"。 */
+        public String name;
         public boolean ok;
         public String message;
         public CheckResult() {}
@@ -60,6 +61,13 @@ public class PrecheckService {
         }
     }
 
+    /**
+     * 跑一次 PreCheck，按策略分组返回详细结果与汇总状态。
+     *
+     * @param script 脚本实体（读 precheckConfigJson）
+     * @param tenant 租户实体（部分检查会用到）
+     * @return 汇总结果；包含 ok / skipped / message / results
+     */
     public Map<String, Object> run(Script script, Tenant tenant) {
         Map<String, Object> summary = new LinkedHashMap<>();
         List<Map<String, Object>> results = new ArrayList<>();
@@ -73,7 +81,7 @@ public class PrecheckService {
             return summary;
         }
 
-        // 解析顶层 JSON；只要解析失败整体判失败
+        // 顶层 JSON 解析失败：直接判失败，避免后续策略拿到脏数据
         Map<String, Object> cfg;
         try {
             cfg = mapper.readValue(script.getPrecheckConfigJson(),
@@ -85,8 +93,8 @@ public class PrecheckService {
             return summary;
         }
 
+        // 只跑配置里显式声明的 type（空配置 = 不跑任何）
         for (String type : registry.knownTypes()) {
-            // 仅在配置里显式出现的 type 才执行
             if (!cfg.containsKey(type)) continue;
             for (PrecheckStrategy strategy : registry.byType(type)) {
                 List<String> items;
@@ -101,7 +109,7 @@ public class PrecheckService {
                     try {
                         outcome = strategy.check(item, script, tenant);
                     } catch (Exception ex) {
-                        // 策略抛异常 → 视为单次失败，不影响其他检查
+                        // 策略抛异常 → 视为单条失败，不影响其他检查
                         log.warn("precheck: 策略 {} 检查 {} 失败: {}", type, item, ex.getMessage());
                         results.add(toMap(type + ":" + item, false, "策略异常: " + ex.getMessage()));
                         allOk = false;

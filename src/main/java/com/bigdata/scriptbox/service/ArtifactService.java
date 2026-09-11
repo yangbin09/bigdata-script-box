@@ -17,18 +17,19 @@ import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 
 /**
- * V2: per-execution artifact registry.
+ * V2: 单次执行的产物（artifact）注册服务。
  *
- * <p>Layout on disk:
+ * <p>磁盘布局：
  * <pre>
  *   &lt;executionsDir&gt;/&lt;executionId&gt;/
- *      artifacts/        &lt;-- script's writable workspace ($ARTIFACT_DIR)
+ *      artifacts/        &lt;-- 脚本的可写工作目录（$ARTIFACT_DIR）
  *         report.csv
  *         foo.txt
  *      stdout.log
@@ -36,16 +37,13 @@ import java.util.List;
  *      result.json
  * </pre>
  *
- * <p>{@link #scanAndRegister(ExecutionHistory)} runs after a successful
- * execution completes (or after timeout/cancel) and registers every regular
- * file under {@code artifacts/} into the {@code execution_artifact} table.
- * Rows from a previous run for the same {@code (executionId, name)} pair
- * are removed first, so a re-run doesn't accumulate stale rows.
+ * <p>{@link #scanAndRegister(ExecutionHistory)} 在一次执行成功结束（或超时 / 取消）后
+ * 调用，把 {@code artifacts/} 下每一个常规文件注册进 {@code execution_artifact} 表；
+ * 同一 {@code (executionId, name)} 的旧行会被先清掉，避免重跑时累积脏数据。
  *
- * <p>Download goes through {@link #resolveSafePath(long, String)} which
- * normalises the requested name and refuses anything that escapes the
- * execution's artifacts directory — including {@code ..} traversal and
- * absolute paths. This is the same defense used for log downloads.
+ * <p>下载走 {@link #resolveSafe(long, String)}：先按传入的标识（主键或相对文件名）
+ * 找出 artifact 行，再校验 on-disk 路径确实落在该执行的 artifacts/ 目录内；
+ * 任何 {@code ..} / 绝对路径 / Windows 盘符都会被拒绝，与日志下载共用同一套防御。
  */
 @Service
 public class ArtifactService {
@@ -56,31 +54,33 @@ public class ArtifactService {
     @Autowired private ExecutionArtifactMapper artifactMapper;
     @Autowired private StoragePathService storagePathService;
 
-    /** Absolute path to a given execution's artifacts dir, creating it. */
+    /**
+     * 获取某个执行的 artifacts/ 目录绝对路径，按需创建（不存在则创建）。
+     */
     public Path artifactsDirFor(long executionId) throws IOException {
         Path artifacts = storagePathService.artifactsDirFor(executionId);
         Files.createDirectories(artifacts);
         return artifacts;
     }
 
-    /** Absolute path to a given execution's dir (parent of artifacts/). */
+    /** 获取某个执行的根目录（artifacts/ 的父目录）绝对路径。 */
     public Path executionDirFor(long executionId) {
         return storagePathService.executionDirFor(executionId);
     }
 
     /**
-     * V2: scan the artifacts directory of an execution and persist one row
-     * per regular file. Idempotent: prior rows for the same execution are
-     * wiped first so re-runs don't accumulate.
+     * V2: 扫描某个执行的 artifacts/ 目录并把每个常规文件写一行入库。幂等：
+     * 先清掉该 execution 已有行，再从磁盘重新发现，新一轮运行不会累积历史脏行。
      *
-     * <p>Limits enforced by the scan:
+     * <p>扫描时施加的限制：
      * <ul>
-     *   <li>Skip files whose size exceeds {@link ScriptBoxProperties#getMaxArtifactBytes()}.</li>
-     *   <li>Cap at {@link ScriptBoxProperties#getMaxArtifactFiles()} files.</li>
-     *   <li>Skip symlinks that resolve outside the artifacts dir.</li>
+     *   <li>单文件超过 {@link ScriptBoxProperties#getMaxArtifactBytes()} 跳过；</li>
+     *   <li>总文件数超过 {@link ScriptBoxProperties#getMaxArtifactFiles()} 截断；</li>
+     *   <li>指向 artifacts/ 外的软链接跳过。</li>
      * </ul>
-     * Files that exceed limits are logged at WARN level and skipped — the
-     * run still completes successfully.
+     * 越限文件只 WARN 日志告警，不影响本次执行的成功状态。
+     *
+     * @return 实际入库的文件数（0 表示没有任何产物可注册）
      */
     public int scanAndRegister(ExecutionHistory h) {
         if (h == null || h.getId() == null) return 0;
@@ -94,9 +94,8 @@ public class ArtifactService {
         }
         if (!Files.isDirectory(artifacts)) return 0;
 
-        // Wipe prior rows for this execution — we re-discover from disk on
-        // each scan so a partial-write or pre-existing row can't shadow a
-        // fresh file.
+        // 先清掉该 execution 的旧行：每次扫描都从磁盘重新发现，避免旧行
+        // 遮蔽新文件，也避免残留指向已被替换内容的行。
         artifactMapper.delete(new QueryWrapper<ExecutionArtifact>()
                 .eq("execution_id", h.getId()));
 
@@ -146,9 +145,14 @@ public class ArtifactService {
             artifactMapper.insert(a);
             registered++;
         }
+        log.info("artifact: 扫描完成 executionId={} registered={} skipped-too-large-or-count-cap",
+                h.getId(), registered);
         return registered;
     }
 
+    /**
+     * 列出某个 execution 的所有产物（按 name 升序）。
+     */
     public List<ExecutionArtifact> listForExecution(long executionId) {
         return artifactMapper.selectList(new QueryWrapper<ExecutionArtifact>()
                 .eq("execution_id", executionId)
@@ -156,25 +160,30 @@ public class ArtifactService {
     }
 
     /**
-     * V2: resolve a {@link ExecutionArtifact} row whose {@code name} matches
-     * the supplied identifier. We accept either the row's primary key or
-     * the relative name (basename or {@code artifacts/<file>}). Returns
-     * null if no match, or if the resolved on-disk path escapes the
-     * execution's artifacts directory.
+     * V2: 解析一个标识符（artifact 主键或相对名）到具体的 {@link ExecutionArtifact} 行 +
+     * 经过路径穿越校验的 on-disk Path。
+     *
+     * <p>标识符可为：
+     * <ul>
+     *   <li>数字 —— 当作 artifact 主键；</li>
+     *   <li>其它字符串 —— 当作 name（basename 或 {@code artifacts/<file>})。</li>
+     * </ul>
+     * 任何包含 {@code ..}、绝对路径、Windows 盘符或解析后落在 artifacts/ 之外的对象
+     * 一律返回 null 并记录 WARN 日志（异常路径）。
      */
     public ResolvedArtifact resolveSafe(long executionId, String identifier) {
         if (identifier == null || identifier.isBlank()) return null;
-        // Reject obvious traversal attempts before we ever touch the filesystem.
+        // 提前拒绝明显的穿越尝试，避免触碰文件系统
         if (identifier.contains("..")) return null;
 
         ExecutionArtifact a = null;
-        // Try as numeric id first.
+        // 先按主键查
         try {
             long aid = Long.parseLong(identifier);
             a = artifactMapper.selectById(aid);
             if (a != null && !a.getExecutionId().equals(executionId)) a = null;
         } catch (NumberFormatException ignored) {
-            // fall through to name lookup
+            // 不是数字，回退到按 name 查
         }
         if (a == null) {
             String normalised = normaliseName(identifier);
@@ -186,19 +195,18 @@ public class ArtifactService {
             if (candidates.size() == 1) {
                 a = candidates.get(0);
             } else if (candidates.size() > 1) {
-                // Pick the most recent.
+                // 多个同名行（重跑可能造成）取最新的一行
                 candidates.sort((x, y) -> Long.compare(
                         y.getCreatedAt() == null ? 0L
-                                : y.getCreatedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli(),
+                                : y.getCreatedAt().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli(),
                         x.getCreatedAt() == null ? 0L
-                                : x.getCreatedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()));
+                                : x.getCreatedAt().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()));
                 a = candidates.get(0);
             }
         }
         if (a == null) return null;
 
-        // Path-traversal defense: the on-disk path must live under the
-        // execution's artifacts dir, after both are normalised.
+        // 路径穿越防御：两侧都 normalize 后，on-disk 必须落在 artifacts/ 之内
         Path artifacts = storagePathService.artifactsDirFor(executionId);
         Path resolved;
         try {
@@ -216,26 +224,23 @@ public class ArtifactService {
     }
 
     /**
-     * Normalise a user-supplied artifact name into the canonical
-     * {@code artifacts/<file>} shape. Returns null on suspicious input
-     * (leading slash, traversal segments, or anything outside the
-     * artifacts dir).
+     * 把用户传入的 artifact name 归一化为 {@code artifacts/<file>} 形态。
+     * 任何包含 {@code ..}、绝对路径前缀、盘符或跨平台分隔符的输入都返回 null。
      */
     private String normaliseName(String raw) {
         if (raw == null) return null;
         String s = raw.trim();
         if (s.isEmpty()) return null;
-        // Disallow absolute paths and Windows-style paths.
         if (s.startsWith("/") || s.startsWith("\\")) return null;
-        // Disallow drive letters: 'C:' or 'c:'
         if (s.length() >= 2 && Character.isLetter(s.charAt(0)) && s.charAt(1) == ':') return null;
-        // Drop any leading "artifacts/" so the caller can supply either.
+        // 自动剥掉前导 "artifacts/"，让调用方两种写法都可以
         if (s.startsWith(StoragePathService.ARTIFACTS_SUBDIR + "/"))
             s = s.substring(StoragePathService.ARTIFACTS_SUBDIR.length() + 1);
         if (s.contains("..") || s.contains("/") || s.contains("\\")) return null;
         return StoragePathService.ARTIFACTS_SUBDIR + "/" + s;
     }
 
+    /** 按文件后缀猜 MIME；未知后缀统一给 application/octet-stream。 */
     private String guessMime(String filename) {
         int dot = filename.lastIndexOf('.');
         if (dot < 0 || dot == filename.length() - 1) return "application/octet-stream";
@@ -258,6 +263,7 @@ public class ArtifactService {
         };
     }
 
+    /** 计算文件 SHA-256，返回十六进制字符串。失败抛 IllegalStateException。 */
     private String sha256Hex(Path p) throws IOException {
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(p));
@@ -269,7 +275,7 @@ public class ArtifactService {
         }
     }
 
-    /** Resolved artifact with the (path-traversal-checked) on-disk file. */
+    /** 解析完成的 artifact（含 on-disk 绝对路径）。 */
     public static class ResolvedArtifact {
         public final ExecutionArtifact meta;
         public final Path onDisk;
@@ -280,9 +286,8 @@ public class ArtifactService {
     }
 
     /**
-     * V2: list view-shaped entries (path-traversal-safe) for the API layer.
-     * The on-disk path is replaced by a relative "name" so the FE never sees
-     * an absolute filesystem path.
+     * V2: 返回给前端展示用的 view 列表（路径安全的形态）。on-disk 绝对路径不会
+     * 返回给前端，只暴露相对名 + size + sha256 + mime + createdAt。
      */
     public List<java.util.Map<String, Object>> listView(long executionId) {
         List<ExecutionArtifact> rows = listForExecution(executionId);

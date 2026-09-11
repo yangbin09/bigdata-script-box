@@ -12,6 +12,16 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.util.Map;
 
+/**
+ * 文件参数上传接口。
+ *
+ * <p>提供两步式文件参数流的第一步：把上传文件暂存到
+ * {@code ./data/uploads/<token>/}，返回 {@code token} 与 {@code absolutePath}。
+ * 执行时由 {@link FileUploadService#promoteForExecution} 把文件复制到
+ * 执行目录的 {@code input/} 子目录下。
+ *
+ * <p>脚本拿到的路径由后端决定，前端不能传入任意服务器路径。
+ */
 @RestController
 @RequestMapping("/api/uploads")
 public class FileUploadController {
@@ -19,10 +29,10 @@ public class FileUploadController {
     @Autowired private FileUploadService uploadService;
 
     /**
-     * Pre-upload a file parameter. Returns {token, originalName, absolutePath, size}
-     * — the absolutePath is what the client puts into ExecutionRequest.fileInputs.
-     * The script never sees a client-controlled path; the executor copies the file
-     * into data/executions/{execId}/input/ at execution time.
+     * 暂存上传文件，返回后续执行所需的 token 与路径。
+     *
+     * @param file 上传文件
+     * @return {token, originalName, absolutePath, size}
      */
     @PostMapping
     public ApiResponse<Map<String, Object>> upload(@RequestParam("file") MultipartFile file) {
