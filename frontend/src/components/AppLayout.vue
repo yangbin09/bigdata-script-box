@@ -7,8 +7,10 @@
   <div class="sb-shell">
     <header class="sb-topbar">
       <div class="sb-brand">
-        <el-icon :size="18" color="#2563eb"><Tools /></el-icon>
-        <span class="sb-brand-text">BigData Script Box</span>
+        <router-link to="/" class="sb-brand-link">
+          <el-icon :size="18" color="#2563eb"><Tools /></el-icon>
+          <span class="sb-brand-text">BigData Script Box</span>
+        </router-link>
         <span
           class="sb-env-tag"
           :class="{ mock: envInfo.mock, real: !envInfo.mock }"
@@ -101,6 +103,15 @@ onMounted(async () => {
   font-weight: 600;
   font-size: 14px;
 }
+
+.sb-brand-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  color: inherit;
+}
+.sb-brand-link:hover .sb-brand-text { color: var(--sb-primary); }
 
 .sb-brand-text {
   color: var(--sb-text);
