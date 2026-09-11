@@ -537,4 +537,8 @@ watch(tab, (v) => {
 .sb-name-main { font-weight: 500; font-size: 13.5px; }
 
 .sb-drawer-title { font-size: 16px; font-weight: 600; }
+/* History rows are clickable (open detail drawer). Make the affordance
+   obvious so users don't miss the interaction. */
+:deep(.el-table .el-table__row) { cursor: pointer; }
+:deep(.el-table .el-table__row:hover > td) { background-color: var(--el-table-row-hover-bg-color); }
 </style>
