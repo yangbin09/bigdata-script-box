@@ -28,3 +28,9 @@ export const activeExecutions = (scriptId, tenantId) => {
   if (tenantId != null) params.tenantId = tenantId
   return http.get('/executions/active', { params }).then((r) => r.data)
 }
+
+// V2: re-run an execution exactly as it ran, using the snapshotted body +
+// params stored on the history row. The server temporarily writes the
+// snapshotted body into the script's file, runs, then restores.
+export const rerunExecution = (id) =>
+  http.post(`/executions/${id}/rerun`).then((r) => r.data)

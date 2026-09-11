@@ -35,6 +35,14 @@ public class ExecutionHistory {
     private String status;
     /** Captured result.json payload as raw JSON string (or null). */
     private String resultJson;
+    // V2: SHA-256 of the script body at the moment this execution started.
+    // Lets the UI detect "the script has changed since this run" without
+    // hashing anything client-side.
+    private String scriptSha256;
+    // V2: JSON snapshot of the full execution context (params + script body
+    // + tenant + riskLevel + allowConcurrent) captured at start. Enables
+    // "re-run this exactly as it ran" even after the script has been edited.
+    private String snapshotJson;
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -81,4 +89,8 @@ public class ExecutionHistory {
     public void setStatus(String status) { this.status = status; }
     public String getResultJson() { return resultJson; }
     public void setResultJson(String resultJson) { this.resultJson = resultJson; }
+    public String getScriptSha256() { return scriptSha256; }
+    public void setScriptSha256(String scriptSha256) { this.scriptSha256 = scriptSha256; }
+    public String getSnapshotJson() { return snapshotJson; }
+    public void setSnapshotJson(String snapshotJson) { this.snapshotJson = snapshotJson; }
 }

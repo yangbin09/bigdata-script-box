@@ -169,6 +169,14 @@
           <el-button @click="detailOpen = false">关闭</el-button>
           <div class="right">
             <el-button :icon="DocumentCopy" @click="copyParams">复制参数</el-button>
+            <!-- V2: "重跑历史" uses the snapshotted body + params, ignoring
+                 any edits the script has received since this run. -->
+            <el-button
+              v-if="current?.snapshotJson"
+              :icon="RefreshLeft"
+              :loading="rerunning"
+              @click="rerunFromSnapshot(current)"
+            >按当前快照重跑</el-button>
             <el-button :icon="RefreshRight" type="primary" @click="rerun(current)">再次执行</el-button>
           </div>
         </div>
@@ -181,7 +189,7 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  Refresh, RefreshRight, Close, DocumentCopy, Download,
+  Refresh, RefreshRight, RefreshLeft, Close, DocumentCopy, Download,
   CircleCheck, CircleClose, WarningFilled
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
@@ -270,6 +278,24 @@ function rerun(row) {
   sessionStorage.setItem('sb.rerun', JSON.stringify(payload))
   detailOpen.value = false
   router.push({ name: 'execute' })
+}
+
+// V2: rerun using the snapshotted body + params, even if the script has been
+// edited since. The backend restores the original body on disk for the
+// duration of the run, then puts it back.
+const rerunning = ref(false)
+async function rerunFromSnapshot(row) {
+  if (!row || !row.id) return
+  rerunning.value = true
+  try {
+    const { rerunExecution } = await import('../api/executions')
+    const h = await rerunExecution(row.id)
+    ElMessage.success(`按快照重跑成功 (executionId=${h.id})`)
+    detailOpen.value = false
+    // Route to the result view so the user sees stdout/stderr.
+    router.push({ name: 'execute' })
+  } catch (_) { /* interceptor toasted */ }
+  finally { rerunning.value = false }
 }
 
 function copyParams() {

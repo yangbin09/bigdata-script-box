@@ -91,6 +91,12 @@ ALTER TABLE execution_history ADD COLUMN IF NOT EXISTS batch_row_index INT;
 ALTER TABLE execution_history ADD COLUMN IF NOT EXISTS scenario_id BIGINT;
 ALTER TABLE execution_history ADD COLUMN IF NOT EXISTS scenario_step_no INT;
 CREATE INDEX IF NOT EXISTS idx_history_batch_id ON execution_history(batch_id);
+-- V2: SHA-256 of the script body at the time this execution started. Lets
+-- the UI detect when the script has been edited since this run.
+ALTER TABLE execution_history ADD COLUMN IF NOT EXISTS script_sha256 VARCHAR(128);
+-- V2: full execution context snapshot (params + body + tenant + risk flags)
+-- captured at start, used by the "re-run as it ran" button.
+ALTER TABLE execution_history ADD COLUMN IF NOT EXISTS snapshot_json VARCHAR(16384);
 
 CREATE TABLE IF NOT EXISTS preset_variable (
     id              BIGINT AUTO_INCREMENT PRIMARY KEY,

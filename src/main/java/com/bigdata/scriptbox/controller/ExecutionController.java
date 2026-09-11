@@ -133,6 +133,21 @@ public class ExecutionController {
         return ResponseEntity.ok(executor.readStdout(h));
     }
 
+    /** V2: re-run an execution exactly as it ran the first time, using the
+     *  snapshot stored on the history row. Sensitive env values are masked
+     *  in the snapshot, and DANGEROUS scripts do not re-prompt because the
+     *  original run was already authorised. */
+    @PostMapping("/{id}/rerun")
+    public ApiResponse<ExecutionHistory> rerun(@PathVariable Long id) {
+        try {
+            return ApiResponse.ok(executor.rerunFromSnapshot(id));
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return ApiResponse.error(e.getMessage());
+        } catch (IOException e) {
+            return ApiResponse.error("rerun failed: " + e.getMessage());
+        }
+    }
+
     @GetMapping(value = "/{id}/stderr", produces = MediaType.TEXT_PLAIN_VALUE)
     public ResponseEntity<byte[]> stderr(@PathVariable Long id) throws IOException {
         ExecutionHistory h = executor.history(id);
