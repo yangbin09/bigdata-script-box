@@ -22,7 +22,11 @@ public class DirectoryWritablePrecheckStrategy implements PrecheckStrategy {
 
     private static final String TYPE = "writableDirectories";
 
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper;
+
+    public DirectoryWritablePrecheckStrategy(ObjectMapper mapper) {
+        this.mapper = mapper;
+    }
 
     @Override
     public String type() {

@@ -48,7 +48,11 @@ public class ScriptPackageService {
     @Autowired private ScriptService scriptService;
     @Autowired private ScriptVersionService versionService;
 
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper;
+
+    public ScriptPackageService(ObjectMapper mapper) {
+        this.mapper = mapper;
+    }
 
     public byte[] export(Long scriptId) throws IOException {
         Script s = scriptService.getById(scriptId);

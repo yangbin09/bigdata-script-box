@@ -22,7 +22,11 @@ public class CommandExistsPrecheckStrategy implements PrecheckStrategy {
 
     private static final String TYPE = "commands";
 
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper;
+
+    public CommandExistsPrecheckStrategy(ObjectMapper mapper) {
+        this.mapper = mapper;
+    }
 
     @Override
     public String type() {

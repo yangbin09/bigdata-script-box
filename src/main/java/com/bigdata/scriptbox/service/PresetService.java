@@ -26,7 +26,11 @@ public class PresetService {
     @Autowired
     private ScriptPresetMapper presetMapper;
 
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper;
+
+    public PresetService(ObjectMapper mapper) {
+        this.mapper = mapper;
+    }
 
     public List<ScriptPreset> listByScript(Long scriptId) {
         return presetMapper.selectByScriptId(scriptId);

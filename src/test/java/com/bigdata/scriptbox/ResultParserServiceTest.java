@@ -106,6 +106,6 @@ class ResultParserServiceTest extends BaseIntegrationTest {
         // No path set
         var s = executor.history(h.getId());
         // Nothing inserted yet, but our service can be called on a transient h
-        assertNull(new com.bigdata.scriptbox.service.ResultParserService().readStructured(h));
+        assertNull(new com.bigdata.scriptbox.service.ResultParserService(new com.fasterxml.jackson.databind.ObjectMapper()).readStructured(h));
     }
 }

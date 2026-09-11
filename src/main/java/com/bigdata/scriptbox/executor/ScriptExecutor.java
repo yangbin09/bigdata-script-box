@@ -90,8 +90,12 @@ public class ScriptExecutor {
     @Autowired private SensitiveDataMasker sensitiveDataMasker;
     @Autowired private ProcessRunner processRunner;
 
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper;
     private final AtomicLong counter = new AtomicLong(System.currentTimeMillis() * 1000L);
+
+    public ScriptExecutor(ObjectMapper mapper) {
+        this.mapper = mapper;
+    }
 
     public ExecutionHistory history(Long id) {
         return historyMapper.selectById(id);

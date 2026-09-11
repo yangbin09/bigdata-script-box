@@ -43,10 +43,11 @@ public class PrecheckService {
     private static final Logger log = LoggerFactory.getLogger(PrecheckService.class);
 
     private final PrecheckStrategyRegistry registry;
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper;
 
-    public PrecheckService(PrecheckStrategyRegistry registry) {
+    public PrecheckService(PrecheckStrategyRegistry registry, ObjectMapper mapper) {
         this.registry = registry;
+        this.mapper = mapper;
     }
 
     public static class CheckResult {

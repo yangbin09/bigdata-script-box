@@ -21,7 +21,11 @@ public class FileExistsPrecheckStrategy implements PrecheckStrategy {
 
     private static final String TYPE = "files";
 
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper;
+
+    public FileExistsPrecheckStrategy(ObjectMapper mapper) {
+        this.mapper = mapper;
+    }
 
     @Override
     public String type() {

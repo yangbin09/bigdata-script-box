@@ -28,7 +28,11 @@ public class ResultParserService {
     @Autowired
     private com.bigdata.scriptbox.config.ScriptBoxProperties props;
 
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper;
+
+    public ResultParserService(ObjectMapper mapper) {
+        this.mapper = mapper;
+    }
 
     /**
      * Reads result.json at the given path. If it exists and is parseable, mutates
