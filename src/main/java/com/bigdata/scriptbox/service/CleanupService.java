@@ -13,7 +13,6 @@ import com.bigdata.scriptbox.service.PreviewStore.ControlledPaths;
 import com.bigdata.scriptbox.service.PreviewStore.Totals;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -61,15 +60,36 @@ public class CleanupService {
     /** 运维必须输入的确认字符串。 */
     public static final String CONFIRM_TOKEN = "CLEAN";
 
-    @Autowired private ScriptBoxProperties props;
-    @Autowired private SystemSettingService settings;
-    @Autowired private ExecutionHistoryMapper historyMapper;
-    @Autowired private ExecutionArtifactMapper artifactMapper;
-    @Autowired private RunningExecutionRegistry runningRegistry;
-    @Autowired private PreviewStore previewStore;
-    @Autowired private CleanupExecutor executor;
-    @Autowired private CleanupHistoryService historyService;
-    @Autowired private StoragePathService storagePathService;
+    /** 构造器注入：所有依赖在对象创建时就齐备，便于测试与单元测试中手工 mock。 */
+    public CleanupService(ScriptBoxProperties props,
+                          SystemSettingService settings,
+                          ExecutionHistoryMapper historyMapper,
+                          ExecutionArtifactMapper artifactMapper,
+                          RunningExecutionRegistry runningRegistry,
+                          PreviewStore previewStore,
+                          CleanupExecutor executor,
+                          CleanupHistoryService historyService,
+                          StoragePathService storagePathService) {
+        this.props = props;
+        this.settings = settings;
+        this.historyMapper = historyMapper;
+        this.artifactMapper = artifactMapper;
+        this.runningRegistry = runningRegistry;
+        this.previewStore = previewStore;
+        this.executor = executor;
+        this.historyService = historyService;
+        this.storagePathService = storagePathService;
+    }
+
+    private final ScriptBoxProperties props;
+    private final SystemSettingService settings;
+    private final ExecutionHistoryMapper historyMapper;
+    private final ExecutionArtifactMapper artifactMapper;
+    private final RunningExecutionRegistry runningRegistry;
+    private final PreviewStore previewStore;
+    private final CleanupExecutor executor;
+    private final CleanupHistoryService historyService;
+    private final StoragePathService storagePathService;
 
     /**
      * 当前生效的历史保留天数（系统设置覆盖优先）。0 表示禁用。

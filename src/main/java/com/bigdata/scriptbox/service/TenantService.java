@@ -7,7 +7,6 @@ import com.bigdata.scriptbox.mapper.TenantMapper;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -35,14 +34,18 @@ public class TenantService {
 
     private static final Logger log = LoggerFactory.getLogger(TenantService.class);
 
-    @Autowired
-    private TenantMapper tenantMapper;
+    private final TenantMapper tenantMapper;
+    private final ScriptBoxProperties props;
+    private final StoragePathService storagePathService;
 
-    @Autowired
-    private ScriptBoxProperties props;
-
-    @Autowired
-    private StoragePathService storagePathService;
+    /** 构造器注入：依赖在对象创建时就齐备，便于测试中手工 mock。 */
+    public TenantService(TenantMapper tenantMapper,
+                         ScriptBoxProperties props,
+                         StoragePathService storagePathService) {
+        this.tenantMapper = tenantMapper;
+        this.props = props;
+        this.storagePathService = storagePathService;
+    }
 
     /** 启动时确保 keytab 根目录存在。 */
     @PostConstruct
