@@ -16,7 +16,17 @@
     <template v-else>
       <div class="sb-header">
         <div>
-          <h2 class="sb-page-title">编辑脚本 — {{ script.displayName || script.name }}</h2>
+          <h2 class="sb-page-title">
+            编辑脚本 — {{ script.displayName || script.name }}
+            <el-tag
+              v-if="isDirty"
+              size="small"
+              type="warning"
+              effect="plain"
+              disable-transitions
+              class="sb-dirty-tag"
+            >未保存</el-tag>
+          </h2>
           <p class="sb-page-sub mono">{{ script.name }} · id={{ script.id }}</p>
         </div>
         <div>
@@ -307,8 +317,8 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref, watch, computed } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { onBeforeUnmount, onMounted, reactive, ref, watch, computed } from 'vue'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import {
   Plus, Delete, Top, Bottom, VideoPlay, WarningFilled, CircleCheck, CircleClose
 } from '@element-plus/icons-vue'
@@ -395,8 +405,46 @@ async function load() {
     tenants.value = ts || []
     presets.value = ps || []
     versions.value = vs || []
+    // Snapshot current state so onBeforeRouteLeave can detect unsaved edits.
+    originalSnapshot.value = serialize()
   } finally { loading.value = false }
 }
+
+// Canonical string of every editable field. Used by the route-leave guard
+// to detect unsaved changes without tracking each ref individually.
+// Presets and versions are excluded — they have their own save flows and
+// the load() snapshot is reset after each one.
+function serialize() {
+  return JSON.stringify({
+    form: { ...form },
+    body: body.value,
+    params: params.value,
+    precheckJson: precheckJson.value
+  })
+}
+const originalSnapshot = ref('')
+
+onBeforeRouteLeave(async () => {
+  if (serialize() === originalSnapshot.value) return true
+  try {
+    await ElMessageBox.confirm(
+      '有未保存的修改。确定离开？已编辑的内容将丢失。',
+      '未保存',
+      { type: 'warning', confirmButtonText: '放弃修改', cancelButtonText: '留在页面' }
+    )
+    return true
+  } catch (_) { return false }
+})
+
+// Also guard against browser tab close / reload.
+function beforeUnload(e) {
+  if (serialize() !== originalSnapshot.value) {
+    e.preventDefault()
+    e.returnValue = ''
+  }
+}
+onMounted(() => window.addEventListener('beforeunload', beforeUnload))
+onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
 
 function addParam() {
   params.value.push({
@@ -569,6 +617,11 @@ const syntaxLabel = computed(() => {
     default: return '未检查'
   }
 })
+
+// True when the user has edited any field since the last load / save.
+// Shown as a small badge in the header so the unsaved-warning prompts
+// aren't surprising.
+const isDirty = computed(() => serialize() !== originalSnapshot.value)
 const syntaxClass = computed(() => syntaxState.value)
 const syntaxIcon = computed(() => syntaxState.value === 'error' ? CircleClose : CircleCheck)
 // Debounced auto-check after edits stop — avoid hammering the server while
@@ -745,4 +798,5 @@ watch(body, () => {
 .sb-syntax-errors ul, .sb-syntax-warnings ul { margin: 0; padding-left: 20px; }
 .sb-syntax-actions { margin-top: 8px; display: flex; align-items: center; gap: 8px; }
 .muted { color: var(--sb-text-muted); font-size: 12.5px; }
+.sb-dirty-tag { margin-left: 8px; vertical-align: middle; }
 </style>
