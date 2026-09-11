@@ -14,14 +14,14 @@ http.interceptors.response.use(
     const body = resp.data
     if (body && typeof body === 'object' && 'code' in body) {
       if (body.code === 0) return body
-      ElMessage.error(body.message || 'request failed')
-      return Promise.reject(new Error(body.message || 'request failed'))
+      ElMessage.error(body.message || '请求失败')
+      return Promise.reject(new Error(body.message || '请求失败'))
     }
     // Non-wrapped responses (e.g. text/plain stdout/stderr).
     return resp
   },
   (err) => {
-    const msg = err.response?.data?.message || err.message || 'network error'
+    const msg = err.response?.data?.message || err.message || '网络错误'
     ElMessage.error(msg)
     return Promise.reject(err)
   }

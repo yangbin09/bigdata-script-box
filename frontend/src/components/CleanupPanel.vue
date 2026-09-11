@@ -67,19 +67,27 @@
 
       <div class="retention-grid">
         <div class="retention-field">
-          <label>执行历史保留天数</label>
+          <label>
+            <SBLabel text="执行历史保留天数" tip="保留多少天以内的执行历史行；超出天数的历史将被预览清理。0 表示禁用该类目。" />
+          </label>
           <el-input-number v-model="retention.historyDays" :min="0" :max="365" :step="1" />
         </div>
         <div class="retention-field">
-          <label>产物文件保留天数</label>
+          <label>
+            <SBLabel text="产物文件保留天数" tip="执行产物文件（脚本写入 $ARTIFACT_DIR 的文件）的保留天数；0 表示禁用该类目。" />
+          </label>
           <el-input-number v-model="retention.artifactDays" :min="0" :max="365" :step="1" />
         </div>
         <div class="retention-field">
-          <label>执行目录保留天数</label>
+          <label>
+            <SBLabel text="执行目录保留天数" tip="每个 Execution 的 stdout / stderr / input 目录保留天数（按目录 mtime 判断）；0 表示禁用该类目。" />
+          </label>
           <el-input-number v-model="retention.executionDays" :min="0" :max="365" :step="1" />
         </div>
         <div class="retention-field">
-          <label>应用日志保留天数</label>
+          <label>
+            <SBLabel text="应用日志保留天数" tip="logback 写入的滚动应用日志保留天数；0 表示禁用该类目。" />
+          </label>
           <el-input-number v-model="retention.logDays" :min="0" :max="365" :step="1" />
         </div>
       </div>
@@ -186,6 +194,7 @@ import { formatBytes, formatTimestamp } from '../utils/format'
 import CleanupPreviewDrawer from './CleanupPreviewDrawer.vue'
 import CleanupConfirmDialog from './CleanupConfirmDialog.vue'
 import CleanupReportDrawer from './CleanupReportDrawer.vue'
+import SBLabel from './SBLabel.vue'
 
 const retention = reactive({ historyDays: 30, artifactDays: 30, executionDays: 30, logDays: 7 })
 const controlled = reactive({ executionRoot: '', logsRoot: '' })

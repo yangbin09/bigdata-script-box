@@ -19,7 +19,13 @@
           :on-change="onImportFile"
           accept=".zip"
         >
-          <el-button plain :icon="UploadFilled">导入 .zip</el-button>
+          <el-tooltip
+            content="从外部 .zip 包导入脚本（含 Shell 正文、参数、预设）。导入后可在编辑页面继续调整。"
+            placement="top"
+            :show-after="120"
+          >
+            <el-button plain :icon="UploadFilled">导入 .zip</el-button>
+          </el-tooltip>
         </el-upload>
         <el-button type="primary" :icon="Plus" @click="openCreate">新增脚本</el-button>
         <el-button :icon="Files" plain @click="openTemplatePicker">从模板创建</el-button>

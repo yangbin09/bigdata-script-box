@@ -69,13 +69,16 @@
           <el-input v-model="form.variableKey" placeholder="例如 HIVE_DB、API_TOKEN" />
         </el-form-item>
         <el-form-item>
-          <template #label><SBLabel text="变量值" tip="实际注入到脚本中的字符串值。开启「敏感」后日志和前端不会明文展示。" /></template>
+          <template #label><SBLabel text="变量值" tip="实际注入到脚本中的字符串值。在脚本里通过 ${变量名} 占位符引用。" /></template>
           <el-input
             v-model="form.variableValue"
             :type="form.sensitive ? 'password' : 'text'"
-            :placeholder="form.sensitive ? '敏感值不会出现在日志或前端明文' : '例如：default、https://example.com'"
+            :placeholder="form.sensitive ? '输入敏感值（输入框不会回显）' : '例如：default、https://example.com'"
             show-password
           />
+          <div v-if="form.sensitive" class="sb-help-inline">
+            开启「敏感」后，日志和前端列表会显示为 ******，不会以明文形式输出。
+          </div>
         </el-form-item>
         <el-form-item>
           <template #label><SBLabel text="敏感" tip="开启后变量值在日志中将被脱敏，前端展示为 ******。" /></template>
@@ -150,9 +153,9 @@ function openEdit(row) {
 }
 
 async function submitForm() {
-  if (!form.variableKey) return ElMessage.warning('key 必填')
+  if (!form.variableKey) return ElMessage.warning('变量名必填')
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(form.variableKey))
-    return ElMessage.warning('key 必须匹配 [A-Za-z_][A-Za-z0-9_]*')
+    return ElMessage.warning('变量名必须匹配 [A-Za-z_][A-Za-z0-9_]*')
   saving.value = true
   try {
     const payload = { ...form }
@@ -185,4 +188,20 @@ onMounted(refresh)
 .sb-masked { color: var(--sb-text-3); }
 .mono { font-family: var(--sb-mono); font-size: 12.5px; }
 .muted { color: var(--sb-text-muted); font-size: 12.5px; }
+
+/* Inline help under form inputs — matches the style used in ScriptEditView
+   so the "敏感值不会回显" hint reads consistently across forms. */
+.sb-help-inline {
+  font-size: 12px;
+  color: var(--sb-text-3);
+  margin-top: 4px;
+  line-height: 1.5;
+}
+.sb-help-inline code {
+  background: #f3f4f6;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: var(--sb-mono);
+  font-size: 11.5px;
+}
 </style>

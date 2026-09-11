@@ -329,9 +329,9 @@
       <template v-if="previewData">
         <h4 class="sb-test-section-title">命令</h4>
         <pre class="sb-log sb-cmd">{{ previewData.command.join(' ') }}</pre>
-        <h4 class="sb-test-section-title">参数 (--key value)</h4>
+        <h4 class="sb-test-section-title">命令行参数（--参数名 参数值）</h4>
         <pre class="sb-log">{{ JSON.stringify(previewData.params, null, 2) }}</pre>
-        <h4 class="sb-test-section-title">环境变量 (敏感已脱敏)</h4>
+        <h4 class="sb-test-section-title">环境变量（敏感已脱敏）</h4>
         <pre class="sb-log">{{ JSON.stringify(previewData.globalVariables, null, 2) }}</pre>
         <div class="sb-preview-meta">
           <div><span class="muted">租户：</span>{{ previewData.tenantName }}</div>
