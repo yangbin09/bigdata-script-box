@@ -313,6 +313,7 @@ async function refresh() {
 function resetDateRange() {
   dateFrom.value = ''
   dateTo.value = ''
+  refresh()
 }
 
 function quickDateRange(days) {
@@ -323,6 +324,7 @@ function quickDateRange(days) {
   past.setDate(past.getDate() - (days - 1))
   dateFrom.value = fmt(past)
   dateTo.value = fmt(today)
+  refresh()
 }
 
 function statusOf(h) { return statusOfHistory(h) }
