@@ -50,6 +50,7 @@ public class CleanupExecutor {
     @Autowired private RunningExecutionRegistry runningRegistry;
     @Autowired private ExecutionHistoryMapper historyMapper;
     @Autowired private ExecutionArtifactMapper artifactMapper;
+    @Autowired private StoragePathService storagePathService;
 
     public CleanupReport execute(PreviewStore.CleanupPreview preview) {
         long startMs = System.currentTimeMillis();
@@ -178,8 +179,7 @@ public class CleanupExecutor {
             if (!Files.exists(abs)) return 0;
             Path real = abs.toRealPath(LinkOption.NOFOLLOW_LINKS);
             Path root = java.nio.file.Paths.get(controlledRoot).toAbsolutePath().normalize();
-            Path rootReal = root.toRealPath(LinkOption.NOFOLLOW_LINKS);
-            if (!real.startsWith(rootReal)) return -1;
+            if (!storagePathService.isInsideReal(real, root)) return -1;
             // Re-check the parsed id is still not running (race window).
             String name = path.getFileName() == null ? "" : path.getFileName().toString();
             try {
@@ -204,8 +204,7 @@ public class CleanupExecutor {
             if (!Files.exists(abs)) return 0;
             Path real = abs.toRealPath(LinkOption.NOFOLLOW_LINKS);
             Path root = java.nio.file.Paths.get(controlledRoot).toAbsolutePath().normalize();
-            Path rootReal = root.toRealPath(LinkOption.NOFOLLOW_LINKS);
-            if (!real.startsWith(rootReal)) return -1;
+            if (!storagePathService.isInsideReal(real, root)) return -1;
             long size = 0;
             try { size = Files.size(real); } catch (IOException ignored) {}
             Files.delete(real);

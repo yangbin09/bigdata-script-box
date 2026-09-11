@@ -29,6 +29,7 @@ public class ScriptVersionService {
     @Autowired private ScriptVersionMapper versionMapper;
     @Autowired private ScriptMapper scriptMapper;
     @Autowired private ScriptBoxProperties props;
+    @Autowired private StoragePathService storagePathService;
 
     /**
      * Take a snapshot of the script's CURRENT body. Called after create /
@@ -85,8 +86,7 @@ public class ScriptVersionService {
 
     /** Same on-disk layout as ScriptService#persistScriptBody. */
     private Path scriptFilePath(Long scriptId) {
-        Path scriptsRoot = Paths.get(props.getScriptsDir()).toAbsolutePath();
-        return scriptsRoot.resolve(String.valueOf(scriptId)).resolve("script.sh");
+        return storagePathService.scriptFilePath(scriptId);
     }
 
     private String readBodyFromDisk(Script s) throws IOException {

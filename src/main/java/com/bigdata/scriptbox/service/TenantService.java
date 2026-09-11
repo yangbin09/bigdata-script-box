@@ -27,9 +27,12 @@ public class TenantService {
     @Autowired
     private ScriptBoxProperties props;
 
+    @Autowired
+    private StoragePathService storagePathService;
+
     @PostConstruct
     public void init() throws IOException {
-        Files.createDirectories(Paths.get(props.getKeytabsDir()));
+        Files.createDirectories(storagePathService.keytabsRoot());
     }
 
     public List<Tenant> listAll() {
@@ -87,8 +90,8 @@ public class TenantService {
         if (!original.toLowerCase().endsWith(".keytab")) {
             throw new IllegalArgumentException("only .keytab files are allowed");
         }
-        Path target = Paths.get(props.getKeytabsDir(),
-                "tenant_" + tenantId + "_" + UUID.randomUUID() + ".keytab");
+        Path target = storagePathService.keytabPath(tenantId, UUID.randomUUID().toString());
+        storagePathService.assertInside(target, storagePathService.keytabsRoot(), "keytab");
         try (var in = file.getInputStream()) {
             Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
         }

@@ -51,24 +51,21 @@ import java.util.List;
 public class ArtifactService {
 
     private static final Logger log = LoggerFactory.getLogger(ArtifactService.class);
-    static final String ARTIFACTS_SUBDIR = "artifacts";
 
     @Autowired private ScriptBoxProperties props;
     @Autowired private ExecutionArtifactMapper artifactMapper;
+    @Autowired private StoragePathService storagePathService;
 
     /** Absolute path to a given execution's artifacts dir, creating it. */
     public Path artifactsDirFor(long executionId) throws IOException {
-        Path execDir = Paths.get(props.getExecutionsDir(), String.valueOf(executionId))
-                .toAbsolutePath().normalize();
-        Path artifacts = execDir.resolve(ARTIFACTS_SUBDIR).toAbsolutePath().normalize();
+        Path artifacts = storagePathService.artifactsDirFor(executionId);
         Files.createDirectories(artifacts);
         return artifacts;
     }
 
     /** Absolute path to a given execution's dir (parent of artifacts/). */
     public Path executionDirFor(long executionId) {
-        return Paths.get(props.getExecutionsDir(), String.valueOf(executionId))
-                .toAbsolutePath().normalize();
+        return storagePathService.executionDirFor(executionId);
     }
 
     /**
@@ -135,7 +132,7 @@ public class ArtifactService {
                         p, size, perFileMax);
                 continue;
             }
-            String relName = ARTIFACTS_SUBDIR + "/" + p.getFileName().toString();
+            String relName = StoragePathService.ARTIFACTS_SUBDIR + "/" + p.getFileName().toString();
             ExecutionArtifact a = new ExecutionArtifact();
             a.setExecutionId(h.getId());
             a.setName(relName);
@@ -202,7 +199,7 @@ public class ArtifactService {
 
         // Path-traversal defense: the on-disk path must live under the
         // execution's artifacts dir, after both are normalised.
-        Path artifacts = artifactsDirFor_unnormalised(executionId);
+        Path artifacts = storagePathService.artifactsDirFor(executionId);
         Path resolved;
         try {
             resolved = Paths.get(a.getPath()).toAbsolutePath().normalize();
@@ -216,13 +213,6 @@ public class ArtifactService {
         }
         if (!Files.isRegularFile(resolved)) return null;
         return new ResolvedArtifact(a, resolved);
-    }
-
-    /** Without createDirectories — used inside the traversal check. */
-    private Path artifactsDirFor_unnormalised(long executionId) {
-        return Paths.get(props.getExecutionsDir(), String.valueOf(executionId))
-                .toAbsolutePath().normalize()
-                .resolve(ARTIFACTS_SUBDIR).toAbsolutePath().normalize();
     }
 
     /**
@@ -240,9 +230,10 @@ public class ArtifactService {
         // Disallow drive letters: 'C:' or 'c:'
         if (s.length() >= 2 && Character.isLetter(s.charAt(0)) && s.charAt(1) == ':') return null;
         // Drop any leading "artifacts/" so the caller can supply either.
-        if (s.startsWith(ARTIFACTS_SUBDIR + "/")) s = s.substring(ARTIFACTS_SUBDIR.length() + 1);
+        if (s.startsWith(StoragePathService.ARTIFACTS_SUBDIR + "/"))
+            s = s.substring(StoragePathService.ARTIFACTS_SUBDIR.length() + 1);
         if (s.contains("..") || s.contains("/") || s.contains("\\")) return null;
-        return ARTIFACTS_SUBDIR + "/" + s;
+        return StoragePathService.ARTIFACTS_SUBDIR + "/" + s;
     }
 
     private String guessMime(String filename) {

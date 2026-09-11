@@ -47,9 +47,12 @@ public class ScriptService {
     @Autowired
     private SyntaxCheckService syntaxCheckService;
 
+    @Autowired
+    private StoragePathService storagePathService;
+
     @PostConstruct
     public void init() throws IOException {
-        Files.createDirectories(Paths.get(props.getScriptsDir()));
+        Files.createDirectories(storagePathService.scriptsRoot());
     }
 
     public List<Script> listAll() {
@@ -301,13 +304,9 @@ public class ScriptService {
     }
 
     private Path persistScriptBody(Long scriptId, String body) throws IOException {
-        Path scriptsRoot = Paths.get(props.getScriptsDir()).toAbsolutePath();
-        Path dir = scriptsRoot.resolve(String.valueOf(scriptId));
-        Files.createDirectories(dir);
-        Path file = dir.resolve("script.sh");
-        if (!file.toAbsolutePath().startsWith(scriptsRoot)) {
-            throw new IllegalStateException("script path escapes scripts dir");
-        }
+        Path file = storagePathService.scriptFilePath(scriptId);
+        storagePathService.assertInside(file, storagePathService.scriptsRoot(), "script file");
+        Files.createDirectories(file.getParent());
         Files.writeString(file, body, StandardCharsets.UTF_8);
         return file;
     }

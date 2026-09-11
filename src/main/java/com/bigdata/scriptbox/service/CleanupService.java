@@ -74,6 +74,7 @@ public class CleanupService {
     @Autowired private PreviewStore previewStore;
     @Autowired private CleanupExecutor executor;
     @Autowired private CleanupHistoryService historyService;
+    @Autowired private StoragePathService storagePathService;
 
     /** Effective retention in days; respects override rows. 0 = disabled. */
     public int historyDays()    { return settings.getInt(K_HISTORY,    props.getRetentionHistoryDays()); }
@@ -106,7 +107,7 @@ public class CleanupService {
         boolean logsEnabled = false;
         Path logsAbs = null;
         if (lDays > 0 && cp.logsRoot != null && !cp.logsRoot.isBlank()) {
-            logsAbs = Paths.get(cp.logsRoot).toAbsolutePath().normalize();
+            logsAbs = storagePathService.logsRoot();
             logsEnabled = Files.isDirectory(logsAbs);
         }
         p.logsEnabled = logsEnabled;
@@ -119,7 +120,7 @@ public class CleanupService {
         // Execution dirs — keyed off the dir's lastModifiedTime.
         if (eDays > 0) {
             long cutoffMs = System.currentTimeMillis() - (eDays * 86_400_000L);
-            Path root = Paths.get(cp.executionsRoot).toAbsolutePath().normalize();
+            Path root = storagePathService.executionsRoot();
             if (Files.isDirectory(root)) {
                 try (Stream<Path> stream = Files.list(root)) {
                     for (Path child : (Iterable<Path>) stream::iterator) {
@@ -263,7 +264,9 @@ public class CleanupService {
         long total = 0;
         try (Stream<Path> stream = Files.walk(dir)) {
             for (Path p : (Iterable<Path>) stream::iterator) {
-                if (Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS)) total += Files.size(p);
+                if (Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS)) {
+                    try { total += Files.size(p); } catch (IOException ignored) {}
+                }
             }
         }
         return total;

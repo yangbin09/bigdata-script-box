@@ -52,6 +52,8 @@ public class ScriptExecutor {
     @Autowired private com.bigdata.scriptbox.service.PrecheckService precheckService;
     @Autowired private com.bigdata.scriptbox.service.RunningExecutionRegistry runningRegistry;
     @Autowired private com.bigdata.scriptbox.service.ArtifactService artifactService;
+    @Autowired private com.bigdata.scriptbox.service.StoragePathService storagePathService;
+    @Autowired private com.bigdata.scriptbox.service.SensitiveDataMasker sensitiveDataMasker;
 
     private final ObjectMapper mapper = new ObjectMapper();
     private final java.util.concurrent.atomic.AtomicLong counter = new java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis() * 1000L);
@@ -172,8 +174,8 @@ public class ScriptExecutor {
         String scriptPath = script.getScriptPath();
         if (scriptPath == null || !Files.exists(Paths.get(scriptPath)))
             throw new IllegalStateException("script file missing on disk: " + scriptPath);
-        if (!Paths.get(scriptPath).toAbsolutePath().startsWith(Paths.get(props.getScriptsDir()).toAbsolutePath()))
-            throw new IllegalStateException("script path escapes scripts dir");
+        // 路径安全：脚本文件必须落在配置的 scripts 目录下，阻止恶意路径逃逸
+        storagePathService.assertInside(Paths.get(scriptPath), storagePathService.scriptsRoot(), "script");
 
         // V2: SHA-256 the script body at the moment we start. Lets the UI
         // surface "script has been edited since this run" without doing
