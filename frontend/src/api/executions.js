@@ -45,3 +45,9 @@ export const listArtifacts = (id) =>
 // `window.location.href = artifactDownloadUrl(id, name)` or anchor href.
 export const artifactDownloadUrl = (id, name) =>
   `/api/executions/${id}/artifacts/${encodeURIComponent(name)}`
+
+// V2: read the structured result.json for an execution. The endpoint
+// returns ApiResponse.ok({...}) or 404-equivalent when the script didn't
+// write a result.json.
+export const readResult = (id) =>
+  http.get(`/executions/${id}/result`).then((r) => r.data)

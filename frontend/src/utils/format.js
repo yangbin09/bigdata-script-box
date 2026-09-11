@@ -31,3 +31,16 @@ export function parseParamsJson(json) {
   if (!json) return {}
   try { return JSON.parse(json) } catch { return { _raw: json } }
 }
+
+// Format a byte size (number) as a human-readable string. Used by artifact
+// tables. Rounds to 2 decimals below 10, 1 decimal above, and uses IEC
+// binary suffixes (KiB/MiB/GiB) so large file counts stay readable.
+export function formatBytes(n) {
+  if (n == null || Number.isNaN(n)) return '-'
+  if (n < 1024) return `${n} B`
+  const units = ['KiB', 'MiB', 'GiB', 'TiB']
+  let v = n / 1024
+  let i = 0
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++ }
+  return `${v.toFixed(v < 10 ? 2 : 1)} ${units[i]}`
+}
