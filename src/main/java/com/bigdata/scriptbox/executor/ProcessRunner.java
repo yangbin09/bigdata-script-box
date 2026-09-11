@@ -62,6 +62,10 @@ public class ProcessRunner {
      *   <li>调用 {@link RunningExecutionRegistry#register} 后再调用本方法，
      *       便于 cancel 能在中途 fire。</li>
      * </ul>
+     *
+     * <p>异常安全：本方法无论成功还是异常路径都会从 {@link RunningExecutionRegistry}
+     * 注销当前 executionId；若进程仍在运行，finally 块内会尝试 destroyForcibly，
+     * 避免 FD / 句柄泄漏。
      */
     public ProcessResult run(long executionId, ProcessRequest req) throws IOException {
         ProcessBuilder pb = new ProcessBuilder(req.command());
@@ -81,47 +85,81 @@ public class ProcessRunner {
         // 都能 cancel(executionId)。registry 不负责启动，只负责跟踪。
         registry.register(executionId, req.scriptId(), req.tenantId(), startMs, process);
 
-        // 启动两个 daemon 线程并行 drain stdout / stderr。
-        Thread drainOut = drainAsync(process.getInputStream(), req.stdoutPath(), "stdout-" + req.label());
-        Thread drainErr = drainAsync(process.getErrorStream(), req.stderrPath(), "stderr-" + req.label());
+        // 整个执行生命周期放在 try/finally，保证 registry.unregister 必然执行。
+        // 即便 waitFor / drain 抛异常，也不会留下 stale registry 条目阻塞后续 slot 检查。
+        try (java.io.InputStream stdout = process.getInputStream();
+             java.io.InputStream stderr = process.getErrorStream()) {
 
-        boolean finished;
-        boolean timedOut = false;
-        try {
-            finished = process.waitFor(req.timeoutSeconds(), TimeUnit.SECONDS);
-            if (!finished) {
-                timedOut = true;
-                process.destroyForcibly();
+            // 启动两个 daemon 线程并行 drain stdout / stderr。
+            Thread drainOut = drainAsync(stdout, req.stdoutPath(), "stdout-" + req.label());
+            Thread drainErr = drainAsync(stderr, req.stderrPath(), "stderr-" + req.label());
+
+            boolean timedOut = false;
+            try {
+                boolean finished = process.waitFor(req.timeoutSeconds(), TimeUnit.SECONDS);
+                if (!finished) {
+                    timedOut = true;
+                    // 单一职责：超时 destroy 走 ProcessRunner；cancel destroy 也走这里。
+                    destroyTree(process);
+                }
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                // 中断也按"未完成"处理；cancel 检查会兜底 destroy
             }
-        } catch (InterruptedException ie) {
-            Thread.currentThread().interrupt();
-            finished = false;
+
+            // 如果调用方在 process.waitFor 之后又 cancel 了，再做一次兜底 destroy。
+            RunningExecutionRegistry.RunningExecution live = registry.get(executionId);
+            boolean cancelled = false;
+            if (live != null && live.cancelled.get()) {
+                cancelled = true;
+                destroyTree(process);
+                try { process.waitFor(CANCEL_WAIT_SECONDS, TimeUnit.SECONDS); }
+                catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+            }
+
+            // 等 drain 线程把残留的 buffer 写完。
+            joinQuietly(drainOut);
+            joinQuietly(drainErr);
+
+            int exitCode;
+            try {
+                exitCode = process.exitValue();
+            } catch (IllegalThreadStateException ex) {
+                exitCode = -1;
+            }
+            // 超时或取消的进程没有合法退出码；统一置 -1 让调用方靠 timeout/cancelled 字段判断
+            if (timedOut || cancelled) exitCode = -1;
+
+            long duration = System.currentTimeMillis() - startMs;
+            return new ProcessResult(exitCode, timedOut, cancelled, duration, req.stdoutPath(), req.stderrPath());
+        } finally {
+            // 关键：无论上面是否抛异常，registry 都必须注销。
+            // 同时确保进程被销毁（极端情况下：抛异常发生在 waitFor 之前，进程仍在跑）。
+            registry.unregister(executionId);
+            try {
+                if (process.isAlive()) {
+                    destroyTree(process);
+                }
+            } catch (Exception ignored) {
+                // best-effort，shutdown 阶段不再抛
+            }
         }
+    }
 
-        // 如果调用方在 process.waitFor 之后又 cancel 了，也要等进程真正退出。
-        RunningExecutionRegistry.RunningExecution live = registry.get(executionId);
-        boolean cancelled = false;
-        if (live != null && live.cancelled.get()) {
-            cancelled = true;
-            try { process.waitFor(CANCEL_WAIT_SECONDS, TimeUnit.SECONDS); }
-            catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
-        }
-
-        // 等 drain 线程把残留的 buffer 写完。
-        joinQuietly(drainOut);
-        joinQuietly(drainErr);
-
-        int exitCode;
+    /**
+     * 销毁进程及其子孙进程（ProcessHandle.descendants），并等待 5 秒。
+     * 单一职责：所有 destroyForcibly 入口集中到这里，避免 cancel API 与 ProcessRunner 各自 destroy 造成 race。
+     */
+    private static void destroyTree(Process process) {
         try {
-            exitCode = process.exitValue();
-        } catch (IllegalThreadStateException ex) {
-            exitCode = -1;
+            ProcessHandle handle = process.toHandle();
+            for (ProcessHandle d : handle.descendants().toList()) {
+                try { d.destroyForcibly(); } catch (Exception ignored) {}
+            }
+            process.destroyForcibly();
+        } catch (Exception ignored) {
+            // best-effort
         }
-        // 超时或取消的进程没有合法退出码；统一置 -1 让调用方靠 timeout/cancelled 字段判断
-        if (timedOut || cancelled) exitCode = -1;
-
-        long duration = System.currentTimeMillis() - startMs;
-        return new ProcessResult(exitCode, timedOut, cancelled, duration, req.stdoutPath(), req.stderrPath());
     }
 
     /**

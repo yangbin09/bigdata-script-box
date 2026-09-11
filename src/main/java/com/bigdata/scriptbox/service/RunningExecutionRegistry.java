@@ -88,8 +88,15 @@ public class RunningExecutionRegistry {
     }
 
     /**
-     * 取消一个运行中的执行：设置取消标志，先强制销毁子进程再销毁父进程，避免子进程
-     * 看到父进程消失后 fork-spawn 更多工作。即使进程已经退出也安全 —— no-op。
+     * 取消一个运行中的执行：立刻 destroyForcibly 进程及子孙进程，避免子进程
+     * 看到父进程消失后 fork-spawn 更多工作；同时设置取消标志供执行线程读取。
+     *
+     * <p>即使进程已经退出也安全 —— no-op。多次 cancel 同样安全 —— 二次调用 no-op。
+     *
+     * <p>与 {@link com.bigdata.scriptbox.executor.ProcessRunner} 的职责分工：
+     * cancel API 是用户主动行为，立刻 kill 才能让 ProcessRunner 的 waitFor 在
+     * 合理时间内返回；ProcessRunner 在超时路径下也独立 destroy。destroyForcibly
+     * 本身幂等，多次调用无副作用。
      *
      * @return true 表示找到并发送了取消信号；false 表示已经结束或从未存在
      */
@@ -99,15 +106,25 @@ public class RunningExecutionRegistry {
         if (re.finished.get()) return false;
         if (re.cancelled.get()) return false; // 已发送过；二次调用 no-op
         re.cancelled.set(true);
+        destroyTree(re.process);
+        log.info("execution: 取消信号已发送 executionId={}", executionId);
+        return true;
+    }
+
+    /**
+     * 销毁进程及其子孙进程。cancel API 与 ProcessRunner 共用本方法，
+     * 避免两处各自实现子孙遍历的逻辑漂移。
+     */
+    private static void destroyTree(Process process) {
+        if (process == null) return;
         try {
-            // 先销毁子进程，避免它们看到父进程死后 fork-spawn 更多工作
-            ProcessHandle child = re.process.toHandle();
-            for (ProcessHandle d : child.descendants().toList()) {
+            ProcessHandle handle = process.toHandle();
+            for (ProcessHandle d : handle.descendants().toList()) {
                 try { d.destroyForcibly(); } catch (Exception ignored) {}
             }
-            re.process.destroyForcibly();
-            log.info("execution: 取消信号已发送 executionId={}", executionId);
-        } catch (Exception ignored) {}
-        return true;
+            process.destroyForcibly();
+        } catch (Exception ignored) {
+            // best-effort
+        }
     }
 }
