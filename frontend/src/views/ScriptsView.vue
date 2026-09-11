@@ -22,6 +22,7 @@
           <el-button plain :icon="UploadFilled">导入 .zip</el-button>
         </el-upload>
         <el-button type="primary" :icon="Plus" @click="openCreate">新增脚本</el-button>
+        <el-button :icon="Files" plain @click="openTemplatePicker">从模板创建</el-button>
       </div>
     </div>
 
@@ -168,6 +169,52 @@
         <el-button type="primary" :loading="creating" @click="submitCreate">创建</el-button>
       </template>
     </el-drawer>
+
+    <!-- V2: template picker drawer. Picks a built-in template, asks for a
+         unique name, posts to /api/scripts/from-template, then routes the
+         user to the edit page so they can tweak before first run. -->
+    <el-drawer
+      v-model="tplOpen"
+      title="从模板创建脚本"
+      direction="rtl"
+      size="520px"
+    >
+      <el-empty v-if="!templates.length && !tplLoading" description="暂无可用模板" />
+      <div v-else>
+        <div class="sb-tpl-list">
+          <div
+            v-for="t in templates"
+            :key="t.code"
+            class="sb-tpl-card"
+            :class="{ active: tplPicked?.code === t.code }"
+            @click="tplPicked = t"
+          >
+            <div class="sb-tpl-card-head">
+              <strong>{{ t.name }}</strong>
+              <el-tag v-if="t.category" size="small" effect="plain">{{ t.category }}</el-tag>
+            </div>
+            <div class="sb-tpl-card-desc">{{ t.description }}</div>
+          </div>
+        </div>
+        <el-form v-if="tplPicked" label-position="top" class="sb-tpl-form">
+          <el-form-item label="新脚本名称" required>
+            <el-input
+              v-model="tplName"
+              :placeholder="`${tplPicked.code}-copy`"
+            />
+          </el-form-item>
+        </el-form>
+      </div>
+      <template #footer>
+        <el-button @click="tplOpen = false">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="tplCreating"
+          :disabled="!tplPicked || !tplName.trim()"
+          @click="submitFromTemplate"
+        >创建并打开编辑</el-button>
+      </template>
+    </el-drawer>
   </div>
 </template>
 
@@ -175,7 +222,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  Plus, Star, StarFilled, Refresh, VideoPlay, MoreFilled, UploadFilled
+  Plus, Star, StarFilled, Refresh, VideoPlay, MoreFilled, UploadFilled, Files
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -184,6 +231,7 @@ import {
   copyScript, listParams
 } from '../api/scripts'
 import { exportScript, importScript } from '../api/extras'
+import { listTemplates, createFromTemplate } from '../api/templates'
 import { formatDateTime } from '../utils/format'
 import { RISK_LEVEL_OPTIONS, RISK_LEVEL_LABEL, RISK_LEVEL_TAG_TYPE, normalizeRiskLevel } from '../utils/labels'
 
@@ -202,6 +250,14 @@ const createForm = reactive({
 const scriptFile = ref(null)
 const uploadRef = ref(null)
 const creating = ref(false)
+
+// V2: template picker state
+const tplOpen = ref(false)
+const tplLoading = ref(false)
+const tplCreating = ref(false)
+const templates = ref([])
+const tplPicked = ref(null)
+const tplName = ref('')
 
 async function refresh() {
   loading.value = true
@@ -328,6 +384,33 @@ async function confirmDelete(row) {
 function goEdit(row) { router.push({ name: 'script-edit', query: { id: row.id } }) }
 function goExecute(row) { router.push({ name: 'execute', query: { script: row.id } }) }
 
+// V2: open the template picker and lazy-load the list. We re-load every
+// time so newly-seeded templates appear without a hard refresh.
+async function openTemplatePicker() {
+  tplOpen.value = true
+  tplPicked.value = null
+  tplName.value = ''
+  tplLoading.value = true
+  try {
+    templates.value = (await listTemplates()) || []
+  } catch (_) { templates.value = [] }
+  finally { tplLoading.value = false }
+}
+
+async function submitFromTemplate() {
+  if (!tplPicked.value || !tplName.value.trim()) return
+  tplCreating.value = true
+  try {
+    const script = await createFromTemplate(tplPicked.value.code, tplName.value.trim())
+    ElMessage.success(`已从模板 ${tplPicked.value.name} 创建脚本`)
+    tplOpen.value = false
+    createOpen.value = false
+    await refresh()
+    goEdit(script)
+  } catch (_) { /* interceptor toasted */ }
+  finally { tplCreating.value = false }
+}
+
 onMounted(refresh)
 </script>
 
@@ -353,4 +436,36 @@ onMounted(refresh)
 }
 .sb-star:hover { background: #f3f4f6; color: var(--sb-text-2); }
 .sb-star.active { color: #f59e0b; }
+
+/* V2: template picker cards */
+.sb-tpl-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sb-tpl-card {
+  border: 1px solid var(--el-border-color);
+  border-radius: 6px;
+  padding: 10px 12px;
+  cursor: pointer;
+  background: var(--el-bg-color);
+}
+.sb-tpl-card:hover { border-color: var(--el-color-primary); }
+.sb-tpl-card.active {
+  border-color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+}
+.sb-tpl-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.sb-tpl-card-desc {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.sb-tpl-form { margin-top: 12px; }
 </style>

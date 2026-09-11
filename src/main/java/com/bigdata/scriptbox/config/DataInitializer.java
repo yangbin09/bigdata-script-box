@@ -2,8 +2,10 @@ package com.bigdata.scriptbox.config;
 
 import com.bigdata.scriptbox.entity.Script;
 import com.bigdata.scriptbox.entity.ScriptParam;
+import com.bigdata.scriptbox.entity.ScriptTemplate;
 import com.bigdata.scriptbox.entity.Tenant;
 import com.bigdata.scriptbox.service.ScriptService;
+import com.bigdata.scriptbox.service.ScriptTemplateService;
 import com.bigdata.scriptbox.service.TenantService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,6 +31,7 @@ public class DataInitializer implements CommandLineRunner {
 
     @Autowired private TenantService tenantService;
     @Autowired private ScriptService scriptService;
+    @Autowired private ScriptTemplateService templateService;
     @Autowired private ScriptBoxProperties props;
 
     @Override
@@ -67,6 +70,107 @@ public class DataInitializer implements CommandLineRunner {
                     60, "lines", "行数", "number", "5000", null, false);
             log.info("seeded 5 mock scripts");
         }
+
+        // V2: built-in script templates. Idempotent — only seeds when the
+        // table is empty, so user-added templates (future) survive restarts.
+        if (templateService.listAll().isEmpty()) {
+            seedTemplates();
+            log.info("seeded {} script templates", templateService.listAll().size());
+        }
+    }
+
+    private void seedTemplates() {
+        // 1) plain-shell: minimal echo-only script for sanity checks.
+        registerTemplate("plain-shell", "普通 Shell", "Shell",
+                "最简脚本：接收一个 name 参数，输出 hello 并打印传入值。",
+                "#!/bin/bash\n" +
+                "set -euo pipefail\n" +
+                "name=\"${1:-world}\"\n" +
+                "echo \"hello ${name}\"\n" +
+                "exit 0\n",
+                "[{\"name\":\"name\",\"label\":\"名称\",\"type\":\"text\",\"defaultValue\":\"world\"," +
+                "\"placeholder\":\"输入名字\",\"sortOrder\":0}]",
+                10);
+
+        // 2) kerberos: a template that runs kinit then executes its arguments.
+        registerTemplate("kerberos", "Kerberos 客户端", "Auth",
+                "先调用 kinit，再执行用户指定的命令。常用于 Spark/Hive 提交。",
+                "#!/bin/bash\n" +
+                "set -euo pipefail\n" +
+                "if [[ -n \"${KEYTAB_PATH:-}\" && -n \"${PRINCIPAL:-}\" ]]; then\n" +
+                "  kinit -kt \"$KEYTAB_PATH\" \"$PRINCIPAL\" || { echo 'kinit failed' >&2; exit 2; }\n" +
+                "fi\n" +
+                "echo 'kerberos ticket ok'\n" +
+                "echo \"command=$1\"\n" +
+                "exit 0\n",
+                "[{\"name\":\"command\",\"label\":\"命令\",\"type\":\"text\"," +
+                "\"placeholder\":\"spark-submit ...\",\"required\":true,\"sortOrder\":0}]",
+                20);
+
+        // 3) spark-sql: a template that invokes spark-sql with a query.
+        registerTemplate("spark-sql", "Spark SQL", "Compute",
+                "调用 spark-sql 跑一段 SQL，结果落到 stdout。",
+                "#!/bin/bash\n" +
+                "set -euo pipefail\n" +
+                "db=\"${1:-default}\"\n" +
+                "sql=\"${2:-show tables}\"\n" +
+                "echo \"would run: spark-sql --database ${db} -e \\\"${sql}\\\"\"\n" +
+                "echo \"db=${db}\"\n" +
+                "echo \"sql=${sql}\"\n" +
+                "exit 0\n",
+                "[{\"name\":\"database\",\"label\":\"数据库\",\"type\":\"text\",\"defaultValue\":\"default\",\"sortOrder\":0}," +
+                "{\"name\":\"sql\",\"label\":\"SQL 语句\",\"type\":\"textarea\",\"defaultValue\":\"show tables\"," +
+                "\"placeholder\":\"select ... from ...\",\"required\":true,\"sortOrder\":1}]",
+                30);
+
+        // 4) hdfs: a template that runs hdfs dfs commands.
+        registerTemplate("hdfs", "HDFS 操作", "Storage",
+                "对 HDFS 路径执行 ls/cat/du 等操作。",
+                "#!/bin/bash\n" +
+                "set -euo pipefail\n" +
+                "action=\"${1:-ls}\"\n" +
+                "path=\"${2:-/}\"\n" +
+                "echo \"would run: hdfs dfs -${action} ${path}\"\n" +
+                "echo \"action=${action}\"\n" +
+                "echo \"path=${path}\"\n" +
+                "exit 0\n",
+                "[{\"name\":\"action\",\"label\":\"动作\",\"type\":\"select\",\"defaultValue\":\"ls\"," +
+                "\"options\":\"ls,cat,du,stat\",\"sortOrder\":0}," +
+                "{\"name\":\"path\",\"label\":\"路径\",\"type\":\"text\",\"defaultValue\":\"/\"," +
+                "\"placeholder\":\"/data/warehouse\",\"required\":true,\"sortOrder\":1}]",
+                40);
+
+        // 5) yarn: a template that submits to YARN.
+        registerTemplate("yarn", "YARN 提交", "Compute",
+                "调用 yarn jar 提交一个 MR 任务。",
+                "#!/bin/bash\n" +
+                "set -euo pipefail\n" +
+                "jar=\"${1:-}\"\n" +
+                "args=\"${2:-}\"\n" +
+                "if [[ -z \"$jar\" ]]; then echo 'jar path is required' >&2; exit 2; fi\n" +
+                "echo \"would run: yarn jar ${jar} ${args}\"\n" +
+                "echo \"jar=${jar}\"\n" +
+                "echo \"args=${args}\"\n" +
+                "exit 0\n",
+                "[{\"name\":\"jar\",\"label\":\"JAR 路径\",\"type\":\"text\",\"defaultValue\":\"/opt/jars/wc.jar\"," +
+                "\"placeholder\":\"hdfs:///jars/wordcount.jar\",\"required\":true,\"sortOrder\":0}," +
+                "{\"name\":\"args\",\"label\":\"参数\",\"type\":\"textarea\",\"defaultValue\":\"input output\"," +
+                "\"placeholder\":\"input hdfs path / output hdfs path\",\"sortOrder\":1}]",
+                50);
+    }
+
+    private void registerTemplate(String code, String name, String category, String desc,
+                                  String content, String paramsJson, int sortOrder) {
+        ScriptTemplate t = new ScriptTemplate();
+        t.setCode(code);
+        t.setName(name);
+        t.setCategory(category);
+        t.setDescription(desc);
+        t.setContent(content);
+        t.setParamsJson(paramsJson);
+        t.setSortOrder(sortOrder);
+        t.setEnabled(true);
+        templateService.createOrUpdate(t);
     }
 
     private void registerScript(String name, String displayName, String category, String desc,

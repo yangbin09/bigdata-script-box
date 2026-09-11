@@ -3,7 +3,9 @@ package com.bigdata.scriptbox.controller;
 import com.bigdata.scriptbox.dto.ApiResponse;
 import com.bigdata.scriptbox.entity.Script;
 import com.bigdata.scriptbox.entity.ScriptParam;
+import com.bigdata.scriptbox.entity.ScriptTemplate;
 import com.bigdata.scriptbox.service.ScriptService;
+import com.bigdata.scriptbox.service.ScriptTemplateService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -21,6 +23,7 @@ import java.util.Map;
 public class ScriptController {
 
     @Autowired private ScriptService scriptService;
+    @Autowired private ScriptTemplateService templateService;
 
     @GetMapping
     public ApiResponse<List<Script>> list() {
@@ -62,6 +65,47 @@ public class ScriptController {
         s.setRiskLevel(riskLevel);
         s.setAllowConcurrent(allowConcurrent);
         return ApiResponse.ok(scriptService.create(s, file));
+    }
+
+    /**
+     * V2: create a Script from a built-in template. The template's content
+     * and (optional) paramsJson are copied into a new Script row; the user
+     * picks a unique name. The new Script is then editable through the
+     * regular edit flow — template content still goes through bash -n.
+     */
+    @PostMapping(value = "/from-template", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ApiResponse<Script> createFromTemplate(@RequestBody Map<String, String> body) throws IOException {
+        String templateCode = body.get("templateCode");
+        String name = body.get("name");
+        if (templateCode == null || templateCode.isBlank())
+            return ApiResponse.error("templateCode is required");
+        if (name == null || name.isBlank())
+            return ApiResponse.error("name is required");
+        ScriptTemplate t = templateService.findByCode(templateCode);
+        if (t == null) return ApiResponse.error("template not found: " + templateCode);
+        Script s = new Script();
+        s.setName(name);
+        s.setDisplayName(name);
+        s.setCategory(t.getCategory());
+        s.setDescription(t.getDescription());
+        s.setTimeoutSeconds(600);
+        s.setEnabled(true);
+        org.springframework.web.multipart.MultipartFile mf = new com.bigdata.scriptbox.config.InMemoryMultipartFile(
+                name + ".sh", name + ".sh", "application/x-sh",
+                t.getContent().getBytes(StandardCharsets.UTF_8));
+        Script saved = scriptService.create(s, mf);
+        // Apply the template's parameter spec, if any.
+        if (t.getParamsJson() != null && !t.getParamsJson().isBlank()) {
+            try {
+                List<ScriptParam> params = new com.fasterxml.jackson.databind.ObjectMapper()
+                        .readValue(t.getParamsJson(),
+                                new com.fasterxml.jackson.core.type.TypeReference<List<ScriptParam>>() {});
+                scriptService.replaceParams(saved.getId(), params);
+            } catch (Exception ex) {
+                return ApiResponse.error("template param parse failed: " + ex.getMessage());
+            }
+        }
+        return ApiResponse.ok(saved);
     }
 
     @PutMapping(value = "/{id}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
