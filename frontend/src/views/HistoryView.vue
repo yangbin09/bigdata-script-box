@@ -166,6 +166,12 @@
               <el-button size="small" :icon="DocumentCopy" @click="copyParams">复制参数</el-button>
             </div>
             <pre class="sb-log">{{ paramsPretty }}</pre>
+            <!-- V3 (PR-9): compare current script schema vs history params
+                 so the user knows what changed before re-running. -->
+            <div v-if="currentScript" class="sb-diff-block">
+              <h4 class="sb-test-section-title">与当前脚本 schema 对比</h4>
+              <ScriptDiffPanel :history="current" :script="currentScript" />
+            </div>
           </el-tab-pane>
           <el-tab-pane label="stdout" name="stdout">
             <div class="sb-log-toolbar">
@@ -239,14 +245,26 @@
           <div class="right">
             <el-button :icon="DocumentCopy" @click="copyParams">复制参数</el-button>
             <!-- V2: "重跑历史" uses the snapshotted body + params, ignoring
-                 any edits the script has received since this run. -->
-            <el-button
+                 any edits the script has received since this run. V3 (PR-9):
+                 tooltip clarifies this means "restore script body to its
+                 state at this run, then execute with the same params". -->
+            <el-tooltip
               v-if="current?.snapshotJson"
-              :icon="RefreshLeft"
-              :loading="rerunning"
-              @click="rerunFromSnapshot(current)"
-            >按当前快照重跑</el-button>
-            <el-button :icon="RefreshRight" type="primary" @click="rerun(current)">再次执行</el-button>
+              content="使用执行时的脚本体+参数；脚本若被改过也会被临时回滚到当时版本"
+              placement="top"
+            >
+              <el-button
+                :icon="RefreshLeft"
+                :loading="rerunning"
+                @click="rerunFromSnapshot(current)"
+              >按当前快照重跑 ({{ snapshotDateLabel }})</el-button>
+            </el-tooltip>
+            <el-tooltip
+              content="使用当前脚本体，但参数仍用本次历史的值"
+              placement="top"
+            >
+              <el-button :icon="RefreshRight" type="primary" @click="rerun(current)">使用当前脚本重跑</el-button>
+            </el-tooltip>
           </div>
         </div>
       </template>
@@ -273,6 +291,9 @@ import { STATUS_CLASS, STATUS_HEADLINE, STATUS_LABEL, STATUS_TAG_TYPE, statusOfH
 import { statusIcon } from '../utils/status'
 import { copyText, downloadText } from '../utils/clipboard'
 import { setSessionItem, KEYS } from '../utils/storage'
+import ScriptDiffPanel from '../components/ScriptDiffPanel.vue'
+import { useHistoryViewState } from '../composables/useHistoryViewState'
+import { getScript } from '../api/scripts'
 
 const router = useRouter()
 const rows = ref([])
@@ -298,6 +319,43 @@ const hasFilters = computed(() =>
 
 const detailOpen = ref(false)
 const current = ref(null)
+// V3 (PR-9): current script schema, fetched when the detail drawer opens.
+// Used by ScriptDiffPanel to compare history params vs. current params.
+const currentScript = ref(null)
+
+// V3 (PR-9): view state preservation across detail-drawer close cycles.
+// We snapshot filters + scrollTop when the drawer closes, then restore
+// them after the list re-fetches.
+const viewState = useHistoryViewState()
+const pendingScrollTop = ref(null)
+let detachScroll = null
+
+function snapshotViewState() {
+  const el = document.querySelector('.sb-card .el-table__body-wrapper')
+  viewState.snapshot({
+    status: status.value,
+    scriptId: scriptId.value,
+    tenantId: tenantId.value,
+    keyword: keyword.value,
+    dateFrom: dateFrom.value,
+    dateTo: dateTo.value,
+    page: 1,
+    pageSize: 200,
+    scrollTop: el ? el.scrollTop || 0 : 0
+  })
+}
+
+function restoreViewState() {
+  const s = viewState.restore()
+  if (!s) return
+  status.value = s.status || ''
+  scriptId.value = s.scriptId ?? null
+  tenantId.value = s.tenantId ?? null
+  keyword.value = s.keyword || ''
+  dateFrom.value = s.dateFrom || ''
+  dateTo.value = s.dateTo || ''
+  pendingScrollTop.value = s.scrollTop || 0
+}
 const stdout = ref('')
 const stderr = ref('')
 const tab = ref('params')
@@ -330,6 +388,15 @@ async function refresh() {
     if (dateFrom.value) params.from = dateFrom.value
     if (dateTo.value) params.to = dateTo.value
     rows.value = (await listHistory(params)) || []
+    // V3 (PR-9): restore scrollTop if a snapshot existed.
+    if (pendingScrollTop.value != null) {
+      const top = pendingScrollTop.value
+      pendingScrollTop.value = null
+      requestAnimationFrame(() => {
+        const el = document.querySelector('.sb-card .el-table__body-wrapper')
+        if (el && top) el.scrollTop = top
+      })
+    }
   } catch (_) {
     // The interceptor surfaced the message; keep the previous rows visible.
   } finally { loading.value = false }
@@ -381,10 +448,26 @@ const snapshotText = computed(() => {
   try { return JSON.stringify(JSON.parse(raw), null, 2) } catch { return raw }
 })
 
+// V3 (PR-9): snapshot date label shown on the rerun button (e.g. "2026-09-10 14:23").
+const snapshotDateLabel = computed(() => {
+  const raw = current.value?.snapshotJson
+  if (!raw) return ''
+  try {
+    const o = typeof raw === 'string' ? JSON.parse(raw) : raw
+    const at = o?.snapshotAt
+    if (!at) return ''
+    const d = new Date(at)
+    if (Number.isNaN(d.getTime())) return ''
+    const pad = (n) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+  } catch { return '' }
+})
+
 async function openDetail(row) {
   if (!row?.id) return
   const id = row.id
   current.value = row
+  currentScript.value = null  // reset; lazy-load below
   stdout.value = ''
   stderr.value = ''
   resultText.value = ''
@@ -394,7 +477,8 @@ async function openDetail(row) {
   tab.value = 'params'
   detailOpen.value = true
   // One round-trip instead of three, and the results are dropped if the user
-  // opened another row while they were in flight.
+  // opened another row while they were in flight. Also kicks off the script
+  // fetch used by the diff panel.
   const [detail, so, se] = await Promise.all([
     getHistory(id).catch(() => null),
     readStdout(id).catch(() => ''),
@@ -404,6 +488,14 @@ async function openDetail(row) {
   if (detail) current.value = detail
   stdout.value = so || ''
   stderr.value = se || ''
+  // Fetch the current script schema for the diff panel (silently).
+  if (current.value?.scriptId) {
+    getScript(current.value.scriptId).then((s) => {
+      if (current.value?.scriptId === id || current.value?.scriptId === s?.id) {
+        currentScript.value = s
+      }
+    }).catch(() => { /* diff panel will show no diff */ })
+  }
 }
 
 async function loadResult(id, force = false) {
@@ -488,6 +580,8 @@ function download(name, text) {
 }
 
 onMounted(() => {
+  // V3 (PR-9): restore filter + scroll position from the previous visit.
+  restoreViewState()
   // Fire the (independent) lookups in parallel: the table no longer waits for
   // the tenant/script dropdown data before its first paint.
   refresh()
@@ -496,6 +590,16 @@ onMounted(() => {
       scripts.value = s || []
       tenants.value = t || []
     })
+})
+
+// V3 (PR-9): snapshot view state every time the drawer closes so the next
+// open of HistoryView can restore filters + scroll. Skip the very first
+// open (when no snapshot existed yet) so cold-start users don't get stale
+// state from a prior session.
+watch(detailOpen, (open, prev) => {
+  if (prev && !open && current.value) {
+    snapshotViewState()
+  }
 })
 
 // V2: lazy-load result.json / artifacts the first time the user clicks the
@@ -522,6 +626,10 @@ watch(tab, (v) => {
 .sb-name-main { font-weight: 500; font-size: 13.5px; }
 
 .sb-drawer-title { font-size: 16px; font-weight: 600; }
+
+/* V3 (PR-9): diff block shown beneath params in the detail drawer. */
+.sb-diff-block { margin-top: 12px; }
+.sb-diff-block .sb-test-section-title { margin: 8px 0; }
 /* History rows are clickable (open detail drawer). Make the affordance
    obvious so users don't miss the interaction. */
 :deep(.el-table .el-table__row) { cursor: pointer; }
