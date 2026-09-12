@@ -209,6 +209,42 @@
             </el-select>
           </div>
 
+          <!-- V3 (PR-3): 4 来源徽章（默认 / 上次 / 方案 / 草稿）+ 撤销 -->
+          <div class="sb-form-section sb-draft-badges">
+            <div class="sb-draft-row">
+              <el-tag
+                v-for="s in sourceBadges"
+                :key="s.id"
+                :type="draft.currentSource === s.id ? 'primary' : 'info'"
+                :effect="draft.currentSource === s.id ? 'dark' : 'plain'"
+                :disabled="!s.available || running"
+                class="sb-draft-badge"
+                @click="onPickSource(s.id)"
+              >
+                {{ s.label }}
+                <span v-if="s.hint" class="sb-draft-hint">{{ s.hint }}</span>
+              </el-tag>
+              <el-button
+                v-if="canUndo"
+                size="small"
+                text
+                :disabled="running"
+                @click="onUndo"
+              >撤销 ({{ undoLeft }}s)</el-button>
+              <el-button
+                v-if="draft.hasDraft() && draft.currentSource !== 'draft'"
+                size="small"
+                text
+                type="warning"
+                @click="onClearDraft"
+              >清除草稿</el-button>
+            </div>
+            <div v-if="draft.currentSource === 'draft'" class="sb-draft-banner">
+              <el-icon><Document /></el-icon>
+              <span>当前显示来自未提交的本地草稿（按来源徽章切换会覆盖）</span>
+            </div>
+          </div>
+
           <div class="sb-form-section">
             <ParamForm
               ref="formRef"
@@ -391,7 +427,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Refresh, Search, VideoPlay, Loading, Close, ArrowRight, ArrowDown, CircleClose,
-  EditPen, RefreshRight, UploadFilled
+  EditPen, RefreshRight, UploadFilled, Document
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { listScripts, getScript, setScriptFavorite } from '../api/scripts'
@@ -404,7 +440,8 @@ import ScriptCard from '../components/ScriptCard.vue'
 import ParamForm from '../components/ParamForm.vue'
 import ExecutionResultPanel from '../components/ExecutionResultPanel.vue'
 import { formatDateTime, formatBytes } from '../utils/format'
-import { getItem, setItem, takeSessionItem, KEYS } from '../utils/storage'
+import { getItem, setItem, takeSessionItem, KEYS, draftKey } from '../utils/storage'
+import { useParamDraft, DRAFT_SRC } from '../composables/useParamDraft'
 import {
   RISK_LEVEL, RISK_LEVEL_LABEL, RISK_LEVEL_TAG_TYPE, normalizeRiskLevel, RISK_CONFIRM_TOKEN,
   labelOf, tagTypeOf
@@ -436,6 +473,17 @@ const cancelling = ref(false)  // V2: true while a cancel request is in-flight
 // 的全局轮询驱动 UI 状态。这样切到别的页面也不会丢进度，回来能直接看到。
 const runningExecutionId = ref(null)
 const exec = useExecutionStore()
+
+// V3 (PR-3): 参数草稿 + 4 个来源徽章切换。
+const draft = useParamDraft({
+  getScriptId: () => activeScript.value?.id,
+  getTenantId: () => tenantId.value,
+  getParams: () => activeParams.value,
+  getPresets: () => presets.value,
+  getPresetId: () => presetId.value,
+  formValues,
+  applyValues: (vals) => { formValues.value = { ...vals } }
+})
 
 async function waitForTerminal(executionId) {
   // 轮询单条直到终态。executionStore.bootstrap 已经启动了全局 tick，
@@ -473,6 +521,58 @@ const batchRowsForTable = ref([])
 const resultHistory = ref(null)
 const resultStdout = ref('')
 const resultStderr = ref('')
+
+// V3 (PR-3): 来源徽章渲染数据 + 撤销倒计时。
+let nowTimer = null
+const sourceBadges = computed(() => [
+  { id: DRAFT_SRC.DEFAULT, label: '默认参数', available: true,
+    hint: (activeParams.value || []).some((p) => p.defaultValue != null) ? '· 有默认值' : '' },
+  { id: DRAFT_SRC.LAST, label: '上次执行', available: draft.hasLast(),
+    hint: draft.hasLast() ? '' : '· 无历史' },
+  { id: DRAFT_SRC.PRESET, label: '指定方案', available: !!presetId.value,
+    hint: presetId.value ? '' : '· 未选' },
+  { id: DRAFT_SRC.DRAFT, label: '未提交草稿', available: draft.hasDraft(),
+    hint: draft.hasDraft() ? '' : '· 无草稿' }
+])
+const canUndo = ref(false)
+const undoLeft = ref(0)
+function onPickSource(id) {
+  if (running.value) return
+  const next = sourceBadges.value.find((s) => s.id === id)
+  if (!next || !next.available) {
+    ElMessage.warning(`来源「${next?.label || id}」当前不可用`)
+    return
+  }
+  draft.applySource(id)
+  canUndo.value = true
+  undoLeft.value = 5
+  if (nowTimer) clearInterval(nowTimer)
+  nowTimer = setInterval(() => {
+    undoLeft.value = Math.max(0, undoLeft.value - 1)
+    if (undoLeft.value === 0) {
+      canUndo.value = false
+      clearInterval(nowTimer)
+      nowTimer = null
+    }
+  }, 1000)
+}
+function onUndo() {
+  if (draft.undo()) {
+    ElMessage.success('已撤销')
+    canUndo.value = false
+    if (nowTimer) { clearInterval(nowTimer); nowTimer = null }
+  } else {
+    ElMessage.info('已超过撤销窗口')
+  }
+}
+function onClearDraft() {
+  draft.clearDraft()
+  ElMessage.success('草稿已清除')
+  // 草稿清除后若当前显示是草稿，回退到默认
+  if (draft.currentSource.value === 'draft') {
+    draft.applySource(DRAFT_SRC.DEFAULT)
+  }
+}
 
 const LAST_TENANT_KEY = KEYS.LAST_TENANT
 const LAST_PARAMS_KEY = KEYS.LAST_PARAMS
@@ -632,6 +732,9 @@ async function openDrawer(s) {
   formValues.value = {}
   tenantId.value = pickInitialTenant(s)
   drawerOpen.value = true
+  // V3 (PR-3): 抽屉打开后按上次的来源徽章自动恢复一次。
+  // 没有草稿 / 没有 last / 没有 preset 时回退默认；不会破坏单 session 内的"先默认值"语义。
+  draft.applySource(draft.currentSource.value || DRAFT_SRC.DEFAULT)
 }
 
 const fileParamNames = computed(() =>
@@ -1017,6 +1120,24 @@ onMounted(async () => {
   font-weight: 500;
   margin-bottom: 6px;
   color: var(--sb-text);
+}
+
+/* V3 (PR-3): 4 来源徽章 + 撤销按钮 */
+.sb-draft-badges { padding: 0; }
+.sb-draft-row {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+}
+.sb-draft-badge { cursor: pointer; }
+.sb-draft-hint { font-size: 11px; opacity: 0.75; margin-left: 4px; }
+.sb-draft-banner {
+  margin-top: 8px;
+  display: flex; gap: 6px; align-items: center;
+  padding: 6px 10px;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #9a3412;
 }
 
 .sb-file-row {
