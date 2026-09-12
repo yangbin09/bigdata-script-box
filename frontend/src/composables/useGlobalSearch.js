@@ -1,10 +1,9 @@
 // composables/useGlobalSearch.js — multi-source fuzzy search for the Cmd+K panel.
 //
 // Source groups:
-//   - scripts        : name / displayName / description (case-insensitive substring)
-//   - quick-actions  : name + target script/tenant
-//   - tenants        : name / authName / description
-//   - active         : currently running executions from executionStore.activeIds
+//   - scripts : name / displayName / description (case-insensitive substring)
+//   - tenants : name / authName / description
+//   - active  : currently running executions from executionStore.activeIds
 //
 // Caching strategy:
 //   First call lazily loads each source via its API; subsequent calls reuse
@@ -14,14 +13,12 @@
 import { ref } from 'vue'
 import { listScripts } from '../api/scripts'
 import { listTenants } from '../api/tenants'
-import { listQuickActions } from '../api/quickActions'
 import { useExecutionStore } from '../stores/executionStore'
 
 const TTL_MS = 60_000
 const cache = {
   scripts: { data: null, at: 0 },
-  tenants: { data: null, at: 0 },
-  quickActions: { data: null, at: 0 }
+  tenants: { data: null, at: 0 }
 }
 
 function fresh(slot) {
@@ -38,12 +35,6 @@ async function ensureTenants() {
   if (fresh(cache.tenants)) return cache.tenants.data
   const data = (await listTenants().catch(() => [])) || []
   cache.tenants = { data, at: Date.now() }
-  return data
-}
-async function ensureQuickActions() {
-  if (fresh(cache.quickActions)) return cache.quickActions.data
-  const data = (await listQuickActions().catch(() => [])) || []
-  cache.quickActions = { data, at: Date.now() }
   return data
 }
 
@@ -91,16 +82,14 @@ export function useGlobalSearch() {
     loading.value = true
     lastError.value = null
     try {
-      const [scripts, tenants, quickActions] = await Promise.all([
+      const [scripts, tenants] = await Promise.all([
         ensureScripts(),
-        ensureTenants(),
-        ensureQuickActions()
+        ensureTenants()
       ])
       const n = norm(query.value)
       return {
         scripts: search(scripts, n, ['name', 'displayName', 'description']),
         tenants: search(tenants, n, ['name', 'authName', 'description']),
-        quickActions: search(quickActions, n, ['name']),
         active: (() => {
           const ids = exec.activeIds || []
           const list = ids.map((id) => exec.byId.get(Number(id))).filter(Boolean)
@@ -113,7 +102,7 @@ export function useGlobalSearch() {
       }
     } catch (e) {
       lastError.value = e?.message || '搜索失败'
-      return { scripts: [], tenants: [], quickActions: [], active: [] }
+      return { scripts: [], tenants: [], active: [] }
     } finally {
       loading.value = false
     }
@@ -122,7 +111,6 @@ export function useGlobalSearch() {
   function invalidate() {
     cache.scripts = { data: null, at: 0 }
     cache.tenants = { data: null, at: 0 }
-    cache.quickActions = { data: null, at: 0 }
   }
 
   return { query, loading, lastError, run, invalidate }

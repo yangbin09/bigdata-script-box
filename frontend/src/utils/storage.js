@@ -9,22 +9,7 @@ export const KEYS = {
   LAST_TENANT: 'sb.lastTenantId',
   LAST_PARAMS: 'sb.lastParams',
   RERUN: 'sb.rerun',
-  RERUN_RESULT: 'sb.rerunResult',
-  SETTINGS_TAB: 'sb.settingsTab',
-  // V3 (PR-0): 表单草稿 / 文件失效 / 任务中心 / 快捷操作
-  DRAFT_PREFIX: 'sb.draft.',          // sb.draft.<scriptId>.<tenantId> -> { values, savedAt, dirty }
-  FAILED_UPLOADS: 'sb.failedUploads', // 失效文件 token 列表
-  TASK_CENTER_OPEN: 'sb.taskCenterOpen',
-  QUICK_ACTION_ORDER: 'sb.quickActionOrder',
-  RECENT_ACCESS: 'sb.recentAccess'    // 全局查找的"最近访问"
-}
-
-/**
- * V3 (PR-0): 草稿 key 由 scriptId+tenantId 拼接 —— 严格按维度隔离，
- * 满足"切换租户不套另一租户草稿"的验收。
- */
-export function draftKey(scriptId, tenantId) {
-  return `${KEYS.DRAFT_PREFIX}${scriptId}.${tenantId || 'none'}`
+  SETTINGS_TAB: 'sb.settingsTab'
 }
 
 function probe(store) {

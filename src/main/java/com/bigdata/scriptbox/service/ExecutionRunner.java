@@ -156,12 +156,37 @@ public class ExecutionRunner {
 
     /**
      * worker 异常时尝试把一行 FAILED 写进 history，方便前端任务中心显示
-     * "执行失败：xxx" 而非永远 PENDING。
+     * "执行失败：xxx" 而非永远 PENDING / RUNNING。
+     *
+     * <p><b>为什么不是无脑 insert</b>：{@code ScriptExecutor} 在真正启动进程前就已经
+     * 用同一个 executionId 写入了 RUNNING 行（captureSnapshot）。如果 worker 是在
+     * "进程还没起来"的阶段失败的（典型：同居并发被 {@code ExecutionGate} 拒绝），
+     * 那一行已经存在 —— 直接 insert 会撞主键，异常被吞掉，于是这条执行**永远停在
+     * RUNNING**，前端只能靠 11 分钟后超时才收场。
+     *
+     * <p>所以这里按"存在就更新、不存在才插入"处理，并且失败时降级为一条最小更新，
+     * 保证状态一定能落成终态。
      */
     private void writeFailedHistory(ExecutionRequest req, Throwable t) {
+        Long id = req.getExecutionId();
+        String reason = "runner_exception: " + t.getClass().getSimpleName()
+                + ": " + t.getMessage();
         try {
+            ExecutionHistory existing = id == null ? null : historyMapper.selectById(id);
+            if (existing != null) {
+                // 行已由 captureSnapshot 写入（RUNNING）→ 只补终态字段
+                existing.setStatus(ExecutionStatus.FAILED.name());
+                existing.setSuccess(false);
+                existing.setTimeout(false);
+                existing.setExitCode(-1);
+                existing.setEndTime(java.time.LocalDateTime.now());
+                if (existing.getDurationMs() == null) existing.setDurationMs(0L);
+                existing.setInterruptedReason(reason);
+                historyMapper.updateById(existing);
+                return;
+            }
             ExecutionHistory h = new ExecutionHistory();
-            h.setId(req.getExecutionId());
+            h.setId(id);
             h.setScriptId(req.getScriptId());
             h.setTenantId(req.getTenantId());
             h.setParametersJson("{}");
@@ -173,14 +198,26 @@ public class ExecutionRunner {
             h.setEndTime(java.time.LocalDateTime.now());
             h.setDurationMs(0L);
             // 把失败原因写到 interruptedReason —— entity 暂时没有 summary 字段。
-            h.setInterruptedReason("runner_exception: " + t.getClass().getSimpleName()
-                    + ": " + t.getMessage());
+            h.setInterruptedReason(reason);
             // 没有 stdout / executionDir 等路径 —— 历史详情页需要兜底。
             historyMapper.insert(h);
-        } catch (Exception insertEx) {
-            // 真没救了：DB 写不进去也不抛（worker 不能死）
-            log.error("ExecutionRunner: FAILED 兜底行也写不进 DB executionId={}",
-                    req.getExecutionId(), insertEx);
+        } catch (Exception ex) {
+            // 兜底：哪怕上面的分支炸了，也要尽量把状态推进到终态（不能留在 RUNNING）
+            log.error("ExecutionRunner: FAILED 兜底行写入失败 executionId={}", id, ex);
+            try {
+                if (id != null) {
+                    ExecutionHistory h = historyMapper.selectById(id);
+                    if (h != null) {
+                        h.setStatus(ExecutionStatus.FAILED.name());
+                        h.setSuccess(false);
+                        h.setEndTime(java.time.LocalDateTime.now());
+                        h.setInterruptedReason(reason);
+                        historyMapper.updateById(h);
+                    }
+                }
+            } catch (Exception ignored) {
+                // 真没救了：worker 不能死
+            }
         }
     }
 

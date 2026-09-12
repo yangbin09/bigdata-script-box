@@ -171,7 +171,18 @@ public class ExecutionController {
                                           @RequestParam(defaultValue = "stdout") String stream,
                                           @RequestParam(defaultValue = "65536") int bytes) {
         ExecutionHistory h = executor.history(id);
-        if (h == null) return ResponseEntity.notFound().build();
+        // 竞态：POST /executions 早返 executionId 后，history 行要等执行线程
+        // 走到 captureSnapshot 才写入。前端在拿到 id 的瞬间就会拉一次实时日志，
+        // 此时行还不存在 —— 这属于「还没有日志」，不是「执行不存在」。
+        // 不区分就会返回 404，在浏览器里表现为一条无意义的控制台报错
+        // （2s 后的下一次轮询自愈，但噪音会污染回归点检）。
+        if (h == null) {
+            ExecutionGate.Permit live = executionGate.get(id);
+            if (live != null && !live.finished()) {
+                return ResponseEntity.ok(new byte[0]);
+            }
+            return ResponseEntity.notFound().build();
+        }
         String path = "stderr".equalsIgnoreCase(stream) ? h.getStderrPath() : h.getStdoutPath();
         if (path == null || path.isBlank()) return ResponseEntity.ok(new byte[0]);
         try {

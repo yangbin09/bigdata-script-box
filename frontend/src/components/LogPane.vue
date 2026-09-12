@@ -18,7 +18,7 @@
 -->
 <template>
   <div class="sb-logpane">
-    <div class="sb-logpane-toolbar">
+    <div v-if="!error" class="sb-logpane-toolbar">
       <el-input
         v-model="search"
         placeholder="搜索 (字符串或正则)"
@@ -43,7 +43,7 @@
       <span>{{ regexError }}</span>
     </div>
 
-    <div class="sb-logpane-chips">
+    <div v-if="!error" class="sb-logpane-chips">
       <span class="sb-logpane-chips-label">快速过滤:</span>
       <el-check-tag
         v-for="c in QUICK_CHIPS"
@@ -63,12 +63,16 @@
     </div>
 
     <div class="sb-logpane-actions">
-      <el-button size="small" :icon="DocumentCopy" @click="$emit('copy', visibleText)">复制可见</el-button>
-      <el-button size="small" :icon="Download" @click="$emit('download', streamName, visibleText)">下载</el-button>
-      <el-button size="small" text :icon="CopyDocument" @click="copyRaw">复制原始</el-button>
+      <template v-if="!error">
+        <el-button size="small" :icon="DocumentCopy" @click="$emit('copy', visibleText)">复制可见</el-button>
+        <el-button size="small" :icon="Download" @click="$emit('download', streamName, visibleText)">下载</el-button>
+        <el-button size="small" text :icon="CopyDocument" @click="copyRaw">复制原始</el-button>
+      </template>
+      <el-button v-else size="small" :icon="RefreshLeft" @click="$emit('retry')">重新读取 {{ streamName }}</el-button>
     </div>
 
-    <pre v-if="!text" class="sb-logpane-pre sb-logpane-empty">无 {{ streamName }} 输出</pre>
+    <pre v-if="error" class="sb-logpane-pre sb-logpane-error">读取 {{ streamName }} 失败：{{ error }}</pre>
+    <pre v-else-if="!text" class="sb-logpane-pre sb-logpane-empty">无 {{ streamName }} 输出</pre>
     <pre
       v-else-if="!visibleText"
       class="sb-logpane-pre sb-logpane-empty"
@@ -87,12 +91,14 @@ import { copyText } from '../utils/clipboard'
 const props = defineProps({
   text: { type: String, default: '' },
   streamName: { type: String, required: true }, // 'stdout' | 'stderr'
+  // 读取失败的原因。非空时优先渲染错误，绝不退化成「无 stdout 输出」。
+  error: { type: String, default: '' },
   // Identifies the run being viewed: when the parent swaps to another
   // execution the filters reset, so a stale search can't hide the new log.
   executionId: { type: [Number, String], default: null }
 })
 
-defineEmits(['copy', 'download'])
+defineEmits(['copy', 'download', 'retry'])
 
 // Quick-filter chips. The token is matched case-insensitively against each
 // log line; the label is shown in the UI.
@@ -308,6 +314,13 @@ function copyRaw() {
   margin: 0;
 }
 .sb-logpane-empty { color: var(--el-text-color-secondary); font-style: italic; }
+/* 读取失败：明确报警，不能伪装成「无输出」 */
+.sb-logpane-error {
+  color: var(--el-color-danger);
+  background: #fef2f2;
+  border-color: #fecaca;
+  font-style: normal;
+}
 /* Highlighted log: matches are wrapped in <mark>. */
 .sb-logpane-highlighted :deep(mark) {
   background: #ffe58f;

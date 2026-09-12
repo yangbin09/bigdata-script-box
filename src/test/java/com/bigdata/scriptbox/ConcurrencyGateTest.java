@@ -8,8 +8,10 @@ import com.bigdata.scriptbox.entity.Script;
 import com.bigdata.scriptbox.entity.Tenant;
 import com.bigdata.scriptbox.exception.BusinessException;
 import com.bigdata.scriptbox.executor.ScriptExecutor;
+import com.bigdata.scriptbox.mapper.ExecutionHistoryMapper;
 import com.bigdata.scriptbox.mapper.ScriptMapper;
 import com.bigdata.scriptbox.service.ExecutionGate;
+import com.bigdata.scriptbox.service.ExecutionRunner;
 import com.bigdata.scriptbox.service.ScriptService;
 import com.bigdata.scriptbox.service.TenantService;
 import org.junit.jupiter.api.Test;
@@ -31,6 +33,8 @@ class ConcurrencyGateTest extends BaseIntegrationTest {
     @Autowired private ScriptMapper scriptMapper;
     @Autowired private ExecutionGate executionGate;
     @Autowired private ScriptBoxProperties props;
+    @Autowired private ExecutionRunner executionRunner;
+    @Autowired private ExecutionHistoryMapper historyMapper;
 
     private static final String SLEEP_BODY =
             "#!/bin/bash\n" +
@@ -264,6 +268,115 @@ class ConcurrencyGateTest extends BaseIntegrationTest {
     /** Number of available slots, straight from the gate's own accounting. */
     private int availableSlots() {
         return executionGate.availableSlots();
+    }
+
+    /**
+     * 异步路径下「准入被拒」必须把已存在的 RUNNING 行推进到终态，而不是留在 RUNNING。
+     *
+     * <p>回归背景：{@code ExecutionRunner.submit()} 先分配 executionId 并立刻返回，
+     * 真正的 {@code ExecutionGate} 准入发生在 worker 线程里。当一个执行快结束时
+     * 用户又点了一次执行，会出现这个组合：
+     * <ol>
+     *   <li>新的 executionId 已经被 {@code captureSnapshot} 写成了 RUNNING 行；</li>
+     *   <li>worker 稍后在准入阶段被拒（另一个执行还占着槽位）；</li>
+     *   <li>兜底逻辑用同一个 id 再 insert 一次 → 撞主键、异常被吞 → 这一行
+     *       <b>永远停在 RUNNING</b>，任务中心一直转圈，只能等 11 分钟超时收场。</li>
+     * </ol>
+     *
+     * <p>要确定性地构造这个状态，必须知道 worker 会用的那个 ID。{@code submit()} 会
+     * 覆盖调用方传入的 executionId（用内部 asyncCounter 重新分配），所以这里通过
+     * 反射把计数器钉到一个已知值，从而能提前把 RUNNING 行插进去。
+     */
+    @Test
+    void asyncRejectedDuplicateDoesNotLeaveRowRunning() throws Exception {
+        Long sid = seedScript("async-dup", SLEEP_BODY, false);
+        Long tid = seedTenant();
+
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        // 捕获 ExecutionRunner 的 ERROR 日志：撞主键后的降级路径会打 ERROR，
+        // 正常路径（先查再写）不会。用它区分"判断正确"与"碰巧被兜住"。
+        java.util.List<String> mapperErrors = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        ch.qos.logback.classic.Logger runnerLogger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory
+                        .getLogger(com.bigdata.scriptbox.service.ExecutionRunner.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        runnerLogger.addAppender(appender);
+        try {
+            // 先占住槽位：一个正在跑的 sleep 执行
+            Future<ExecutionHistory> holder = pool.submit(() -> executor.execute(request(sid, tid)));
+            waitForScript(sid, 10_000);
+
+            // 把 asyncCounter 钉到已知值 → 下一次 submit 必然得到 pinned
+            long pinned = 700_000_002L;
+            java.lang.reflect.Field counterField =
+                    com.bigdata.scriptbox.service.ExecutionRunner.class
+                            .getDeclaredField("asyncCounter");
+            counterField.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            java.util.concurrent.atomic.AtomicLong counter =
+                    (java.util.concurrent.atomic.AtomicLong) counterField.get(executionRunner);
+            long originalCounter = counter.get();
+            counter.set(pinned - 1);
+
+            // 构造步骤 1：captureSnapshot 会写的 RUNNING 行提前放好
+            ExecutionHistory pre = new ExecutionHistory();
+            pre.setId(pinned);
+            pre.setScriptId(sid);
+            pre.setTenantId(tid);
+            pre.setParametersJson("{}");
+            pre.setStatus("RUNNING");
+            pre.setSuccess(false);
+            pre.setTimeout(false);
+            pre.setStartTime(java.time.LocalDateTime.now());
+            pre.setDurationMs(0L);
+            historyMapper.insert(pre);
+            assertEquals("RUNNING", historyMapper.selectById(pinned).getStatus(), "前置条件");
+
+            try {
+                // 步骤 2 + 3：同脚本二次执行 → 准入被拒 → 走 writeFailedHistory
+                executionRunner.submit(request(sid, tid));
+            } finally {
+                counter.set(originalCounter);
+            }
+
+            // 不变式：那一行必须进入终态，且不能被当成成功
+            long deadline = System.currentTimeMillis() + 15_000;
+            ExecutionHistory after = null;
+            while (System.currentTimeMillis() < deadline) {
+                after = historyMapper.selectById(pinned);
+                if (after != null && !"RUNNING".equals(after.getStatus())
+                        && !"PENDING".equals(after.getStatus())) {
+                    break;
+                }
+                Thread.sleep(100);
+            }
+            assertNotNull(after);
+            for (ch.qos.logback.classic.spi.ILoggingEvent e : appender.list) {
+                // 只看"写库失败"这一类告警；"任务异常"本身是这条用例的预期现象
+                if (e.getLevel() == ch.qos.logback.classic.Level.ERROR
+                        && e.getFormattedMessage().contains("写")) {
+                    mapperErrors.add(e.getFormattedMessage());
+                }
+            }
+            assertNotEquals("RUNNING", after.getStatus(),
+                    "被拒的执行不能永远停在 RUNNING（这正是任务中心一直转圈的原因）");
+            assertFalse(Boolean.TRUE.equals(after.getSuccess()), "被拒的执行不应显示为成功");
+            assertNotNull(after.getInterruptedReason(), "应记录被拒原因，便于排查");
+            // 关键：必须走"存在则更新"的正常分支，而不是撞主键后再降级。
+            // 降级虽然也能把状态推进到终态，但它意味着我们对"行已存在"这件事
+            // 没有判断，只是碰巧被 catch 兜住了 —— 那正是原始 bug 的形态。
+            assertTrue(mapperErrors.isEmpty(),
+                    "不该出现写库失败告警（说明撞了主键走了降级路径）：" + mapperErrors);
+
+            ExecutionGate.Permit live = waitForScript(sid, 15_000);
+            executionGate.cancel(live.executionId());
+            holder.get(20, TimeUnit.SECONDS);
+        } finally {
+            runnerLogger.detachAppender(appender);
+            pool.shutdownNow();
+        }
     }
 
     /** Cheap helper: round-trip many sequential executions and assert no

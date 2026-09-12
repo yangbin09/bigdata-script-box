@@ -123,6 +123,10 @@ utils/       无副作用的纯函数与薄封装：format / labels / status / p
 | 26 | `CleanupPreviewDrawer.vue` | 只统计 `skippedRunning`，忽略 `skippedSymlink`/`skippedEscape` → 只有跳过期时显示「没有任何内容需要清理」 | 合并三类跳过计数参与空态判断 |
 | 27 | `style.css` | `--sb-text-1` / `--sb-text-muted` / `--sb-bg-soft` 被 8 个组件引用但从未定义 → 声明在计算值阶段失效，弱化文字静默继承主色，卡片底色透明 | 在 `:root` 补齐三个 token |
 | 28 | `utils/format.js` | `formatTimestamp` 对数字走 `toISOString()`（UTC），对字符串按本地时钟输出 → 同一时刻两种显示；缺位不补零 | 统一按本地时区格式化并补零 |
+| 29 | `ExecuteView.vue` | 执行完成后抽屉永远停在「日志 / 结果 提交后会在这里实时显示日志」占位符：终态等待依赖 executionStore，而 store 在「1ms 就结束」的脚本上会先把 id 从 `activeIds` 摘掉，`/state` 从未被轮询，`waitForTerminal` 的订阅永远等不到终态 → 结果面板与日志都不渲染（后端 stdout/stderr 磁盘上其实**有内容**） | 抽出 `ScriptExecutionDrawer.vue`，直接轮询 `GET /executions/{id}/state`，终态后重新拉 `GET /history/{id}` 完整行 + `/stdout` + `/stderr` |
+| 30 | `ExecuteView.vue` | 终态后把 executionStore 的**视图**（只有 `{id,scriptId,tenantId,status,startedAtMs,exitCode}`）当执行详情用，还多解了一层 `.data`（`executionState()` 已由 http.js 解包）→ 结果面板拿不到 `durationMs`/`parametersJson`/`scriptName` | 详情一律走 `GET /history/{id}`，日志一律走 `/stdout` `/stderr`，两者都不再由 store 视图代劳 |
+| 31 | `HistoryView.vue` / `LogPane.vue` | 读日志失败被 `catch(() => '')` 吞掉，UI 把它渲染成「无 stdout 输出」——真实故障伪装成正常空日志 | stdout/stderr 读取失败单独记录原因：`LogPane` 显示「读取 stdout 失败：…」+「重新读取」，`*Error` 非空时不再显示空态文案 |
+| 32 | `ScriptsView.vue` | 点击「执行」`router.push({name:'execute', query:{script}})`，而 `ExecuteView` 从来不读该 query → 跳到执行中心后抽屉不开，用户得重新找脚本 | 当前页直接打开共用的 `ScriptExecutionDrawer`，自动带出该脚本的参数 / Preset / 默认租户 |
 
 ## 四、结构性重构（消除重复实现）
 
@@ -130,6 +134,7 @@ utils/       无副作用的纯函数与薄封装：format / labels / status / p
 
 | 新模块 | 内容 | 替换掉的重复实现 |
 | --- | --- | --- |
+| `components/ScriptExecutionDrawer.vue` | 「打开脚本 → 填参数 → 执行 → 原地看实时日志与结果」的完整交互 | `ExecuteView` 内嵌的执行抽屉；`ScriptsView` 的「执行」按钮不再跳页重找脚本 |
 | `utils/params.js` | `parseOptions` / `serializeOptions` / `parseVisibilityRule` / `evaluateRule` / `visibilityMap` | `ParamForm.vue` 与 `ScriptEditView.vue` 各一份 options 解析；两份**互相矛盾**的 `visibleWhenJson` 校验（编辑器拒绝引用未声明参数，运行时却接受） |
 | `utils/clipboard.js` | `copyText` / `downloadText` | `HistoryView` / `ExecutionResultPanel` / `LogPane` 三份剪贴板+Blob 下载（顺带修掉 `click()` 后立刻 `revokeObjectURL` 的时序问题，并补上 http 环境下 `execCommand` 兜底） |
 | `utils/status.js` | `statusIcon(status)` | `HistoryView` 与 `ExecutionResultPanel` 逐字重复的 icon switch（两者都把 CANCELLED/RUNNING 落到 success 默认值 → 已取消显示绿勾） |

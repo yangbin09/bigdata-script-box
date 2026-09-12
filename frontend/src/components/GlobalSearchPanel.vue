@@ -100,30 +100,6 @@
         </ul>
       </section>
 
-      <!-- 快捷操作 -->
-      <section v-if="results.quickActions.length" class="sb-search-group">
-        <div class="sb-group-head">
-          <el-icon><Star /></el-icon>
-          <span>快捷操作 ({{ results.quickActions.length }})</span>
-        </div>
-        <ul class="sb-search-list">
-          <li
-            v-for="(qa, idx) in results.quickActions"
-            :key="`q-${qa.id}`"
-            class="sb-search-item"
-            :class="{ active: selIndex === itemIndex('quickActions', idx) }"
-            @mouseenter="selIndex = itemIndex('quickActions', idx)"
-            @click="select('quickActions', idx, qa)"
-          >
-            <el-icon class="sb-item-icon"><Star /></el-icon>
-            <div class="sb-item-main">
-              <div class="sb-item-title">{{ qa.name }}</div>
-              <div class="sb-item-sub">script #{{ qa.scriptId }} · tenant #{{ qa.tenantId }}</div>
-            </div>
-          </li>
-        </ul>
-      </section>
-
       <!-- 租户 -->
       <section v-if="results.tenants.length" class="sb-search-group">
         <div class="sb-group-head">
@@ -214,20 +190,18 @@ const open = computed({
   set: (v) => { if (!v) ui.closeGlobalSearch() }
 })
 const inputRef = ref(null)
-const results = ref({ scripts: [], tenants: [], quickActions: [], active: [] })
+const results = ref({ scripts: [], tenants: [], active: [] })
 const selIndex = ref(0)
 
 // groups are rendered in this order; we count per-group prefix
 // to flatten the keyboard-selection across all groups.
-const GROUP_OFFSETS = { active: 0, scripts: 0, quickActions: 0, tenants: 0 }
+const GROUP_OFFSETS = { active: 0, scripts: 0, tenants: 0 }
 function recomputeOffsets() {
   let off = 0
   GROUP_OFFSETS.active = off
   off += results.value.active.length
   GROUP_OFFSETS.scripts = off
   off += results.value.scripts.length
-  GROUP_OFFSETS.quickActions = off
-  off += results.value.quickActions.length
   GROUP_OFFSETS.tenants = off
 }
 function itemIndex(group, idx) {
@@ -236,7 +210,6 @@ function itemIndex(group, idx) {
 function totalCount() {
   return results.value.active.length
     + results.value.scripts.length
-    + results.value.quickActions.length
     + results.value.tenants.length
 }
 
@@ -258,9 +231,6 @@ function findAt(idx) {
   const s = results.value.scripts.length
   if (idx < off + s) return { kind: 'scripts', item: results.value.scripts[idx - off] }
   off += s
-  const q = results.value.quickActions.length
-  if (idx < off + q) return { kind: 'quickActions', item: results.value.quickActions[idx - off] }
-  off += q
   const t = results.value.tenants.length
   if (idx < off + t) return { kind: 'tenants', item: results.value.tenants[idx - off] }
   return null
@@ -275,15 +245,11 @@ function select(group, idx, item) {
   } else if (group === 'scripts') {
     recent.touch({ kind: 'script', id: item.id, title: item.displayName || item.name, subtitle: item.description || item.name })
     ui.closeGlobalSearch()
-    router.push({ path: '/scripts' })
-  } else if (group === 'quickActions') {
-    recent.touch({ kind: 'quick-action', id: item.id, title: item.name, subtitle: `script #${item.scriptId} · tenant #${item.tenantId}` })
-    ui.closeGlobalSearch()
-    router.push({ path: '/', query: { quickAction: String(item.id) } })
+    router.push({ path: '/' })
   } else if (group === 'tenants') {
     recent.touch({ kind: 'tenant', id: item.id, title: item.name, subtitle: item.authName || '' })
     ui.closeGlobalSearch()
-    router.push({ path: '/tenants', query: { tenant: String(item.id) } })
+    router.push({ path: '/settings', query: { tab: 'tenants', tenant: String(item.id) } })
   }
 }
 
@@ -303,10 +269,9 @@ function onMetaEnter() {
 }
 function selectRecent(it) {
   if (!it) return
-  if (it.kind === 'script') router.push({ path: '/scripts' })
-  else if (it.kind === 'tenant') router.push({ path: '/tenants', query: { tenant: String(it.id) } })
+  if (it.kind === 'script') router.push({ path: '/' })
+  else if (it.kind === 'tenant') router.push({ path: '/settings', query: { tab: 'tenants', tenant: String(it.id) } })
   else if (it.kind === 'active') router.push({ path: '/history', query: { id: String(it.id) } })
-  else if (it.kind === 'quick-action') router.push({ path: '/', query: { quickAction: String(it.id) } })
   ui.closeGlobalSearch()
 }
 
@@ -314,14 +279,13 @@ function iconForKind(k) {
   if (k === 'script') return Document
   if (k === 'tenant') return User
   if (k === 'active') return VideoPlay
-  if (k === 'quick-action') return Star
   return Document
 }
 function kindLabel(k) {
   if (k === 'script') return '脚本'
   if (k === 'tenant') return '租户'
   if (k === 'active') return '正在运行'
-  if (k === 'quick-action') return '快捷操作'
+  if (k === 'active') return '执行中'
   return k
 }
 

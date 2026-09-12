@@ -101,19 +101,23 @@
       <el-tab-pane label="stdout" name="stdout">
         <LogPane
           :text="logStdout"
+          :error="logStdoutError"
           stream-name="stdout"
           :execution-id="history.id"
           @copy="copy"
           @download="download"
+          @retry="$emit('retry-logs')"
         />
       </el-tab-pane>
       <el-tab-pane label="stderr" name="stderr">
         <LogPane
           :text="logStderr"
+          :error="logStderrError"
           stream-name="stderr"
           :execution-id="history.id"
           @copy="copy"
           @download="download"
+          @retry="$emit('retry-logs')"
         />
       </el-tab-pane>
       <el-tab-pane label="参数" name="params">
@@ -177,7 +181,10 @@ const router = useRouter()
 const props = defineProps({
   history: { type: Object, required: true },
   logStdout: { type: String, default: '' },
-  logStderr: { type: String, default: '' }
+  logStderr: { type: String, default: '' },
+  // 读取失败原因（非空时 stdout/stderr 面板显式报错，而不是显示「无输出」）
+  logStdoutError: { type: String, default: '' },
+  logStderrError: { type: String, default: '' }
 })
 
 const activeTab = ref('result')
@@ -380,7 +387,7 @@ const failureActions = computed(() => {
   return acts
 })
 function emitWith(name) { emit(name) }
-const emit = defineEmits(['rerun', 'edit', 'view-history'])
+const emit = defineEmits(['rerun', 'edit', 'view-history', 'retry-logs'])
 </script>
 
 <style scoped>

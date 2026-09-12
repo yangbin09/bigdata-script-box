@@ -10,6 +10,7 @@
 | `README.md`（本文） | 产品定位、技术栈、构建与运行、目录结构、页面与 REST 一览、验收清单 |
 | `BACKEND.md` | 后端设计说明：分层与包结构、执行引擎、可靠性/清理、安全边界、配置项、已知问题 |
 | `FRONTEND.md` | 前端设计说明：架构与约定（API 契约、动态参数模型、易踩坑清单）+ 优化记录与验证 |
+| `SIMPLIFICATION.md` | 复杂度收敛方案：现状基线、优化清单、预期收益、如何降低复杂度（概念预算 / 单一入口 / 删除优先） |
 
 ## 核心理念
 
@@ -177,7 +178,7 @@ bigdata-script-box/
 | Hash 路径 | 功能 |
 | --- | --- |
 | `#/` | **执行中心**：按 category 分组卡片，点击打开 Drawer 渲染动态参数表单，执行后显示状态卡 + 结果/stdout/stderr/参数/产物 Tabs |
-| `#/scripts` | **脚本管理**：Element Plus Table 列出所有脚本，新增 Drawer 上传 .sh，行内启停 / 收藏 / 复制 / 导入导出 / 编辑 / 删除 |
+| `#/scripts` | **脚本管理**：Element Plus Table 列出所有脚本，新增 Drawer 上传 .sh，行内启停 / 收藏 / 复制 / 导入导出 / 编辑 / 删除；**点击「执行」在当前页直接打开执行 Drawer**（与执行中心共用 `ScriptExecutionDrawer.vue`），执行完原地展示结果与日志，不跳页 |
 | `#/scripts/edit?id=N` | **脚本编辑**：基本信息 + 脚本正文 + 动态参数（增删、类型、必填、默认值、选项、显示条件），含语法检查、执行前检查、参数方案、版本回滚 |
 | `#/tenants` | **租户管理**：Element Plus Table，新增/编辑 Drawer，keytab 上传，测试租户（Mock 模式返回模拟 kinit 输出） |
 | `#/scenarios` | **场景**：多脚本顺序编排（每步可选参数方案 / 失败继续），一键按租户执行并查看分步结果 |
@@ -287,7 +288,7 @@ scriptbox:
 5. 7 个页面（执行中心 / 脚本 / 脚本编辑 / 租户 / 场景 / 历史 / 设置）渲染正常 ✅
 6. 执行中心按 category 分类卡片，点击 Drawer 打开动态表单 ✅
 7. 5 个 mock 脚本端到端执行（success / failed / timeout / stderr-mix / large-output）✅
-8. stdout / stderr 正常保存并展示 ✅
+8. stdout / stderr 正常保存并展示（真实为空显示「无 stdout 输出 / 无 stderr 输出」，读取失败显示「读取 xx 失败」+ 重试）✅
 9. execution_history 正常记录 ✅
 10. H2 重启后数据存在 ✅（`./data/db/scriptbox.mv.db`）
 11. 文档完整：`README.md`（本文）+ `BACKEND.md` + `FRONTEND.md` ✅

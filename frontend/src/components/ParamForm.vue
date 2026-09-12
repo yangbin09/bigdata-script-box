@@ -24,6 +24,7 @@
   >
     <el-form-item
       v-for="p in visibleParams"
+      v-show="!isCollapsed(p)"
       :key="p.name"
       :label="paramLabel(p)"
       :prop="p.name"
@@ -88,11 +89,25 @@
       <el-icon><InfoFilled /></el-icon>
       此脚本当前没有可见参数，点击「执行」直接运行。
     </div>
+
+    <!--
+      「只显示要填的」：有默认值、且当前值就等于默认值的参数默认折叠。
+      折叠的行用 v-show 而不是 v-if 留在 DOM 里 —— 否则默认值不会被
+      update:modelValue 带出来，脚本会收到不完整的参数。
+    -->
+    <div v-if="collapsible && collapsedNames.length" class="sb-param-collapsed">
+      <el-button link type="primary" size="small" @click="showAll = !showAll">
+        <el-icon><component :is="showAll ? ArrowDown : ArrowRight" /></el-icon>
+        {{ showAll ? '收起' : `修改其他 ${collapsedNames.length} 个参数` }}
+      </el-button>
+      <span class="sb-param-collapsed-hint">{{ collapsedSummary }}</span>
+    </div>
   </el-form>
 </template>
 
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
+import { ArrowDown, ArrowRight } from '@element-plus/icons-vue'
 import { parseOptions, visibilityMap } from '../utils/params'
 import { PARAM_TYPE } from '../utils/labels'
 
@@ -100,13 +115,19 @@ const props = defineProps({
   params: { type: Array, required: true },
   modelValue: { type: Object, required: true },
   // Optional overrides applied during seed (e.g. last-used params from localStorage).
-  initialValues: { type: Object, default: () => ({}) }
+  initialValues: { type: Object, default: () => ({}) },
+  /**
+   * 只显示「要填的」参数：有默认值、且当前值等于默认值的参数默认折叠。
+   * 必填、无默认值、以及被改过的参数始终显示。
+   */
+  collapsible: { type: Boolean, default: false }
 })
 
 const emit = defineEmits(['update:modelValue'])
 
 const formRef = ref(null)
 const form = reactive({})
+const showAll = ref(false)
 
 const orderedParams = computed(() =>
   [...(props.params || [])].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
@@ -151,6 +172,22 @@ function rebuild() {
     if (!p.name) continue
     form[p.name] = coerce(p, seedValue(p))
   }
+  // 播种后立刻回传一次：如果只依赖下面那个 watch(form)，父组件在
+  // "打开抽屉后自动执行"这类场景里会在播出尚未抵达前就提交，
+  // 结果脚本收到的是空参数。
+  publish()
+}
+
+/** 把当前表单翻译成父组件要的纯字符串 Map（隐藏参数不发布）。 */
+function publish() {
+  const out = {}
+  const hidden = hiddenNameSet.value
+  for (const [k, val] of Object.entries(form)) {
+    if (hidden.has(k)) continue
+    if (val === undefined || val === null) { out[k] = ''; continue }
+    out[k] = String(val)
+  }
+  emit('update:modelValue', out)
 }
 
 // Reseed on a real change of the param set or of the seed overrides. Both
@@ -158,30 +195,15 @@ function rebuild() {
 // routinely pass a freshly-built object/array on every render, and an identity
 // watcher would rebuild the form (wiping what the user typed) each time the
 // parent re-rendered. Deep watchers on the props had the same effect.
+//
+// 注意：这两个 watcher 必须放在 hiddenNameSet / visibility 之后 ——
+// rebuild → publish 会读 hiddenNameSet.value，而 { immediate: true } 在 setup
+// 期间同步执行，声明顺序不对就会撞上 TDZ（"Cannot access before initialization"）。
 const initialSignature = computed(() => JSON.stringify(props.initialValues || {}))
-
-watch([paramsSignature, initialSignature], rebuild, { immediate: true })
-
-// Mirror local form back to parent as plain string map. Hidden params are
-// excluded: we never publish a value the user couldn't see.
-watch(form, (v) => {
-  const out = {}
-  const hidden = hiddenNameSet.value
-  for (const [k, val] of Object.entries(v)) {
-    if (hidden.has(k)) continue
-    if (val === undefined || val === null) { out[k] = ''; continue }
-    out[k] = String(val)
-  }
-  emit('update:modelValue', out)
-}, { deep: true })
 
 // V2: conditional visibility, evaluated once per value change and reused by the
 // template, the emitter and resetToDefaults().
 const visibility = computed(() => visibilityMap(formParams.value, form, null))
-
-const visibleParams = computed(() =>
-  formParams.value.filter((p) => visibility.value.get(p.name)?.visible !== false)
-)
 
 const hiddenNameSet = computed(() => {
   const s = new Set()
@@ -190,6 +212,42 @@ const hiddenNameSet = computed(() => {
   }
   return s
 })
+
+watch([paramsSignature, initialSignature], rebuild, { immediate: true })
+
+// Mirror local form back to parent as plain string map. Hidden params are
+// excluded: we never publish a value the user couldn't see.
+watch(form, publish, { deep: true })
+
+const visibleParams = computed(() =>
+  formParams.value.filter((p) => visibility.value.get(p.name)?.visible !== false)
+)
+
+/**
+ * 判断一个参数是否"没什么可改"：有默认值、必填与否都算，只要当前值仍等于默认值。
+ * 被用户改过（值 ≠ 默认值）的参数会立刻脱离折叠区，不需要额外状态。
+ */
+function isUnchanged(p) {
+  if (p.required) return false          // 必填参数始终显示，避免用户漏看
+  if (p.defaultValue == null || p.defaultValue === '') return false
+  const cur = form[p.name]
+  const norm = (v) => (v === undefined || v === null ? '' : String(v))
+  return norm(cur) === norm(p.defaultValue)
+}
+
+const collapsedNames = computed(() =>
+  props.collapsible ? visibleParams.value.filter(isUnchanged).map((p) => p.name) : []
+)
+
+function isCollapsed(p) {
+  if (!props.collapsible || showAll.value) return false
+  return isUnchanged(p)
+}
+
+/** 折叠区的摘要：「3 个参数使用默认值」。不展示具体值，避免误导。 */
+const collapsedSummary = computed(() =>
+  `（${collapsedNames.value.length} 个使用默认值）`
+)
 
 // Rules are derived from the param declaration, not from user input — building
 // them once per param instead of per render keeps the v-for cheap.
@@ -272,5 +330,16 @@ function rulesFor(p) {
   color: var(--sb-text-3);
   font-size: 13px;
   padding: 8px 0;
+}
+
+.sb-param-collapsed {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 2px;
+}
+.sb-param-collapsed-hint {
+  font-size: 12px;
+  color: var(--sb-text-3);
 }
 </style>

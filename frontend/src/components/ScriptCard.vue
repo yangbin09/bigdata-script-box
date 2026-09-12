@@ -29,6 +29,12 @@
       <span class="sb-cat">{{ script.category || '默认' }}</span>
       <span class="dot">·</span>
       <span><el-icon><Timer /></el-icon> {{ script.timeoutSeconds || 600 }}s</span>
+      <!-- 「跑上次」：用历史里那套成功参数直接重跑，连抽屉都不用开 -->
+      <el-button
+        class="sb-rerun-hint"
+        size="small" link type="primary"
+        @click.stop="$emit('rerun')"
+      >跑上次</el-button>
       <span class="sb-run-hint">执行 →</span>
     </div>
   </div>
@@ -41,7 +47,7 @@ defineProps({
   script: { type: Object, required: true }
 })
 
-defineEmits(['click', 'toggle-favorite'])
+defineEmits(['click', 'toggle-favorite', 'rerun'])
 </script>
 
 <style scoped>
@@ -133,4 +139,12 @@ defineEmits(['click', 'toggle-favorite'])
   font-weight: 500;
 }
 .sb-script-card:hover .sb-run-hint { opacity: 1; }
+
+/* 「跑上次」常驻可见：它是高频路径，不应该藏在 hover 里 */
+.sb-script-meta .sb-rerun-hint {
+  margin-left: auto;
+  padding: 0 2px;
+  font-size: 11.5px;
+}
+.sb-script-meta .sb-rerun-hint + .sb-run-hint { margin-left: 4px; }
 </style>

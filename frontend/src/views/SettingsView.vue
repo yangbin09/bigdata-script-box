@@ -1,13 +1,18 @@
 <!--
-  SettingsView — global variables management and Data Cleanup.
-  Two tabs: 全局变量 / 数据清理. Each tab is a focused work surface.
+  SettingsView — 所有「配置类」内容的容器（原 4 个顶级页面收敛到这里）。
+
+  为什么：租户 / 全局变量 / 清理 / 场景编排都是低频配置，把它们放在顶级导航里
+  和「跑脚本」争夺注意力，是信息架构没有主次。现在它们只是设置里的子页，
+  外部链接（/tenants、/scenarios、/cleanup）由路由 redirect 到这里并带上 tab。
+
+  Tab 由 URL query 驱动（?tab=xxx），因此可以直接分享/收藏某个子页。
 -->
 <template>
   <div>
     <div class="sb-header">
       <div>
         <h2 class="sb-page-title">设置</h2>
-        <p class="sb-page-sub">全局变量中心 + 数据清理。敏感字段不会出现在日志或前端明文。</p>
+        <p class="sb-page-sub">租户与认证 · 全局变量 · 数据清理 · 场景编排。敏感字段不会出现在日志或前端明文。</p>
       </div>
     </div>
 
@@ -57,8 +62,16 @@
         </el-table>
       </el-tab-pane>
 
+      <el-tab-pane label="租户与认证" name="tenants">
+        <TenantsView />
+      </el-tab-pane>
+
       <el-tab-pane label="数据清理" name="cleanup">
         <CleanupPanel />
+      </el-tab-pane>
+
+      <el-tab-pane label="场景编排" name="scenarios">
+        <ScenariosView />
       </el-tab-pane>
     </el-tabs>
 
@@ -103,6 +116,7 @@
 
 <script setup>
 import { onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -111,12 +125,26 @@ import {
 } from '../api/extras'
 import { getItem, setItem, KEYS } from '../utils/storage'
 import CleanupPanel from '../components/CleanupPanel.vue'
+import TenantsView from './TenantsView.vue'
+import ScenariosView from './ScenariosView.vue'
 import SBLabel from '../components/SBLabel.vue'
 
-// Persist the active tab across page navigations — users that came from
-// a cleanup run land here often and shouldn't have to re-pick the tab.
-const activeTab = ref(getItem(KEYS.SETTINGS_TAB, 'vars'))
+const route = useRoute()
+
+// Tab 优先由 URL query 决定（/tenants、/scenarios、/cleanup 都 redirect 到这里），
+// 否则回退到上次访问的 tab。
+const VALID_TABS = ['vars', 'tenants', 'cleanup', 'scenarios']
+const initialState = VALID_TABS.includes(String(route.query.tab))
+  ? String(route.query.tab)
+  : getItem(KEYS.SETTINGS_TAB, 'vars')
+
+const activeTab = ref(initialState)
 watch(activeTab, (v) => setItem(KEYS.SETTINGS_TAB, v))
+// 外部跳转（全局查找 → 租户）会改 query，这里要跟着切
+watch(() => route.query.tab, (t) => {
+  const next = String(t || '')
+  if (VALID_TABS.includes(next) && next !== activeTab.value) activeTab.value = next
+})
 
 const rows = ref([])
 const loading = ref(false)

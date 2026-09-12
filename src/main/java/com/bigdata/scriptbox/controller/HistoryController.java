@@ -73,4 +73,36 @@ public class HistoryController {
     public ApiResponse<List<HistoryService.RecentScript>> recentScripts(@RequestParam(defaultValue = "6") int limit) {
         return ApiResponse.ok(historyService.recentScripts(Math.max(1, Math.min(limit, 20))));
     }
+
+    /**
+     * 「这个脚本上次成功时是怎么跑的」—— 从执行历史推导出的可用方案。
+     *
+     * <p>用于前端的「重跑上次」与表单默认值：成功执行的参数本身就是一套方案，
+     * 不需要用户先创建 Preset。没有任何成功历史时返回带空 parameters 的对象
+     * （而不是 404 / 错误），前端据此回退到默认值。
+     *
+     * @param scriptId 脚本 ID
+     * @param tenantId 可选；指定时只在该租户的历史里找
+     * @return 方案（永不为 null）
+     */
+    @GetMapping("/plan")
+    public ApiResponse<com.bigdata.scriptbox.dto.ScriptPlan> plan(
+            @RequestParam Long scriptId,
+            @RequestParam(required = false) Long tenantId) {
+        return ApiResponse.ok(historyService.lastSuccessfulPlan(scriptId, tenantId));
+    }
+
+    /**
+     * 按「脚本 + 按天」聚合的历史概览。
+     *
+     * <p>取代「200 条流水 + 5 个筛选器」：运维的问题是「昨天哪个脚本失败了」，
+     * 不是「第 137 行是什么」。默认回看 7 天，按失败数优先排序。
+     *
+     * @param days 回看天数（夹到 1..90，默认 7）
+     */
+    @GetMapping("/digest")
+    public ApiResponse<List<com.bigdata.scriptbox.dto.ScriptPlan.ScriptDigest>> digest(
+            @RequestParam(defaultValue = "7") int days) {
+        return ApiResponse.ok(historyService.digest(days));
+    }
 }

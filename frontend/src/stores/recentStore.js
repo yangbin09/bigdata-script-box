@@ -17,8 +17,7 @@ export const useRecentStore = defineStore('recent', {
   }),
   getters: {
     scripts: (state) => state.items.filter((i) => i.kind === 'script'),
-    tenants: (state) => state.items.filter((i) => i.kind === 'tenant'),
-    quickActions: (state) => state.items.filter((i) => i.kind === 'quick-action')
+    tenants: (state) => state.items.filter((i) => i.kind === 'tenant')
   },
   actions: {
     bootstrap() {
