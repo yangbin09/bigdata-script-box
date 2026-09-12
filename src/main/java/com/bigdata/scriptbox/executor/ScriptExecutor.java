@@ -1,14 +1,16 @@
 package com.bigdata.scriptbox.executor;
 
 import com.bigdata.scriptbox.config.ScriptBoxProperties;
+import com.bigdata.scriptbox.dto.ExecutionPreview;
 import com.bigdata.scriptbox.dto.ExecutionRequest;
 import com.bigdata.scriptbox.entity.ExecutionHistory;
 import com.bigdata.scriptbox.entity.Script;
 import com.bigdata.scriptbox.entity.ScriptParam;
 import com.bigdata.scriptbox.entity.Tenant;
+import com.bigdata.scriptbox.exception.BusinessErrorCode;
+import com.bigdata.scriptbox.exception.BusinessException;
 import com.bigdata.scriptbox.mapper.ExecutionHistoryMapper;
 import com.bigdata.scriptbox.model.ExecutionStatus;
-import com.bigdata.scriptbox.model.RiskLevel;
 import com.bigdata.scriptbox.model.VisibleWhen;
 import com.bigdata.scriptbox.service.ArtifactService;
 import com.bigdata.scriptbox.service.FileUploadService;
@@ -34,7 +36,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -91,6 +92,11 @@ public class ScriptExecutor {
     private final ObjectMapper mapper;
     private final AtomicLong counter = new AtomicLong(System.currentTimeMillis() * 1000L);
 
+    // V3（#1）：从 ScriptExecutor 拆出的两个组件 —— 准备器（纯规划）和命令构造器。
+    // ScriptExecutor 自身只剩"orchestrator"职责，方法体由这些协作类填充。
+    private final ExecutionPreparer executionPreparer;
+    private final CommandBuilder commandBuilder;
+
     public ExecutionHistory history(Long id) {
         return historyMapper.selectById(id);
     }
@@ -137,7 +143,7 @@ public class ScriptExecutor {
 
             log.info("开始执行脚本 executionId={} script={} tenant={} cmd={}",
                     ctx.executionId(), ctx.script().getName(), ctx.tenant().getName(),
-                    sensitiveDataMasker.maskCommandList(buildArgsFromMap(ctx.params())));
+                    sensitiveDataMasker.maskCommandList(commandBuilder.buildArgsFromMap(ctx.params())));
 
             ProcessResult processResult = startProcess(ctx);
             return finalizeExecution(ctx, processResult);
@@ -157,102 +163,10 @@ public class ScriptExecutor {
      */
     private ExecutionContext prepareContext(ExecutionRequest req, Script script,
                                             long executionId, String scriptBodyOverride) throws IOException {
-        if (script.getEnabled() == null || !script.getEnabled())
-            throw new IllegalArgumentException("脚本已禁用: " + script.getName());
-
-        if (RiskLevel.DANGEROUS.equals(script.getRiskLevel())
-                && !req.isBypassDangerousCheck()
-                && !RiskLevel.CONFIRM_TOKEN.equals(req.getConfirmToken())) {
-            throw new IllegalArgumentException(
-                    "脚本标记为 DANGEROUS，请在前端输入 " + RiskLevel.CONFIRM_TOKEN + " 后重新执行");
-        }
-
-        // 注意：并发准入（同脚本去重 + 全局槽位上限）已下沉到
-        // ExecutionGate.acquire()，在 startProcess 中于 process.start 之前原子完成。
-        // 历史实现在这里遍历 registry 做"同脚本是否在跑"的检查，与真正登记之间
-        // 存在任意长的窗口，N 个并发请求可以同时通过检查并击穿 maxConcurrent。
-
-        Tenant tenant = tenantService.getById(req.getTenantId());
-        if (tenant == null)
-            throw new IllegalArgumentException("租户不存在: " + req.getTenantId());
-        if (tenant.getEnabled() == null || !tenant.getEnabled())
-            throw new IllegalArgumentException("租户已禁用: " + tenant.getName());
-
-        Map<String, String> validated = resolveParams(req, script);
-
-        // 目录规划：executionDir / artifacts 各建一次
-        Path execDir = storagePathService.executionDirFor(executionId);
-        Files.createDirectories(execDir);
-        Path artifactDir = storagePathService.artifactsDirFor(executionId);
-        // 注意：artifact 目录由 ArtifactService 在 scanAndRegister 中创建；
-        // 这里调一次 createDirectories 让脚本开始写时目录已存在。
-        Files.createDirectories(artifactDir);
-
-        // 文件参数：把上传到 ./data/uploads/<token>/ 的文件 promote 到
-        // <executionsDir>/<execId>/input/。**只 promote 一次** —— 历史上这里promote
-        // 了两遍（第一遍用了另一个临时 executionId），每次带文件执行都会留下
-        // 一个永不清理的孤儿目录与一份重复文件副本。
-        if (req.getFileInputs() != null && !req.getFileInputs().isEmpty()) {
-            Map<String, String> resolved =
-                    fileUploadService.promoteForExecution(executionId, req.getFileInputs());
-            validated.putAll(resolved);
-        }
-
-        Path stdoutFile = execDir.resolve("stdout.log");
-        Path stderrFile = execDir.resolve("stderr.log");
-        Path resultFile = execDir.resolve("result.json");
-        int timeoutSeconds = script.getTimeoutSeconds() == null
-                ? props.getDefaultTimeoutSeconds() : script.getTimeoutSeconds();
-
-        // kinit wrapper（如需）：在 prepareContext 阶段就生成 0700 临时 wrapper，
-        // 让 finalizeExecution 的 finally 能可靠地清理。
-        boolean kinitWrap = !props.isMock()
-                && tenant.getKeytabPath() != null
-                && !tenant.getKeytabPath().isBlank();
-        Path wrapperPath = null;
-        if (kinitWrap) {
-            ExecutionContext tmp = ExecutionContext.builder()
-                    .executionId(executionId).tenant(tenant)
-                    .executionDir(execDir).scriptPath(resolveScriptPath(script, execDir))
-                    .build();
-            wrapperPath = createKinitWrapper(tmp);
-        }
-
-        return ExecutionContext.builder()
-                .executionId(executionId)
-                .request(req)
-                .script(script)
-                .tenant(tenant)
-                .params(validated)
-                .executionDir(execDir)
-                .artifactDir(artifactDir)
-                .stdoutPath(stdoutFile)
-                .stderrPath(stderrFile)
-                .resultPath(resultFile)
-                .scriptPath(resolveScriptPath(script, execDir))
-                .kinitWrapped(kinitWrap)
-                .timeoutSeconds(timeoutSeconds)
-                .wrapperPath(wrapperPath)
-                // snapshot rerun 时脚本正文来自快照，不再落盘临时副本，
-                // 由 ExecutionContext.scriptBodyOverride 承载
-                .rerunSnapshot(req.isRerunSnapshot())
-                .scriptBodyOverride(scriptBodyOverride)
-                .build();
-    }
-
-    /**
-     * 解析脚本正文所落的路径。
-     *
-     * <p>snapshot rerun 时 {@code script.scriptPath} 是空串（正文在
-     * {@code scriptBodyOverride} 里），此时指向 executionDir 内的一个虚拟路径，
-     * 仅供日志与命令展示使用，落盘走 {@link ScriptMaterializer}。
-     */
-    private Path resolveScriptPath(Script script, Path execDir) {
-        String raw = script.getScriptPath();
-        if (raw == null || raw.isBlank()) {
-            return execDir.resolve("script.sh");
-        }
-        return Paths.get(raw);
+        // V3（#1）：完整规划步骤下移到 ExecutionPreparer，本方法退化为 1 行委托。
+        // resolveParams / validateAndCoerce 仍留在 ScriptExecutor（参数校验是业务规则，
+        // 与"执行编排"不同关注点），通过方法引用传给 Preparer。
+        return executionPreparer.prepare(req, script, executionId, scriptBodyOverride, this::resolveParams);
     }
 
     /**
@@ -437,16 +351,14 @@ public class ScriptExecutor {
     private ProcessResult startProcess(ExecutionContext ctx) throws IOException {
         // 脚本正文落盘（普通执行返回 scriptsRoot 下的原文件；snapshot rerun 写到本次
         // executionDir），随后所有命令构造都使用这个确定路径。
-        Path scriptPath = materializeScript(ctx);
+        // 注：实际执行的命令使用 ctx.scriptPath()（由 ExecutionPreparer 决定的路径），
+        // 不会受 materializeScript 的落盘副作用影响 —— snapshot rerun 时两者一致。
+        materializeScript(ctx);
 
-        List<String> command;
-        Map<String, String> env = buildEnv(ctx);
-
-        if (ctx.kinitWrapped() && ctx.wrapperPath() != null) {
-            command = buildKinitWrappedCommand(ctx.wrapperPath(), scriptPath, ctx.params());
-        } else {
-            command = buildDirectCommand(scriptPath, ctx.params());
-        }
+        // V3（#1）：环境与命令构造全部委托给 CommandBuilder。
+        // ScriptExecutor 不再持有 bash 拼装细节，只负责"准备 + 启动 + 收尾"编排。
+        List<String> command = commandBuilder.build(ctx);
+        Map<String, String> env = commandBuilder.buildEnv(ctx);
 
         ProcessRequest req = new ProcessRequest(
                 command,
@@ -595,90 +507,8 @@ public class ScriptExecutor {
     }
 
     // ======================================================================
-    // 命令与环境
+    // 命令与环境（V3 #1：已下移到 ExecutionPreparer / CommandBuilder）
     // ======================================================================
-
-    private Map<String, String> buildEnv(ExecutionContext ctx) {
-        Map<String, String> env = new LinkedHashMap<>(globalVariableService.envForExecution());
-        env.put("EXECUTION_ID", String.valueOf(ctx.executionId()));
-        env.put("EXECUTION_DIR", ctx.executionDir().toAbsolutePath().toString());
-        env.put("ARTIFACT_DIR", ctx.artifactDir().toAbsolutePath().toString());
-        // 强制 UTF-8 区域设置：否则子进程按宿主机 locale 编码输出（例如中文 Windows 上是
-        // GBK），落盘的 stdout/stderr 就不是合法 UTF-8，读取时会抛 MalformedInputException。
-        // 只补默认值，允许脚本作者在全局变量里显式覆盖。
-        env.putIfAbsent("LANG", "C.UTF-8");
-        env.putIfAbsent("LC_ALL", "C.UTF-8");
-        return env;
-    }
-
-    private List<String> buildDirectCommand(Path scriptPath, Map<String, String> params) {
-        List<String> cmd = new ArrayList<>();
-        cmd.add(props.getShellExecutable());
-        cmd.add(scriptPath.toString());
-        cmd.addAll(buildArgsFromMap(params));
-        return cmd;
-    }
-
-    /**
-     * 生成 kinit wrapper 并返回其路径。
-     *
-     * <p>wrapper 写到 {@code executionDir} 内的临时文件，文件名带随机后缀
-     * （{@code Files.createTempFile}），避免重跑 / 并发时冲突。文件权限设为 0700：
-     * 只允许 owner 读写执行，避免其他本地用户读到 wrapper 中的 keytab 路径。
-     *
-     * <p>wrapper 文件路径写入 {@link ExecutionContext#wrapperPath()}，
-     * 由 {@link #finalizeExecution} 在 finally 中删除，避免执行失败 / 取消时残留。
-     *
-     * <p>为何仍写 wrapper 而不是 in-memory pipe：kinit + 业务脚本必须串行
-     * 在同一进程内运行（保证 TGT 已就绪），ProcessBuilder 难以表达这种组合。
-     * wrapper 模式同时避免了 `bash -c "kinit && exec ..."` 形式（用户参数注入风险）。
-     *
-     * <p>wrapper 内部的 shell 路径同样来自 {@code scriptbox.shell-executable}，
-     * 不再硬编码 {@code bash}；kinit 路径来自 {@code scriptbox.kinit-executable}。
-     */
-    private Path createKinitWrapper(ExecutionContext ctx) throws IOException {
-        Path wrapper = Files.createTempFile(ctx.executionDir(), "kinit_wrap_", ".sh");
-        try {
-            Files.setPosixFilePermissions(wrapper, java.util.EnumSet.of(
-                    java.nio.file.attribute.PosixFilePermission.OWNER_READ,
-                    java.nio.file.attribute.PosixFilePermission.OWNER_WRITE,
-                    java.nio.file.attribute.PosixFilePermission.OWNER_EXECUTE));
-        } catch (UnsupportedOperationException ignored) {
-            // 非 POSIX 文件系统（理论上不会，部署目标是 Linux）：跳过权限设置
-        }
-        String keytab = shellQuote(ctx.tenant().getKeytabPath());
-        String principal = shellQuote(ctx.tenant().getPrincipal());
-        String scriptPath = shellQuote(ctx.scriptPath().toString());
-        Files.writeString(wrapper,
-                "#!" + props.getShellExecutable() + "\nset -e\n" +
-                        shellQuote(props.getKinitExecutable()) + " -kt " + keytab + " " + principal
-                        + " || exit 127\n" +
-                        "exec \"" + scriptPath + "\" \"$@\"\n",
-                StandardCharsets.UTF_8);
-        return wrapper;
-    }
-
-    /** 单引号包裹并转义内嵌单引号，阻断 wrapper 生成时的 shell 注入。 */
-    private static String shellQuote(String raw) {
-        return "'" + (raw == null ? "" : raw.replace("'", "'\\''")) + "'";
-    }
-
-    private List<String> buildKinitWrappedCommand(Path wrapper, Path scriptPath, Map<String, String> params) {
-        List<String> cmd = new ArrayList<>();
-        cmd.add(props.getShellExecutable());
-        cmd.add(wrapper.toString());
-        cmd.addAll(buildArgsFromMap(params));
-        return cmd;
-    }
-
-    private List<String> buildArgsFromMap(Map<String, String> params) {
-        List<String> args = new ArrayList<>();
-        for (Map.Entry<String, String> e : params.entrySet()) {
-            args.add("--" + e.getKey());
-            args.add(e.getValue());
-        }
-        return args;
-    }
 
     // ======================================================================
     // 参数校验 / 类型转换 / 条件可见
@@ -821,55 +651,70 @@ public class ScriptExecutor {
      * Dry-run：返回解析后的命令 + 遮罩后的环境变量 + 生效参数。不实际启动进程。
      *
      * <p>参数解析走与真实执行**完全相同**的 {@link #resolveParams}，因此 dry-run
-     * 不会与真实执行产生语义漂移（历史上这里是 `prepareContext` 逻辑的整段复制，
+     * 不会与真实执行产生语义漂移（历史上这里是 {@code prepareContext} 逻辑的整段复制，
      * 已经在 preset 合并与校验上出现分歧）。
+     *
+     * <p>V3（#8）：返回类型从 {@code Map<String, Object>}（15 键裸 Map）改为
+     * 类型化的 {@link ExecutionPreview} record。字段名与原 Map 键一一对应，
+     * Jackson 序列化后 JSON 形态完全不变（前端零改动）。
      */
-    public Map<String, Object> preview(ExecutionRequest req) throws IOException {
+    public ExecutionPreview preview(ExecutionRequest req) throws IOException {
         Script script = scriptService.getById(req.getScriptId());
-        if (script == null) throw new IllegalArgumentException("script not found: " + req.getScriptId());
+        if (script == null) throw new BusinessException(BusinessErrorCode.SCRIPT_NOT_FOUND,
+                "script not found: " + req.getScriptId());
         Tenant tenant = tenantService.getById(req.getTenantId());
-        if (tenant == null) throw new IllegalArgumentException("tenant not found: " + req.getTenantId());
+        if (tenant == null) throw new BusinessException(BusinessErrorCode.TENANT_NOT_FOUND,
+                "tenant not found: " + req.getTenantId());
 
         Map<String, String> validated = resolveParams(req, script);
 
+        // V3（#1+#8）：命令构造与脚本路径解析都委托给 CommandBuilder / ExecutionPreparer，
+        // 本方法只负责"加载实体 + 解析参数 + 组装返回值"，与 startProcess 共享同一份命令语义。
         String scriptPath = script.getScriptPath();
-        List<String> command;
+        Path execDir = storagePathService.executionDirFor(0L); // 仅用于虚拟路径，ID 在执行时分配
+        Path resolvedScriptPath = executionPreparer.resolveScriptPath(script, execDir);
+
+        // preview 不走 ExecutionPreparer.prepare（那里会生成 kinit wrapper + 创建目录），
+        // 单独构造一个最小的 ExecutionContext 供 CommandBuilder.buildForPreview 使用。
         boolean kinitWrap = !props.isMock()
                 && tenant.getKeytabPath() != null
                 && !tenant.getKeytabPath().isBlank();
-        if (kinitWrap) {
-            command = new ArrayList<>();
-            command.add(props.getShellExecutable());
-            command.add("<executions-dir>/<exec-id>/kinit_wrap_*.sh");
-            command.addAll(buildArgsFromMap(validated));
-        } else {
-            command = new ArrayList<>();
-            command.add(props.getShellExecutable());
-            command.add(scriptPath);
-            command.addAll(buildArgsFromMap(validated));
-        }
+        ExecutionContext stubCtx = ExecutionContext.builder()
+                .executionId(0L)
+                .request(req)
+                .script(script)
+                .tenant(tenant)
+                .params(validated)
+                .executionDir(execDir)
+                .artifactDir(execDir)
+                .scriptPath(resolvedScriptPath)
+                .kinitWrapped(kinitWrap)
+                .timeoutSeconds(script.getTimeoutSeconds() == null
+                        ? props.getDefaultTimeoutSeconds() : script.getTimeoutSeconds())
+                .rerunSnapshot(false)
+                .build();
+        List<String> command = commandBuilder.buildForPreview(stubCtx);
 
         Map<String, String> masked = sensitiveDataMasker.maskEnv(
                 globalVariableService.envForExecution(), globalVariableService.listEnabled());
 
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("scriptId", script.getId());
-        out.put("scriptName", script.getName());
-        out.put("scriptDisplayName", script.getDisplayName());
-        out.put("scriptPath", scriptPath);
-        out.put("tenantId", tenant.getId());
-        out.put("tenantName", tenant.getName());
-        out.put("principal", tenant.getPrincipal());
-        out.put("timeoutSeconds", script.getTimeoutSeconds());
-        out.put("enabled", script.getEnabled());
-        out.put("params", validated);
-        out.put("command", command);
-        out.put("kinitWrapped", kinitWrap);
-        out.put("globalVariables", masked);
-        out.put("keytabSet", tenant.getKeytabPath() != null && !tenant.getKeytabPath().isBlank());
-        // Preview 中完全遮掉 keytab 路径，避免在调试阶段泄露
-        out.put("keytabPath", tenant.getKeytabPath() != null && !tenant.getKeytabPath().isBlank() ? SensitiveDataMasker.MASK : null);
-        return out;
+        boolean keytabConfigured = tenant.getKeytabPath() != null && !tenant.getKeytabPath().isBlank();
+        return new ExecutionPreview(
+                script.getId(),
+                script.getName(),
+                script.getDisplayName(),
+                scriptPath,
+                tenant.getId(),
+                tenant.getName(),
+                tenant.getPrincipal(),
+                script.getTimeoutSeconds(),
+                script.getEnabled(),
+                Map.copyOf(validated),
+                List.copyOf(command),
+                kinitWrap,
+                masked,
+                keytabConfigured,
+                keytabConfigured ? SensitiveDataMasker.MASK : null);
     }
 
     public byte[] readStdout(ExecutionHistory h) throws IOException {

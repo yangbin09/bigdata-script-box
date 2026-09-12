@@ -2,9 +2,11 @@ package com.bigdata.scriptbox;
 
 import com.bigdata.scriptbox.config.InMemoryMultipartFile;
 import com.bigdata.scriptbox.config.ScriptBoxProperties;
+import com.bigdata.scriptbox.dto.ExecutionPreview;
 import com.bigdata.scriptbox.dto.ExecutionRequest;
 import com.bigdata.scriptbox.entity.Script;
 import com.bigdata.scriptbox.entity.Tenant;
+import com.bigdata.scriptbox.exception.BusinessException;
 import com.bigdata.scriptbox.executor.ScriptExecutor;
 import com.bigdata.scriptbox.service.GlobalVariableService;
 import com.bigdata.scriptbox.service.ScriptService;
@@ -63,12 +65,12 @@ class DryRunTest extends BaseIntegrationTest {
         req.setTenantId(tid);
         req.setParams(Map.of("database", "cobp", "count", "30"));
 
-        Map<String, Object> preview = executor.preview(req);
+        // V3（#8）：preview() 返回 ExecutionPreview record，字段名与原 Map 键一一对应
+        ExecutionPreview preview = executor.preview(req);
 
-        assertEquals(sid, preview.get("scriptId"));
-        assertEquals("Preview", preview.get("scriptDisplayName"));
-        @SuppressWarnings("unchecked")
-        List<String> cmd = (List<String>) preview.get("command");
+        assertEquals(sid, preview.scriptId());
+        assertEquals("Preview", preview.scriptDisplayName());
+        List<String> cmd = preview.command();
         // 命令首项是配置的 shell（scriptbox.shell-executable），不要在测试里写死 "bash"：
         // 部署目标是 Linux 走 PATH 上的 bash，本地开发用 -Pgit-bash 指向 Git Bash。
         assertEquals(props.getShellExecutable(), cmd.get(0));
@@ -76,9 +78,9 @@ class DryRunTest extends BaseIntegrationTest {
         assertTrue(cmd.contains("cobp"));
         assertTrue(cmd.contains("--count"));
         assertTrue(cmd.contains("30"));
-        assertNotNull(preview.get("tenantName"));
-        assertNotNull(preview.get("principal"));
-        assertEquals(Boolean.FALSE, preview.get("kinitWrapped"));
+        assertNotNull(preview.tenantName());
+        assertNotNull(preview.principal());
+        assertEquals(Boolean.FALSE, preview.kinitWrapped());
         // No execution_history row should have been created
         assertEquals(0, historyMapper.selectList(null).size());
     }
@@ -96,9 +98,8 @@ class DryRunTest extends BaseIntegrationTest {
         req.setScriptId(sid);
         req.setTenantId(tid);
 
-        Map<String, Object> preview = executor.preview(req);
-        @SuppressWarnings("unchecked")
-        Map<String, String> env = (Map<String, String>) preview.get("globalVariables");
+        ExecutionPreview preview = executor.preview(req);
+        Map<String, String> env = preview.globalVariables();
         assertEquals("visible", env.get(visibleKey));
         assertEquals("******", env.get(secretKey));
     }
@@ -109,7 +110,9 @@ class DryRunTest extends BaseIntegrationTest {
         ExecutionRequest req = new ExecutionRequest();
         req.setScriptId(999999L);
         req.setTenantId(tid);
-        Exception ex = assertThrows(IllegalArgumentException.class, () -> executor.preview(req));
+        // V3（#9）：抛 BusinessException（SCRIPT_NOT_FOUND）而非裸 IllegalArgumentException；
+        // BusinessException extends IllegalArgumentException 仍兼容 assertThrows(IAE)。
+        Exception ex = assertThrows(BusinessException.class, () -> executor.preview(req));
         assertTrue(ex.getMessage().contains("script not found"));
     }
 }

@@ -66,14 +66,8 @@ public class ExecutionController {
      * @return 预演快照
      */
     @PostMapping("/preview")
-    public ApiResponse<Map<String, Object>> preview(@RequestBody ExecutionRequest req) {
-        try {
-            return ApiResponse.ok(executor.preview(req));
-        } catch (IllegalArgumentException e) {
-            return ApiResponse.error(e.getMessage());
-        } catch (IOException e) {
-            return ApiResponse.error("preview failed: " + e.getMessage());
-        }
+    public ApiResponse<com.bigdata.scriptbox.dto.ExecutionPreview> preview(@RequestBody ExecutionRequest req) throws java.io.IOException {
+        return ApiResponse.ok(executor.preview(req));
     }
 
     /** V2: 列出当前匹配 (script, tenant) 的运行中执行。
