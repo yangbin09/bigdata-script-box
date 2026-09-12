@@ -82,7 +82,7 @@ public class ScriptController {
         s.setDisplayName(displayName == null ? name : displayName);
         s.setCategory(category);
         s.setDescription(description);
-        s.setTimeoutSeconds(timeoutSeconds == null ? 600 : timeoutSeconds);
+        s.setTimeoutSeconds(timeoutSeconds == null ? props.getDefaultTimeoutSeconds() : timeoutSeconds);
         s.setEnabled(enabled == null ? Boolean.TRUE : enabled);
         s.setFavorite(favorite != null && favorite);
         s.setDefaultTenantId(defaultTenantId);
@@ -114,7 +114,7 @@ public class ScriptController {
         s.setDisplayName(name);
         s.setCategory(t.getCategory());
         s.setDescription(t.getDescription());
-        s.setTimeoutSeconds(600);
+        s.setTimeoutSeconds(props.getDefaultTimeoutSeconds());
         s.setEnabled(true);
         org.springframework.web.multipart.MultipartFile mf = new com.bigdata.scriptbox.config.InMemoryMultipartFile(
                 name + ".sh", name + ".sh", "application/x-sh",
@@ -156,7 +156,7 @@ public class ScriptController {
         s.setDisplayName(displayName == null ? name : displayName);
         s.setCategory(category);
         s.setDescription(description);
-        s.setTimeoutSeconds(timeoutSeconds == null ? 600 : timeoutSeconds);
+        s.setTimeoutSeconds(timeoutSeconds == null ? props.getDefaultTimeoutSeconds() : timeoutSeconds);
         s.setEnabled(enabled == null ? Boolean.TRUE : enabled);
         s.setFavorite(favorite != null && favorite);
         s.setDefaultTenantId(defaultTenantId);

@@ -69,7 +69,9 @@ public record ExecutionContext(
         private Path resultPath;
         private Path scriptPath;
         private boolean kinitWrapped;
-        private int timeoutSeconds = 600;
+        // 必须由调用方显式设置（通过 ScriptBoxProperties.getDefaultTimeoutSeconds()
+        // 或 script.getTimeoutSeconds()）。保留 0 作为"未设置"哨兵，便于发现漏写。
+        private int timeoutSeconds = 0;
         private Path wrapperPath;
         private boolean rerunSnapshot;
         /** 本次执行自身的脚本正文（snapshot rerun 时为快照内容）；null 表示从磁盘读。 */

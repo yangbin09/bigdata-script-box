@@ -146,7 +146,7 @@ public class ScriptPackageService {
         String category = (String) manifest.getOrDefault("category", "");
         String description = (String) manifest.getOrDefault("description", "");
         Object to = manifest.get("timeoutSeconds");
-        Integer timeout = to instanceof Number n ? n.intValue() : 600;
+        Integer timeout = to instanceof Number n ? n.intValue() : props.getDefaultTimeoutSeconds();
         Object en = manifest.get("enabled");
         boolean enabled = en == null ? Boolean.TRUE : Boolean.TRUE.equals(en);
         String precheckCfg = manifest.get("precheckConfigJson") == null

@@ -21,6 +21,7 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -135,7 +136,7 @@ public class CleanupService {
 
         // 执行目录：以目录的 lastModifiedTime 作为判断依据
         if (eDays > 0) {
-            long cutoffMs = System.currentTimeMillis() - (eDays * 86_400_000L);
+            long cutoffMs = System.currentTimeMillis() - Duration.ofDays(eDays).toMillis();
             Path root = storagePathService.executionsRoot();
             if (Files.isDirectory(root)) {
                 try (Stream<Path> stream = Files.list(root)) {
@@ -218,7 +219,7 @@ public class CleanupService {
 
         // 应用日志文件：logDays > 0 时扫描 logsRoot 下的常规文件
         if (logsEnabled) {
-            long cutoffMs = System.currentTimeMillis() - (lDays * 86_400_000L);
+            long cutoffMs = System.currentTimeMillis() - Duration.ofDays(lDays).toMillis();
             try (Stream<Path> stream = Files.list(logsAbs)) {
                 for (Path child : (Iterable<Path>) stream::iterator) {
                     if (Files.isSymbolicLink(child)) continue;

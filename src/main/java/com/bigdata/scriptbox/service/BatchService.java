@@ -1,5 +1,6 @@
 package com.bigdata.scriptbox.service;
 
+import com.bigdata.scriptbox.config.ScriptBoxProperties;
 import com.bigdata.scriptbox.dto.ExecutionRequest;
 import com.bigdata.scriptbox.entity.ExecutionHistory;
 import com.bigdata.scriptbox.executor.ScriptExecutor;
@@ -22,18 +23,17 @@ import java.util.concurrent.atomic.AtomicLong;
  * {@link ExecutionHistory}，共享同一个 batchId。
  *
  * <p>默认顺序执行：脚本执行器调用较慢且可能启子进程，避免批量并发把宿主机打爆；
- * 当 {@code concurrency > 1} 时启用并行模式，最多 8 路并发。
+ * 当 {@code concurrency > 1} 时启用并行模式，并发上限由
+ * {@link ScriptBoxProperties#getMaxBatchConcurrency()} 控制。
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class BatchService {
 
-    /** 硬上限，避免失控批次。 */
-    private static final int MAX_ROWS = 200;
-
     private final ScriptExecutor executor;
     private final ExecutionHistoryMapper historyMapper;
+    private final ScriptBoxProperties props;
 
     /** 单调递增的 batchId 计数器（基于当前毫秒时间戳起步）。 */
     private final AtomicLong batchCounter = new AtomicLong(System.currentTimeMillis() * 1000L);
@@ -78,9 +78,7 @@ public class BatchService {
      */
     public BatchSummary runSequential(Long scriptId, Long tenantId, Long presetId,
                                       List<Map<String, String>> rows, String confirmToken) {
-        if (rows == null || rows.isEmpty()) throw new IllegalArgumentException("empty rows");
-        if (rows.size() > MAX_ROWS) throw new IllegalArgumentException(
-                "too many rows: " + rows.size() + " > " + MAX_ROWS);
+        validateRows(rows);
 
         String batchId = "batch-" + batchCounter.incrementAndGet();
         BatchSummary.Builder builder = new BatchSummary.Builder()
@@ -126,11 +124,9 @@ public class BatchService {
      */
     public BatchSummary runParallel(Long scriptId, Long tenantId, Long presetId,
                                     List<Map<String, String>> rows, int concurrency, String confirmToken) {
-        if (rows == null || rows.isEmpty()) throw new IllegalArgumentException("empty rows");
-        if (rows.size() > MAX_ROWS) throw new IllegalArgumentException(
-                "too many rows: " + rows.size() + " > " + MAX_ROWS);
+        validateRows(rows);
         if (concurrency <= 0) concurrency = 1;
-        if (concurrency > 8) concurrency = 8;
+        if (concurrency > props.getMaxBatchConcurrency()) concurrency = props.getMaxBatchConcurrency();
 
         String batchId = "batch-" + batchCounter.incrementAndGet();
         ExecutorService pool = Executors.newFixedThreadPool(concurrency,
@@ -218,5 +214,16 @@ public class BatchService {
             out.add(m);
         }
         return out;
+    }
+
+    /**
+     * 校验入参 rows 非空且不超过 {@link ScriptBoxProperties#getMaxBatchRows()}。
+     * 由 {@link #runSequential} 与 {@link #runParallel} 共享，避免重复两遍手写判断。
+     */
+    private void validateRows(List<Map<String, String>> rows) {
+        if (rows == null || rows.isEmpty()) throw new IllegalArgumentException("empty rows");
+        int max = props.getMaxBatchRows();
+        if (rows.size() > max) throw new IllegalArgumentException(
+                "too many rows: " + rows.size() + " > " + max);
     }
 }

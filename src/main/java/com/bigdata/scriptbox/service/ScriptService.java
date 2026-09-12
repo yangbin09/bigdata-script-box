@@ -105,7 +105,7 @@ public class ScriptService {
      */
     @Transactional
     public Script create(Script script, MultipartFile file) throws IOException {
-        if (script.getTimeoutSeconds() == null) script.setTimeoutSeconds(600);
+        if (script.getTimeoutSeconds() == null) script.setTimeoutSeconds(props.getDefaultTimeoutSeconds());
         if (script.getEnabled() == null) script.setEnabled(Boolean.TRUE);
         if (script.getFavorite() == null) script.setFavorite(Boolean.FALSE);
         // V2: 风险等级缺省 READ_ONLY；显式给的值必须通过白名单校验

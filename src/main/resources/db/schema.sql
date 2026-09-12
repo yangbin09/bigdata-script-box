@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS script (
     category          VARCHAR(64),
     description       VARCHAR(1024),
     script_path       VARCHAR(512),
-    timeout_seconds   INT NOT NULL DEFAULT 600,
+    timeout_seconds   INT NOT NULL DEFAULT 600, -- 与 ScriptBoxProperties.defaultTimeoutSeconds 同步
     enabled           BOOLEAN NOT NULL DEFAULT TRUE,
     favorite          BOOLEAN NOT NULL DEFAULT FALSE,
     default_tenant_id BIGINT,

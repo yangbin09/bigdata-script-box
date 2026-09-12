@@ -43,12 +43,29 @@ scriptbox:
   scripts-dir: ./data/scripts      # uploaded shell scripts
   keytabs-dir: ./data/keytabs      # uploaded keytab files
   executions-dir: ./data/executions
+  # V3: 子进程可执行文件。生产部署目标是 FusionInsight Linux，默认 bash 走 PATH；
+  # Windows + Git Bash 环境下用 -Pgit-bash profile 覆盖为 C:/gitbash/bash.exe
+  # （见 pom.xml 同名 profile）。
+  shell-executable: bash
+  kinit-executable: kinit          # 租户连通性测试用
+  klist-executable: klist
+  # V3: 内部短命令（bash -n 语法检查、kinit / klist 连通性测试）的硬超时（秒）。
+  # 这些命令不占用 max-concurrent 槽位，但必须有自己的硬超时，避免挂死请求线程。
+  command-timeout-seconds: 30
+  # 默认执行超时（秒）：脚本未显式声明时的兜底，与 db/schema.sql 的 DEFAULT 600 同步。
+  default-timeout-seconds: 600
+  # V2: 全局同时执行上限，由 ExecutionGate 的准入许可强制控制。
+  max-concurrent: 5
+  # V3: 单次执行 stdout / stderr 落盘字节上限。0 表示不限制（不推荐）。
+  max-output-bytes: 268435456
   max-log-bytes: 1048576           # 1MB limit per page render
   max-script-bytes: 1048576        # 1MB script upload limit
   max-input-file-bytes: 10485760   # 10MB script parameter file upload limit
   max-artifact-bytes: 52428800     # 50MB per artifact file
   max-artifact-files: 50           # 50 artifacts per execution max
-  max-artifact-total-bytes: 209715200  # 200MB total artifacts per execution
+  # 批量执行上限：避免单次批次把 ExecutionGate 槽位打满。覆盖硬编码 MAX_ROWS / 并发 8。
+  max-batch-rows: 200
+  max-batch-concurrency: 8
   # V2: manual cleanup retention. 0 disables a category. Values can also be
   # overridden at runtime via the system_setting table (see
   # SystemSettingService for keys: cleanup.historyDays etc). Cleanup is
