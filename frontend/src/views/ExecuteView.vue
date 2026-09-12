@@ -396,7 +396,8 @@ import {
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { listScripts, getScript, setScriptFavorite } from '../api/scripts'
 import { listTenants } from '../api/tenants'
-import { execute, readStdout, readStderr, cancelExecution, activeExecutions } from '../api/executions'
+import { execute, submitExecution, readStdout, readStderr, cancelExecution, activeExecutions, executionState } from '../api/executions'
+import { useExecutionStore } from '../stores/executionStore'
 import { recentScripts } from '../api/history'
 import { listPresets, dryRun, uploadFile, runBatch, getBatch } from '../api/extras'
 import ScriptCard from '../components/ScriptCard.vue'
@@ -429,6 +430,31 @@ const running = ref(false)
 const elapsed = ref(0)
 let elapsedTimer = null
 const cancelling = ref(false)  // V2: true while a cancel request is in-flight
+
+// V3 (PR-2): 当前正在运行的 executionId。开启异步路径后，runScript 不再
+// 阻塞等待 submit 结果，而是把 executionId 塞回这里，由 executionStore
+// 的全局轮询驱动 UI 状态。这样切到别的页面也不会丢进度，回来能直接看到。
+const runningExecutionId = ref(null)
+const exec = useExecutionStore()
+
+async function waitForTerminal(executionId) {
+  // 轮询单条直到终态。executionStore.bootstrap 已经启动了全局 tick，
+  // 这里只需要在它即将结束前拉到最新一次 stdout/stderr。
+  const script = activeScript.value
+  const timeoutMs = ((Number(script?.timeoutSeconds || 600) + 60) * 1000) + 60000
+  const deadline = Date.now() + timeoutMs
+  return new Promise((resolve, reject) => {
+    const stop = exec.$subscribe(() => {
+      const v = exec.byId.get(Number(executionId))
+      if (!v) return
+      if (exec.isTerminal(v.status)) {
+        stop()
+        resolve(v)
+      }
+    })
+    setTimeout(() => { stop(); reject(new Error('wait timeout')) }, Math.max(1000, deadline - Date.now()))
+  })
+}
 
 // V1.5: preset, file inputs, dry-run preview, batch
 const presets = ref([])
@@ -814,27 +840,42 @@ async function runScript() {
       )
     }
     if (confirmToken) payload.confirmToken = confirmToken
-    // The POST blocks until the script finishes, so the request must be allowed
-    // to outlive the script's own timeout (the instance default is 60 s, which
-    // used to abort every run longer than a minute while the backend kept going).
-    const scriptTimeoutMs = (Number(activeScript.value?.timeoutSeconds || 600) + 60) * 1000
-    const history = await execute(payload, scriptTimeoutMs)
-    resultHistory.value = history
-    try {
-      const [so, se] = await Promise.all([
-        readStdout(history.id).catch(() => ''),
-        readStderr(history.id).catch(() => '')
-      ])
-      resultStdout.value = so || ''
-      resultStderr.value = se || ''
-    } catch {
-      resultStdout.value = ''
-      resultStderr.value = ''
+    // V3 (PR-2): 走异步执行：早返 executionId，由 executionStore 的全局 tick 驱动状态。
+    // 用户可关闭抽屉 / 切换页面，状态会继续在任务中心 + 后台更新；回来时 resultHistory
+    // 由下面的 watch 终态后回填。
+    const submission = await exec.submit(payload)
+    runningExecutionId.value = submission
+    const startedAt = Date.now()
+    // 不阻塞等待 — 切走 / 关闭抽屉都不影响后端执行。
+    // 等终态（或失败 / 超时）后回填 result panel。
+    waitForTerminal(submission)
+      .then(async (finalView) => {
+        try {
+          const stateRes = await executionState(submission)
+          const full = stateRes?.data || finalView
+          resultHistory.value = full
+          const [so, se] = await Promise.all([
+            readStdout(submission).catch(() => ''),
+            readStderr(submission).catch(() => '')
+          ])
+          resultStdout.value = so || ''
+          resultStderr.value = se || ''
+        } catch (_) { /* tolerate */ }
+        finally { finalizeRun() }
+      })
+      .catch((err) => {
+        // 超时或网络断开：保留 running 状态，由用户从任务中心继续观察
+        console.warn('waitForTerminal failed', err)
+        finalizeRun()
+      })
+    function finalizeRun() {
+      running.value = false
+      if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null }
+      recentScripts(6).then((r) => { recentList.value = r || [] }).catch(() => {})
     }
-    recentScripts(6).then((r) => { recentList.value = r || [] }).catch(() => {})
+    void startedAt
   } catch (_) {
     // axios interceptor already toasted
-  } finally {
     running.value = false
     if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null }
   }
@@ -847,25 +888,38 @@ async function rerunFromResult() {
   await runScript()
 }
 
-// V2: cancel the execution the user is currently waiting on. We don't know
-// the executionId from the front-end (the original POST is blocked waiting
-// for the backend), so we look it up via /active filtered by script+tenant.
+// V3 (PR-2): 取消当前正在运行的执行。executionId 在 submit 时就已经拿到，
+// 不再需要按 script+tenant 反查 — 即使用户打开了多个并发任务，也只影响眼前这一个。
 async function cancelRunning() {
   if (!running.value || cancelling.value) return
-  const scriptId = activeScript.value?.id
-  const tId = tenantId.value
-  if (!scriptId || !tId) return
+  const id = runningExecutionId.value
+  if (!id) {
+    // 兜底：异步路径未就绪，仍按旧逻辑查
+    const scriptId = activeScript.value?.id
+    const tId = tenantId.value
+    if (!scriptId || !tId) return
+    cancelling.value = true
+    try {
+      const list = await activeExecutions(scriptId, tId).catch(() => [])
+      if (!list || !list.length) {
+        ElMessage.info('当前没有正在运行的执行（可能已结束）')
+        return
+      }
+      for (const e of list) {
+        try { await cancelExecution(e.id) } catch (_) { /* keep going */ }
+      }
+      ElMessage.success(`已发送取消信号（${list.length} 个执行）`)
+    } catch (_) {
+      // axios interceptor already toasted
+    } finally {
+      cancelling.value = false
+    }
+    return
+  }
   cancelling.value = true
   try {
-    const list = await activeExecutions(scriptId, tId).catch(() => [])
-    if (!list || !list.length) {
-      ElMessage.info('当前没有正在运行的执行（可能已结束）')
-      return
-    }
-    for (const e of list) {
-      try { await cancelExecution(e.id) } catch (_) { /* keep going */ }
-    }
-    ElMessage.success(`已发送取消信号（${list.length} 个执行）`)
+    await cancelExecution(id)
+    ElMessage.success(`已请求取消 #${id}`)
   } catch (_) {
     // axios interceptor already toasted
   } finally {
@@ -882,10 +936,10 @@ async function toggleFavorite(s, val) {
 // onMounted body) so the teardown below is actually registered: a lifecycle
 // hook called after an `await` inside onMounted has no live instance and Vue
 // silently drops it, leaking the listener and the 1 s elapsed-time interval.
-const drawerSize = ref('520px')
-function computeDrawerSize() {
-  drawerSize.value = window.innerWidth >= 1280 ? '560px' : '460px'
-}
+// V3 (PR-2): 当前正在运行的 executionId。开启异步路径后，runScript 不再
+// 阻塞等待 submit 结果，而是把 executionId 塞回这里，由 executionStore
+// 的全局轮询驱动 UI 状态。这样切到别的页面也不会丢进度，回来能直接看到。
+// （声明在前面的 setup 区域）
 
 onUnmounted(() => {
   window.removeEventListener('resize', computeDrawerSize)
