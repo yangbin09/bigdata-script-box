@@ -35,6 +35,16 @@ public class BatchService {
     private final ExecutionHistoryMapper historyMapper;
     private final ScriptBoxProperties props;
 
+    private static final com.fasterxml.jackson.databind.ObjectMapper MAPPER =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
+    @SuppressWarnings("unchecked")
+    private static java.util.Map<String, String> fromJsonMap(String json) {
+        if (json == null || json.isBlank()) return new java.util.HashMap<>();
+        try { return MAPPER.readValue(json, java.util.Map.class); }
+        catch (Exception e) { return new java.util.HashMap<>(); }
+    }
+
     /** 单调递增的 batchId 计数器（基于当前毫秒时间戳起步）。 */
     private final AtomicLong batchCounter = new AtomicLong(System.currentTimeMillis() * 1000L);
 
@@ -76,6 +86,44 @@ public class BatchService {
      * 顺序执行（带确认 token）。当脚本被标记为 DANGEROUS 时，
      * 每行的 {@link ExecutionRequest} 都会带上 confirmToken 以便执行器判断。
      */
+    /**
+     * V3 (PR-8): 重跑 batch 中的某一行（行号 0..N-1）。
+     *
+     * <p>从原历史行读取 batchId + params 作为新的执行上下文提交；新行写
+     * {@code parent_execution_id = 原历史 ID}，便于"失败行重试"溯源。
+     * 如果原行已 SUCCESS 且未传 {@code force}，抛业务异常防止误点。
+     */
+    public ExecutionHistory retryRow(String batchId, int rowIndex, boolean force) throws java.io.IOException {
+        ExecutionHistory original = historyMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<ExecutionHistory>()
+                        .eq("batch_id", batchId)
+                        .eq("batch_row_index", rowIndex)
+                        .orderByDesc("id")
+                        .last("LIMIT 1"))
+                .stream().findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "no history row for batch=" + batchId + " row=" + rowIndex));
+        if (!force && Boolean.TRUE.equals(original.getSuccess())) {
+            throw new IllegalStateException("该行已成功，不需要重试");
+        }
+        ExecutionRequest req = new ExecutionRequest();
+        req.setScriptId(original.getScriptId());
+        req.setTenantId(original.getTenantId());
+        req.setPresetId(null);  // 历史行不存 preset_id；保留为空
+        req.setParams(fromJsonMap(original.getParametersJson()));
+        req.setBatchId(batchId);
+        req.setBatchRowIndex(rowIndex);
+        ExecutionHistory fresh = executor.execute(req);
+        // 写 parent_execution_id（如 schema 已加）；兜底用 updateById
+        ExecutionHistory linkPatch = new ExecutionHistory();
+        linkPatch.setId(fresh.getId());
+        linkPatch.setParentExecutionId(original.getId());
+        try { historyMapper.updateById(linkPatch); } catch (Exception ignore) { /* schema 未升级时静默 */ }
+        log.info("batch {} row {} retried; original=#{} new=#{}",
+                batchId, rowIndex, original.getId(), fresh.getId());
+        return fresh;
+    }
+
     public BatchSummary runSequential(Long scriptId, Long tenantId, Long presetId,
                                       List<Map<String, String>> rows, String confirmToken) {
         validateRows(rows);

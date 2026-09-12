@@ -306,15 +306,15 @@
             <div class="sb-form-section">
               <div class="sb-form-section-label">
                 <el-checkbox v-model="batchMode" :disabled="running">批量执行</el-checkbox>
-                <span class="muted" style="margin-left: 8px">每行 JSON：{"参数": "值"}</span>
+                <span class="muted" style="margin-left: 8px">从 Excel 直接粘贴列；每行对应一次执行</span>
               </div>
-              <el-input
+              <BatchTableEditor
                 v-if="batchMode"
-                v-model="batchRowsText"
-                type="textarea"
-                :rows="5"
-                placeholder='例如：&#10;{"database": "dev"}&#10;{"database": "prod"}'
+                ref="batchEditorRef"
+                v-model="batchRows"
+                :params="activeScript?.params || []"
                 :disabled="running"
+                @update:invalid-count="(n) => (batchInvalidCount = n)"
               />
             </div>
           </div>
@@ -464,6 +464,17 @@
               <span class="mono">{{ row.id }}</span>
             </template>
           </el-table-column>
+          <el-table-column label="操作" width="120" align="center" fixed="right">
+            <template #default="{ $index }">
+              <el-button
+                size="small"
+                link
+                type="primary"
+                :loading="retryingRow === $index"
+                @click="retryBatchRow($index)"
+              >重试此行</el-button>
+            </template>
+          </el-table-column>
         </el-table>
       </template>
     </el-drawer>
@@ -533,11 +544,12 @@ import { listTenants } from '../api/tenants'
 import { execute, submitExecution, readStdout, readStderr, cancelExecution, activeExecutions, executionState, logTail } from '../api/executions'
 import { useExecutionStore } from '../stores/executionStore'
 import { recentScripts } from '../api/history'
-import { listPresets, dryRun, uploadFile, runBatch, getBatch } from '../api/extras'
+import { listPresets, dryRun, uploadFile, runBatch, getBatch, retryBatchRow as apiRetryBatchRow } from '../api/extras'
 import ScriptCard from '../components/ScriptCard.vue'
 import ParamForm from '../components/ParamForm.vue'
 import ExecutionResultPanel from '../components/ExecutionResultPanel.vue'
 import QuickActionCard from '../components/QuickActionCard.vue'
+import BatchTableEditor from '../components/BatchTableEditor.vue'
 import { listQuickActions, createQuickAction, updateQuickAction, deleteQuickAction } from '../api/quickActions'
 import { formatDateTime, formatBytes } from '../utils/format'
 import { getItem, setItem, takeSessionItem, KEYS, draftKey } from '../utils/storage'
@@ -621,10 +633,15 @@ const previewOpen = ref(false)
 const previewData = ref(null)
 const previewing = ref(false)
 const batchMode = ref(false)
-const batchRowsText = ref('')
+const batchRows = ref([])
+const batchEditorRef = ref(null)
+const batchInvalidCount = ref(0)
 const batchResult = ref(null)
 const batchResultOpen = ref(false)
 const batchRowsForTable = ref([])
+// V3 (PR-8): tracks which row's retry is currently in flight so the
+// spinner can target a single row instead of disabling the whole table.
+const retryingRow = ref(-1)
 
 // Result state
 const resultHistory = ref(null)
@@ -966,7 +983,8 @@ async function openDrawer(s) {
   elapsed.value = 0
   presetId.value = null
   batchMode.value = false
-  batchRowsText.value = ''
+  batchRows.value = []
+  batchInvalidCount.value = 0
   batchResult.value = null
   for (const k of Object.keys(fileInputs)) delete fileInputs[k]
   try {
@@ -1059,20 +1077,25 @@ function collectParams() {
 }
 
 function parseBatchRows() {
-  const out = []
-  const text = (batchRowsText.value || '').trim()
-  if (!text) return out
-  for (const line of text.split(/\r?\n/)) {
-    const t = line.trim()
-    if (!t) continue
+  // V3 (PR-8): rows come from the structured editor, not a textarea.
+  // If the user enabled "只执行有效行", the editor returns only rows that
+  // passed per-row validation; otherwise we send whatever the user typed.
+  if (!batchRows.value || !batchRows.value.length) return []
+  // The editor exposes validRows() when onlyValid is on.
+  const editor = batchEditorRef.value
+  if (editor && typeof editor.validRows === 'function') {
     try {
-      const o = JSON.parse(t)
-      if (o && typeof o === 'object') out.push(o)
-    } catch {
-      ElMessage.warning(`无法解析行：${t.slice(0, 60)}`)
-    }
+      const valid = editor.validRows()
+      return valid.map((r) => {
+        const o = {}
+        for (const [k, v] of Object.entries(r)) {
+          if (v !== '' && v != null) o[k] = String(v)
+        }
+        return o
+      })
+    } catch { /* fall through to raw rows */ }
   }
-  return out
+  return batchRows.value
 }
 
 function closeDrawer() {
@@ -1096,6 +1119,31 @@ function backToForm() {
 function goHistory() {
   closeDrawer()
   router.push('/history')
+}
+
+// V3 (PR-8): retry a single row in the last batch. Re-runs the original
+// params via /batches/{batchId}/retry/{rowIndex}, then refreshes the row
+// list so the new executionId + status appear inline. The original row
+// stays intact on the server; a fresh ExecutionHistory is linked back via
+// parent_execution_id.
+async function retryBatchRow(rowIndex) {
+  if (!batchResult.value?.batchId) return
+  retryingRow.value = rowIndex
+  try {
+    await apiRetryBatchRow(batchResult.value.batchId, rowIndex, true)
+    // Refresh the table so the new executionId replaces the failed one.
+    const detailList = await getBatch(batchResult.value.batchId).catch(() => [])
+    batchRowsForTable.value = detailList || []
+    // Re-derive summary counts from the fresh detail list.
+    const succeeded = batchRowsForTable.value.filter((r) => r.success).length
+    const failed = batchRowsForTable.value.length - succeeded
+    batchResult.value = { ...batchResult.value, succeeded, failed }
+    ElMessage.success(`第 ${rowIndex + 1} 行已重新提交`)
+  } catch (err) {
+    ElMessage.error(`重试失败：${err?.message || '未知错误'}`)
+  } finally {
+    retryingRow.value = -1
+  }
 }
 
 async function runScript() {
@@ -1154,11 +1202,20 @@ async function runScript() {
   // If batch mode, parse rows and call /batches/execute instead.
   if (batchMode.value) {
     try {
+      // V3 (PR-8): the editor owns row validation. Run validate first so
+      // the user sees inline errors instead of silently losing rows.
+      const editor = batchEditorRef.value
+      if (editor && typeof editor.validate === 'function') editor.validate()
       const rows = parseBatchRows()
       if (!rows.length) {
-        ElMessage.warning('未解析到任何批次行')
+        ElMessage.warning(batchInvalidCount.value
+          ? `全部 ${batchInvalidCount.value} 行校验失败，无法提交。请修正或勾选「只执行有效行」后再试。`
+          : '未解析到任何批次行')
         running.value = false
         return
+      }
+      if (batchInvalidCount.value && batchRows.value.length !== rows.length) {
+        ElMessage.info(`已跳过 ${batchRows.value.length - rows.length} 行无效数据`)
       }
       const sum = await runBatch({
         scriptId: activeScript.value.id,

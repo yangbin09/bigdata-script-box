@@ -96,6 +96,11 @@ export const runBatch = (payload) =>
 export const getBatch = (batchId) =>
   http.get(`/batches/${batchId}`)
 
+// V3 (PR-8): retry a single row inside a batch. Returns the new ExecutionHistory.
+// `force=true` allows re-running rows that already succeeded.
+export const retryBatchRow = (batchId, rowIndex, force = false) =>
+  http.post(`/batches/${batchId}/retry/${rowIndex}`, null, { params: { force } })
+
 // ===== Package Import / Export =====
 export const exportScript = (id) =>
   http.get(`/scripts/${id}/export`, { responseType: 'blob' })

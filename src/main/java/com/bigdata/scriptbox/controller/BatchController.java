@@ -4,6 +4,7 @@ import com.bigdata.scriptbox.dto.ApiResponse;
 import com.bigdata.scriptbox.entity.ExecutionHistory;
 import com.bigdata.scriptbox.service.BatchService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -19,6 +20,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/batches")
 @RequiredArgsConstructor
+@Slf4j
 public class BatchController {
 
     private final BatchService batchService;
@@ -81,5 +83,30 @@ public class BatchController {
         public Integer concurrency;
         /** V2: 透传到每行 ExecutionRequest，用于 DANGEROUS 脚本的二次确认。 */
         public String confirmToken;
+    }
+
+    /**
+     * V3 (PR-8): 重跑 batch 中的某一行（行号 0..N-1）。
+     *
+     * <p>前端拿到 batch summary + 失败行号列表后，对每行调用此接口重跑；新行写
+     * {@code parent_execution_id = 原历史 ID}。若原行已是 SUCCESS 默认拒绝；
+     * body 里 {@code force=true} 可强制重跑。
+     */
+    @PostMapping("/{batchId}/retry/{rowIndex}")
+    public ApiResponse<ExecutionHistory> retryRow(
+            @PathVariable String batchId,
+            @PathVariable int rowIndex,
+            @RequestParam(defaultValue = "false") boolean force) {
+        try {
+            ExecutionHistory h = batchService.retryRow(batchId, rowIndex, force);
+            return ApiResponse.ok(h);
+        } catch (IllegalArgumentException ex) {
+            return ApiResponse.error(ex.getMessage());
+        } catch (IllegalStateException ex) {
+            return ApiResponse.error(ex.getMessage());
+        } catch (java.io.IOException ex) {
+            log.warn("batch retry I/O 失败 batch={} row={}: {}", batchId, rowIndex, ex.getMessage());
+            return ApiResponse.error("IO 失败：" + ex.getMessage());
+        }
     }
 }
