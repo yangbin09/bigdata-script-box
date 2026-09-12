@@ -56,6 +56,16 @@ scriptbox:
   default-timeout-seconds: 600
   # V2: 全局同时执行上限，由 ExecutionGate 的准入许可强制控制。
   max-concurrent: 5
+  # V3 (PR-0): 异步执行开关。
+  # async-enabled=true 时，POST /api/executions 准入后立即返回 executionId，
+  # 真实执行放到独立线程池跑；前端轮询 /state 拿终态。
+  # async-enabled=false 时回退到原同步路径（阻塞到完成），用于回滚与老集成测试。
+  exec:
+    async-enabled: true
+    # 异步执行池容量：core-size 始终 2（避免冷启动延迟），max 跟随 max-concurrent。
+    runner-pool-size: 5
+    runner-queue-size: 64
+    runner-name-prefix: exec-runner-
   # V3: 单次执行 stdout / stderr 落盘字节上限。0 表示不限制（不推荐）。
   max-output-bytes: 268435456
   max-log-bytes: 1048576           # 1MB limit per page render

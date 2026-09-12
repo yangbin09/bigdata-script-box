@@ -22,21 +22,31 @@ import java.util.Set;
  * {@code success} 仅表示 exitCode==0 且未超时未取消。
  */
 public enum ExecutionStatus {
+    /** 已准入、尚未 spawn 进程（PR-0 异步执行引入）。 */
+    PENDING,
     RUNNING,
     SUCCESS,
     FAILED,
     TIMEOUT,
     CANCELLED,
-    PRECHECK_FAILED;
+    PRECHECK_FAILED,
+    /**
+     * RUNNING 中进程消失后的回填终态：典型场景是服务重启
+     * （StartupReconciler 在 {@code ApplicationReadyEvent} 扫描并改写）。
+     * 与 CANCELLED 区分在于"是否用户主动取消"——UI 用 interruptedReason 区分。
+     */
+    INTERRUPTED;
 
     /** 持久化时使用的字符串集合，方便 Mapper / SQL 校验。 */
     public static final Set<String> ALL = Set.of(
+            PENDING.name(),
             RUNNING.name(),
             SUCCESS.name(),
             FAILED.name(),
             TIMEOUT.name(),
             CANCELLED.name(),
-            PRECHECK_FAILED.name()
+            PRECHECK_FAILED.name(),
+            INTERRUPTED.name()
     );
 
     /**

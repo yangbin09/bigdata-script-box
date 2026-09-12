@@ -96,6 +96,26 @@ public class ScriptBoxProperties {
     // 目录不存在时日志保留类别自动禁用。
     private String logsDir = "./logs";
 
+    // V3 (PR-0): 异步执行配置。ExecutionRunner 读这一段。
+    // 关闭时 ExecutionRunner.submit() 直接退化为 ScriptExecutor.execute() 同步路径，
+    // 老调用方（同步 await）仍可用，便于回滚。
+    private Exec exec = new Exec();
+
+    /** 异步执行配置。单独成块避免污染主配置类的字段表。 */
+    @Data
+    public static class Exec {
+        /** 是否启用异步执行。false 时回退同步路径。 */
+        private boolean asyncEnabled = true;
+        /** 异步执行池的 max size；与 ExecutionGate.maxConcurrent 解耦，但建议对齐。 */
+        @Min(1)
+        private int runnerPoolSize = 5;
+        /** 队列容量；超过后 CallerRunsPolicy 兜底，调用方线程同步跑。 */
+        @Min(1)
+        private int runnerQueueSize = 64;
+        /** 线程名前缀。 */
+        private String runnerNamePrefix = "exec-runner-";
+    }
+
     // ---- 显式 setter 保留"负值归一"逻辑（@Min 在字段上做 fail-fast；负值走到 setter 后
     // 也被钳住，防止 -1 让 setDefaultTimeoutSeconds 误用 600 后还能误归一）。 ----
 

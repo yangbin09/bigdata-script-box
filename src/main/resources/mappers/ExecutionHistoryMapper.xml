@@ -8,4 +8,31 @@
         ORDER BY COALESCE(batch_row_index, 0) ASC, start_time ASC
     </select>
 
+    <!--
+        V3 (PR-0): selectActive 拉取未结束的执行行。
+        索引走 idx_history_status，对 H2 / MySQL 都能命中。
+    -->
+    <select id="selectActive" resultType="com.bigdata.scriptbox.entity.ExecutionHistory">
+        SELECT * FROM execution_history
+        WHERE status IN ('PENDING', 'RUNNING')
+        ORDER BY start_time ASC
+    </select>
+
+    <!--
+        V3 (PR-0): markInterrupted 批量改写为 INTERRUPTED。
+        空列表时直接返回 0，避免产生无意义的 UPDATE。
+    -->
+    <update id="markInterrupted">
+        UPDATE execution_history
+        SET status = 'INTERRUPTED',
+            end_time = #{endTime},
+            interrupted_reason = #{reason},
+            success = FALSE,
+            timeout = FALSE
+        WHERE id IN
+        <foreach collection="ids" item="id" open="(" close=")" separator=",">
+            #{id}
+        </foreach>
+    </update>
+
 </mapper>

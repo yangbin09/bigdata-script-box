@@ -52,4 +52,11 @@ public class ExecutionRequest {
     /** 历史快照重跑标记：为 true 时脚本路径落在 executionDir 内（临时副本），
      *  captureSnapshot 会跳过 scriptsRoot 路径校验。 */
     private boolean rerunSnapshot;
+    /**
+     * V3 (PR-0): 异步执行分配的 executionId。由 {@code ExecutionRunner.submit}
+     * 写入；{@code ScriptExecutor} 内部应优先复用此值（不写则自己生成）。
+     * 让前端在提交瞬间就能拿到 ID 拿去做轮询 / 取消，而不是"准入通过后但还没
+     * 写到 history 行"那段时间的盲区。
+     */
+    private Long executionId;
 }

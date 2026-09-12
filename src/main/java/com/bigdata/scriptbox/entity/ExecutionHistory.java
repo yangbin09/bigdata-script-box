@@ -73,4 +73,15 @@ public class ExecutionHistory {
     /** V2: 执行上下文快照 JSON（参数 + 脚本正文 + 租户 + 风险 + 并发开关），
      *  用于"按原样重跑"，即便脚本已被编辑也不影响。 */
     private String snapshotJson;
+    /**
+     * V3 (PR-0): 中断原因。典型值为 {@code "process_restart"}（服务重启扫表产生）、
+     * {@code "manual_cancel"}（用户主动取消，冗余字段，主要看 CANCELLED 状态）。
+     * 业务上主要给 UI 在历史页/任务中心显示"已中断（X）"。
+     */
+    private String interruptedReason;
+    /**
+     * V3 (PR-0): 重跑 / 重试关联。历史页"使用当前脚本重跑"或"按快照重跑"、
+     * 批量执行"仅重试失败行"提交的新执行会指向原 executionId。
+     */
+    private Long parentExecutionId;
 }

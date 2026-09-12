@@ -44,4 +44,10 @@ public class ScriptParam {
     private String helpText;
     /** V2: 单条条件可见规则；空表示始终可见。 */
     private String visibleWhenJson;
+    /**
+     * V3 (PR-0): 是否敏感参数。true 时前端不会把该参数值写入 localStorage 草稿
+     * （避免密码 / Token 在浏览器持久化）。服务端不参与脱敏，
+     * 执行时仍按原值透传给脚本。
+     */
+    private Boolean sensitive;
 }

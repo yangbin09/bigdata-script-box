@@ -1,11 +1,14 @@
 package com.bigdata.scriptbox.controller;
 
 import com.bigdata.scriptbox.dto.ApiResponse;
+import com.bigdata.scriptbox.dto.ExecutionAccepted;
 import com.bigdata.scriptbox.dto.ExecutionRequest;
 import com.bigdata.scriptbox.entity.ExecutionHistory;
 import com.bigdata.scriptbox.executor.ScriptExecutor;
+import com.bigdata.scriptbox.mapper.ExecutionHistoryMapper;
 import com.bigdata.scriptbox.model.ExecutionStatus;
 import com.bigdata.scriptbox.service.ExecutionGate;
+import com.bigdata.scriptbox.service.ExecutionRunner;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -13,7 +16,13 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 脚本执行相关接口。
@@ -41,21 +50,35 @@ public class ExecutionController {
     private final com.bigdata.scriptbox.service.ResultParserService resultParserService;
     private final ExecutionGate executionGate;
     private final com.bigdata.scriptbox.service.ArtifactService artifactService;
+    private final ExecutionRunner executionRunner;
+    private final ExecutionHistoryMapper historyMapper;
 
     /**
-     * 同步执行一次脚本。
+     * 提交一次执行。
+     *
+     * <p>V3 (PR-0): 异步路径下，准入后立即返回 {@link ExecutionAccepted}（含 executionId），
+     * 真实执行由 {@link ExecutionRunner} 在后台线程完成。同步路径下
+     * （{@code scriptbox.exec.async-enabled=false}）行为不变 —— 返回最终 ExecutionHistory。
+     *
+     * <p>前端约定：拿到 {@code executionId} 后轮询 {@code /{id}/state} / {@code /{id}/result}。
      *
      * @param req 脚本执行请求
-     * @return 执行完成后的 ExecutionHistory 行
+     * @return 异步模式下为 ExecutionAccepted；同步模式下为 ExecutionHistory
      */
     @PostMapping
-    public ApiResponse<ExecutionHistory> run(@RequestBody ExecutionRequest req) {
+    public ApiResponse<?> run(@RequestBody ExecutionRequest req) {
         try {
-            return ApiResponse.ok(executor.execute(req));
+            ExecutionAccepted accepted = executionRunner.submit(req);
+            // 同步回退路径：ExecutionRunner 内部已直接调 executor.execute() 并把最终行回填；
+            // 此时 accepted.executionId 与最终行 id 一致，但 status 已是终态。
+            // 区分方法：runner 内部如果走同步回退，会把 "sync fallback" 写到 message。
+            if ("sync fallback".equals(accepted.getMessage())) {
+                ExecutionHistory finalRow = executor.history(accepted.getExecutionId());
+                return ApiResponse.ok(finalRow);
+            }
+            return ApiResponse.ok(accepted);
         } catch (IllegalArgumentException | IllegalStateException e) {
             return ApiResponse.error(e.getMessage());
-        } catch (IOException e) {
-            return ApiResponse.error("io error: " + e.getMessage());
         }
     }
 
@@ -86,6 +109,97 @@ public class ExecutionController {
                     p.startedAtMs(), p.cancelled()));
         }
         return ApiResponse.ok(out);
+    }
+
+    /**
+     * V3 (PR-0): 合并"内存 Permit + DB 残留 PENDING/RUNNING 行"返回活跃执行。
+     *
+     * <p>设计意图：服务重启后内存 Permit 已清空，但 DB 里残留的 RUNNING/PENDING 行
+     * 仍然有效（StartupReconciler 会扫表改 INTERRUPTED，但有竞态窗口）。
+     * 任务中心 / 前端轮询需要合并两个数据源才能看到完整活跃列表。
+     *
+     * <p>去重：以 executionId 为主键，内存优先（信息更全）。
+     *
+     * <p>无 scriptId / tenantId 过滤 —— 任务中心看全部。
+     */
+    @GetMapping("/recent-active")
+    public ApiResponse<java.util.List<RecentActiveView>> recentActive() {
+        // 1) 内存 Permit
+        Set<Long> inMemory = new HashSet<>();
+        List<RecentActiveView> out = new ArrayList<>();
+        for (ExecutionGate.Permit p : executionGate.activePermits()) {
+            if (p.finished()) continue;
+            inMemory.add(p.executionId());
+            out.add(new RecentActiveView(
+                    p.executionId(), p.scriptId(), p.tenantId(),
+                    ExecutionStatus.RUNNING.name(), p.startedAtMs(), p.cancelled()));
+        }
+        // 2) DB 残行（PENDING / RUNNING），但排除已经在内存的（避免重复）
+        try {
+            for (ExecutionHistory h : historyMapper.selectActive()) {
+                if (h.getId() == null || inMemory.contains(h.getId())) continue;
+                out.add(new RecentActiveView(
+                        h.getId(), h.getScriptId(), h.getTenantId(),
+                        h.getStatus(),
+                        h.getStartTime() == null ? null
+                                : h.getStartTime().atZone(java.time.ZoneId.systemDefault())
+                                        .toInstant().toEpochMilli(),
+                        ExecutionStatus.CANCELLED.name().equals(h.getStatus())));
+            }
+        } catch (Exception ex) {
+            log.warn("recent-active DB 扫表失败（仅返回内存数据）：{}", ex.getMessage());
+        }
+        return ApiResponse.ok(out);
+    }
+
+    /** recent-active 视图。 */
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.ALWAYS)
+    public record RecentActiveView(long id, long scriptId, long tenantId,
+                                   String status, Long startedAtMs, boolean cancelled) { }
+
+    /**
+     * V3 (PR-0): 日志增量 tail —— 拉取 stdout / stderr 文件最后 N 字节。
+     *
+     * <p>前端每 2s 拉一次，不必重传整文件。比 {@code /stdout} 接口省 90%+ 流量。
+     *
+     * @param id     执行 ID
+     * @param stream {@code stdout} 或 {@code stderr}
+     * @param bytes  最多返回字节数（默认 64KB）
+     */
+    @GetMapping(value = "/{id}/log-tail", produces = MediaType.TEXT_PLAIN_VALUE)
+    public ResponseEntity<byte[]> logTail(@PathVariable Long id,
+                                          @RequestParam(defaultValue = "stdout") String stream,
+                                          @RequestParam(defaultValue = "65536") int bytes) {
+        ExecutionHistory h = executor.history(id);
+        if (h == null) return ResponseEntity.notFound().build();
+        String path = "stderr".equalsIgnoreCase(stream) ? h.getStderrPath() : h.getStdoutPath();
+        if (path == null || path.isBlank()) return ResponseEntity.ok(new byte[0]);
+        try {
+            java.io.File f = new java.io.File(path);
+            if (!f.exists()) return ResponseEntity.ok(new byte[0]);
+            long len = f.length();
+            int want = Math.min(Math.max(bytes, 1024), 262144); // 1KB ~ 256KB
+            if (len <= want) {
+                return ResponseEntity.ok(Files.readAllBytes(Paths.get(path)));
+            }
+            byte[] tail = new byte[want];
+            int read = 0;
+            try (var ch = Files.newByteChannel(Paths.get(path))) {
+                ch.position(len - want);
+                java.nio.ByteBuffer buf = java.nio.ByteBuffer.wrap(tail);
+                while (buf.hasRemaining()) {
+                    int r = ch.read(buf);
+                    if (r < 0) break;
+                    read += r;
+                }
+            }
+            byte[] out = new byte[read];
+            System.arraycopy(tail, 0, out, 0, read);
+            return ResponseEntity.ok(out);
+        } catch (IOException ioe) {
+            return ResponseEntity.status(500).body(("log-tail error: " + ioe.getMessage())
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
     }
 
     /** 运行中执行的只读视图（替代原先就地拼装的 Map）。 */

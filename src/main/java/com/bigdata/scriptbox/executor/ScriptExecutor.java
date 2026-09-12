@@ -126,7 +126,11 @@ public class ScriptExecutor {
      */
     private ExecutionHistory executeWithScript(ExecutionRequest req, Script script,
                                                String scriptBodyOverride) throws IOException {
-        long executionId = nextExecutionId();
+        // V3 (PR-0): 异步路径下 ExecutionRunner 已分配 executionId 并写入 req；
+        // 复用它能让前端在"提交瞬间拿到的 ID"和"DB 行写入的 ID"是同一个，
+        // 避免 PENDING → RUNNING 切换期间出现 ID 不一致的窗口。
+        // 同步路径（async-enabled=false）req.executionId 仍为 null，走自增。
+        long executionId = req.getExecutionId() != null ? req.getExecutionId() : nextExecutionId();
         ExecutionContext ctx = prepareContext(req, script, executionId, scriptBodyOverride);
         // MDC 在主流程开始前挂上：runPrecheckOrRecordFailure / captureSnapshot / startProcess
         // 里的 log.info("开始执行脚本 ...") 都需要 executionId / scriptName 上下文；

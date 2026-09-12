@@ -9,6 +9,13 @@ CREATE TABLE IF NOT EXISTS tenant (
     create_time     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     update_time     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+-- V3 (PR-0 of 10-item optimization): auth_name 是 Principal 的可读别名，
+-- 存在 UNIQUE 约束，与 principal 一一对应；last_test_at/last_test_ok 让
+-- UI 可以直接显示最近一次认证测试结果。
+ALTER TABLE tenant ADD COLUMN IF NOT EXISTS auth_name VARCHAR(256);
+ALTER TABLE tenant ADD CONSTRAINT IF NOT EXISTS uq_tenant_auth_name UNIQUE (auth_name);
+ALTER TABLE tenant ADD COLUMN IF NOT EXISTS last_test_at TIMESTAMP;
+ALTER TABLE tenant ADD COLUMN IF NOT EXISTS last_test_ok BOOLEAN;
 
 CREATE TABLE IF NOT EXISTS script (
     id                BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -56,6 +63,9 @@ ALTER TABLE script_param ADD COLUMN IF NOT EXISTS placeholder VARCHAR(1024);
 ALTER TABLE script_param ADD COLUMN IF NOT EXISTS help_text VARCHAR(1024);
 -- V2: simple JSON visibility rule for conditional params.
 ALTER TABLE script_param ADD COLUMN IF NOT EXISTS visible_when_json VARCHAR(512);
+-- V3 (PR-0): sensitive 字段控制是否将参数值持久化到 localStorage 草稿。
+-- 服务端不参与脱敏（执行时仍按原值传），仅前端草稿写入会跳过 sensitive=true。
+ALTER TABLE script_param ADD COLUMN IF NOT EXISTS sensitive BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS idx_param_script_id ON script_param(script_id);
 
 CREATE TABLE IF NOT EXISTS execution_history (
@@ -97,6 +107,13 @@ ALTER TABLE execution_history ADD COLUMN IF NOT EXISTS script_sha256 VARCHAR(128
 -- V2: full execution context snapshot (params + body + tenant + risk flags)
 -- captured at start, used by the "re-run as it ran" button.
 ALTER TABLE execution_history ADD COLUMN IF NOT EXISTS snapshot_json VARCHAR(16384);
+-- V3 (PR-0): 异步执行 / 重启恢复 / 历史重跑关联
+-- interrupted_reason: 服务重启时把 RUNNING 行扫成 INTERRUPTED 留下的备注
+-- parent_execution_id: 历史重跑 / 批量行重试时，指向"被重跑"的那次
+ALTER TABLE execution_history ADD COLUMN IF NOT EXISTS interrupted_reason VARCHAR(256);
+ALTER TABLE execution_history ADD COLUMN IF NOT EXISTS parent_execution_id BIGINT;
+CREATE INDEX IF NOT EXISTS idx_history_parent ON execution_history(parent_execution_id);
+CREATE INDEX IF NOT EXISTS idx_history_status ON execution_history(status);
 
 CREATE TABLE IF NOT EXISTS preset_variable (
     id              BIGINT AUTO_INCREMENT PRIMARY KEY,
