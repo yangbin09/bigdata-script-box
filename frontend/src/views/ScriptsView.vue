@@ -283,15 +283,18 @@ async function refresh() {
   loading.value = true
   try {
     rows.value = (await listScripts()) || []
-    // Resolve parameter counts in the background (a small N+1, fine for personal use)
-    for (const k of Object.keys(paramCounts)) delete paramCounts[k]
-    await Promise.all(rows.value.map(async (s) => {
-      try {
-        const p = await listParams(s.id)
-        paramCounts[s.id] = (p || []).length
-      } catch { paramCounts[s.id] = 0 }
-    }))
-  } finally { loading.value = false }
+  } finally {
+    loading.value = false
+  }
+  // Resolve parameter counts afterwards (a small N+1, fine for personal use):
+  // the table no longer waits for every count before painting.
+  for (const k of Object.keys(paramCounts)) delete paramCounts[k]
+  await Promise.all(rows.value.map(async (s) => {
+    try {
+      const p = await listParams(s.id)
+      paramCounts[s.id] = (p || []).length
+    } catch { paramCounts[s.id] = 0 }
+  }))
 }
 
 function openCreate() {
@@ -370,7 +373,8 @@ async function doExport(row) {
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
-    URL.revokeObjectURL(url)
+    // Release the blob on the next tick so the download isn't cancelled.
+    setTimeout(() => URL.revokeObjectURL(url), 0)
     ElMessage.success('已导出')
   } catch (e) {
     // surfaced
@@ -395,17 +399,19 @@ async function onImportFile(file) {
 async function confirmDelete(row) {
   let counts = { historyCount: 0, presetCount: 0, scenarioCount: 0 }
   try {
-    const r = await scriptRelatedCounts(row.id)
-    counts = r?.data || counts
+    // scriptRelatedCounts() already resolves the payload (it used to be read
+    // via `r?.data`, which is always undefined → the impact warning never showed).
+    counts = (await scriptRelatedCounts(row.id)) || counts
   } catch (_) { /* tolerate — just show no counts */ }
   const parts = []
   if (counts.historyCount)   parts.push(`${counts.historyCount} 条执行历史`)
   if (counts.presetCount)    parts.push(`${counts.presetCount} 个参数方案`)
   if (counts.scenarioCount)  parts.push(`${counts.scenarioCount} 个场景步骤引用`)
   const related = parts.length ? `\n将关联影响：${parts.join('、')}（删除后这些记录的引用将悬空）` : ''
-  await ElMessageBox.confirm(
+  const ok = await ElMessageBox.confirm(
     `确认删除脚本「${row.displayName || row.name}」？此操作不可恢复。${related}`,
-    '确认', { type: 'warning', dangerouslyUseHTMLString: false })
+    '确认', { type: 'warning', dangerouslyUseHTMLString: false }).catch(() => null)
+  if (!ok) return
   await deleteScript(row.id)
   ElMessage.success('已删除')
   await refresh()

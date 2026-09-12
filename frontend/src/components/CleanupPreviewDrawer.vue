@@ -57,9 +57,9 @@
           <div class="muted small">预计释放</div>
           <div class="total-bytes">{{ fmtBytes(totals.totalBytes) }}</div>
         </div>
-        <div v-if="totals.skippedRunning > 0" class="skipped-tag">
+        <div v-if="skippedTotal > 0" class="skipped-tag">
           <el-tag type="warning" effect="plain" disable-transitions>
-            {{ totals.skippedRunning }} 个运行中的执行将被跳过
+            {{ skippedTotal }} 项将被跳过（运行中 / 符号链接 / 越界路径）
           </el-tag>
         </div>
       </div>
@@ -242,7 +242,8 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { Close } from '@element-plus/icons-vue'
-import { formatBytes, formatTimestamp } from '../utils/format'
+import { formatBytes as fmtBytes, formatTimestamp as formatTime } from '../utils/format'
+import { cleanupSkippedTotal } from '../utils/cleanup'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -256,8 +257,12 @@ function onClose(v) { emit('update:open', v) }
 const totals = computed(() => props.preview?.totals || {
   executionDirCount: 0, artifactCount: 0, logCount: 0, historyCount: 0,
   executionBytes: 0, artifactBytes: 0, logBytes: 0, totalBytes: 0,
-  skippedRunning: 0
+  skippedRunning: 0, skippedSymlink: 0, skippedEscape: 0
 })
+
+// Every skip reason the server can report (running executions, symlinks and
+// out-of-tree paths), not just the running-execution count.
+const skippedTotal = computed(() => cleanupSkippedTotal(totals.value))
 
 // True when the preview found nothing to delete across every category.
 // Used by the body to swap the candidate tables for a single friendly hint
@@ -265,7 +270,7 @@ const totals = computed(() => props.preview?.totals || {
 const isEmpty = computed(() => {
   const t = totals.value
   return t.executionDirCount === 0 && t.artifactCount === 0 &&
-    t.logCount === 0 && t.historyCount === 0 && t.skippedRunning === 0
+    t.logCount === 0 && t.historyCount === 0 && skippedTotal.value === 0
 })
 
 const listDrawerOpen = ref(false)
@@ -286,11 +291,6 @@ function openList(key) {
   currentList.value = key
   listDrawerOpen.value = true
 }
-
-// Local aliases keep the template tidy; the implementations live in
-// src/utils/format.js so byte/time rendering stays consistent across pages.
-const fmtBytes = formatBytes
-const formatTime = formatTimestamp
 </script>
 
 <style scoped>

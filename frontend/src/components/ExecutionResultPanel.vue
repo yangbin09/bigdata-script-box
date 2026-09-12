@@ -14,7 +14,7 @@
     <div class="sb-status-card" :class="statusClass">
       <div class="sb-status-icon">
         <el-icon :size="28">
-          <component :is="statusIcon" />
+          <component :is="statusIconComp" />
         </el-icon>
       </div>
       <div class="sb-status-text">
@@ -113,13 +113,11 @@
 
 <script setup>
 import { computed, ref, watch } from 'vue'
-import {
-  CircleClose, CircleCheck, WarningFilled,
-  RefreshRight, EditPen, Clock, Document, Download
-} from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { RefreshRight, EditPen, Clock, Document, Download } from '@element-plus/icons-vue'
 import { formatDateTime, formatDuration, formatBytes, parseParamsJson } from '../utils/format'
-import { STATUS, STATUS_LABEL, STATUS_TAG_TYPE, statusOfHistory } from '../utils/labels'
+import { STATUS, STATUS_LABEL, STATUS_TAG_TYPE, STATUS_CLASS, STATUS_HEADLINE, statusOfHistory } from '../utils/labels'
+import { statusIcon } from '../utils/status'
+import { copyText, downloadText } from '../utils/clipboard'
 import LogPane from './LogPane.vue'
 import { listArtifacts, artifactDownloadUrl, readResult } from '../api/executions'
 
@@ -145,8 +143,9 @@ async function refreshArtifacts() {
   }
   artifactsLoading.value = true
   try {
+    // listArtifacts() already resolves the payload (the artifact array).
     const data = await listArtifacts(props.history.id)
-    artifacts.value = Array.isArray(data?.data) ? data.data : []
+    artifacts.value = Array.isArray(data) ? data : []
   } catch (_) {
     artifacts.value = []
   } finally {
@@ -164,33 +163,9 @@ function shortName(name) {
 const status = computed(() => statusOfHistory(props.history))
 const statusLabel = computed(() => STATUS_LABEL[status.value])
 const statusTag = computed(() => STATUS_TAG_TYPE[status.value])
-
-const statusClass = computed(() => {
-  switch (status.value) {
-    case STATUS.SUCCESS: return 'ok'
-    case STATUS.TIMEOUT: return 'warn'
-    case STATUS.FAILED:  return 'fail'
-    default: return ''
-  }
-})
-
-const statusIcon = computed(() => {
-  switch (status.value) {
-    case STATUS.SUCCESS: return CircleCheck
-    case STATUS.TIMEOUT: return WarningFilled
-    case STATUS.FAILED:  return CircleClose
-    default: return CircleCheck
-  }
-})
-
-const statusHeadline = computed(() => {
-  switch (status.value) {
-    case STATUS.SUCCESS: return '执行成功'
-    case STATUS.TIMEOUT: return '执行超时'
-    case STATUS.FAILED:  return '执行失败'
-    default: return '执行完成'
-  }
-})
+const statusClass = computed(() => STATUS_CLASS[status.value] ?? '')
+const statusIconComp = computed(() => statusIcon(status.value))
+const statusHeadline = computed(() => STATUS_HEADLINE[status.value] || '执行完成')
 
 const summaryText = computed(() => {
   const lines = []
@@ -215,8 +190,9 @@ watch(() => props.history?.id, async (id) => {
   resultJsonLoadedFor.value = null
   if (id == null) return
   try {
-    const r = await readResult(id)
-    const obj = r?.data
+    // readResult() already resolves the parsed payload (or null when the
+    // script wrote no result.json).
+    const obj = await readResult(id)
     resultJsonText.value = obj == null ? '' : JSON.stringify(obj, null, 2)
   } catch (_) { resultJsonText.value = '' }
   resultJsonLoadedFor.value = id
@@ -234,30 +210,11 @@ watch(() => props.history, (h) => {
 }, { immediate: true })
 
 function copy(text) {
-  if (!text) {
-    ElMessage.warning('没有内容可以复制')
-    return
-  }
-  navigator.clipboard?.writeText(text).then(
-    () => ElMessage.success('已复制'),
-    () => ElMessage.error('复制失败')
-  )
+  copyText(text, '没有内容可以复制')
 }
 
 function download(name, text) {
-  if (!text) {
-    ElMessage.warning('没有内容可以下载')
-    return
-  }
-  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `${name}-${props.history.id}.log`
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
+  downloadText(`${name}-${props.history.id}.log`, text, '没有内容可以下载')
 }
 </script>
 

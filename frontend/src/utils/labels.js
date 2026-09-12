@@ -1,6 +1,7 @@
 /**
  * Canonical status vocabulary for the UI.
- * Backend stores success/timeout as booleans; we map to a small enum so labels stay consistent
+ * Backend stores success/timeout as booleans and a status string for the
+ * cancellable flows; we map both to one small enum so labels stay consistent
  * across pages (Execute / History / Detail drawer / result panel).
  */
 
@@ -34,6 +35,26 @@ export const STATUS_TAG_TYPE = {
   [STATUS.UNKNOWN]: 'info'
 }
 
+/** CSS modifier on .sb-status-card (see style.css). */
+export const STATUS_CLASS = {
+  [STATUS.SUCCESS]: 'ok',
+  [STATUS.FAILED]: 'fail',
+  [STATUS.TIMEOUT]: 'warn',
+  [STATUS.RUNNING]: 'run',
+  [STATUS.CANCELLED]: 'info',
+  [STATUS.UNKNOWN]: ''
+}
+
+/** Headline shown on the execution status card. */
+export const STATUS_HEADLINE = {
+  [STATUS.SUCCESS]: '执行成功',
+  [STATUS.FAILED]: '执行失败',
+  [STATUS.TIMEOUT]: '执行超时',
+  [STATUS.RUNNING]: '执行中',
+  [STATUS.CANCELLED]: '已取消',
+  [STATUS.UNKNOWN]: '执行完成'
+}
+
 /** Map a history row to its UI status enum. */
 export function statusOfHistory(h) {
   if (!h) return STATUS.UNKNOWN
@@ -41,15 +62,28 @@ export function statusOfHistory(h) {
   if (h.status === 'CANCELLED') return STATUS.CANCELLED
   if (h.status === 'RUNNING') return STATUS.RUNNING
   if (h.timeout) return STATUS.TIMEOUT
-  if (h.success) return STATUS.SUCCESS
-  return STATUS.FAILED
+  if (h.success === true) return STATUS.SUCCESS
+  if (h.success === false) return STATUS.FAILED
+  return STATUS.UNKNOWN
 }
 
-/** Map a script (enabled) to UI status enum. */
-export function statusOfScript(s) {
-  if (!s) return STATUS.UNKNOWN
-  if (s.enabled === false) return STATUS.DISABLED
-  return STATUS.SUCCESS
+/**
+ * Normalize a bare status string (e.g. the recent-scripts `lastStatus`) into
+ * the STATUS enum. Returns UNKNOWN for anything unrecognized.
+ */
+export function statusFromString(raw) {
+  if (!raw) return STATUS.UNKNOWN
+  const s = String(raw).trim().toLowerCase()
+  return Object.prototype.hasOwnProperty.call(STATUS_LABEL, s) ? s : STATUS.UNKNOWN
+}
+
+/** Tag type / label for a bare status string, with the same fallbacks. */
+export function tagTypeOf(raw) {
+  return STATUS_TAG_TYPE[statusFromString(raw)] || STATUS_TAG_TYPE[STATUS.UNKNOWN]
+}
+
+export function labelOf(raw) {
+  return STATUS_LABEL[statusFromString(raw)] || STATUS_LABEL[STATUS.UNKNOWN]
 }
 
 // ---- V2: Risk level (script.riskLevel) ----
@@ -129,17 +163,6 @@ export const PARAM_TYPE_OPTIONS = [
   { value: PARAM_TYPE.FILE, label: PARAM_TYPE_LABEL[PARAM_TYPE.FILE] }
 ]
 
-/** Per-type placeholder shown when the script author hasn't supplied one. */
-export const PARAM_TYPE_PLACEHOLDER = {
-  [PARAM_TYPE.TEXT]: '请输入文本',
-  [PARAM_TYPE.NUMBER]: '请输入数字',
-  [PARAM_TYPE.SELECT]: '请选择',
-  [PARAM_TYPE.BOOLEAN]: '',
-  [PARAM_TYPE.DATE]: '选择日期',
-  [PARAM_TYPE.TEXTAREA]: '可填写多行内容',
-  [PARAM_TYPE.FILE]: '点击上传文件'
-}
-
 /** Per-type default-value placeholder (sample). */
 export const PARAM_TYPE_DEFAULT_PLACEHOLDER = {
   [PARAM_TYPE.TEXT]: 'cobp_dwd',
@@ -161,23 +184,3 @@ export const PARAM_TYPE_HELP = {
   [PARAM_TYPE.TEXTAREA]: '适合 SQL、JSON、多行配置等较长内容。',
   [PARAM_TYPE.FILE]: '执行时文件会上传到本次 Execution 的受控 input 目录，并将服务端文件路径作为参数传给 Shell。'
 }
-
-/** Chinese labels for the script.enabled / tenant.enabled / global-variable.enabled flags. */
-export const ENABLED_LABEL = {
-  true: '已启用',
-  false: '已禁用'
-}
-
-/** Chinese labels for the boolean sensitive flag. */
-export const SENSITIVE_LABEL = {
-  true: '是',
-  false: '否'
-}
-
-/** Standard status chips shown next to a script row (replaces inline ternaries). */
-export const STATUS_CHIP = (row) => row?.enabled === false
-  ? { label: ENABLED_LABEL.false, type: 'info' }
-  : { label: ENABLED_LABEL.true, type: 'success' }
-
-/** Cleanly formatted "result" text for an Execution row, matching the existing UI vocabulary. */
-export const RESULT_LABEL = (row) => row?.success ? '成功' : '失败'

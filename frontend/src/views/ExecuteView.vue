@@ -59,10 +59,10 @@
             <el-tag
               v-if="r.lastStatus"
               size="small"
-              :type="recentTagType(r.lastStatus)"
+              :type="tagTypeOf(r.lastStatus)"
               disable-transitions
               effect="plain"
-            >{{ recentLabel(r.lastStatus) }}</el-tag>
+            >{{ labelOf(r.lastStatus) }}</el-tag>
             <el-tag
               v-else-if="r.lastSuccess === true"
               size="small"
@@ -213,7 +213,7 @@
             <ParamForm
               ref="formRef"
               :params="activeParams"
-              :initial-values="lastParamsForScript"
+              :initial-values="lastParams"
               v-model="formValues"
             />
           </div>
@@ -403,8 +403,11 @@ import ScriptCard from '../components/ScriptCard.vue'
 import ParamForm from '../components/ParamForm.vue'
 import ExecutionResultPanel from '../components/ExecutionResultPanel.vue'
 import { formatDateTime, formatBytes } from '../utils/format'
-import { getItem, setItem, removeItem } from '../utils/storage'
-import { RISK_LEVEL, RISK_LEVEL_LABEL, RISK_LEVEL_TAG_TYPE, normalizeRiskLevel, RISK_CONFIRM_TOKEN } from '../utils/labels'
+import { getItem, setItem, takeSessionItem, KEYS } from '../utils/storage'
+import {
+  RISK_LEVEL, RISK_LEVEL_LABEL, RISK_LEVEL_TAG_TYPE, normalizeRiskLevel, RISK_CONFIRM_TOKEN,
+  labelOf, tagTypeOf
+} from '../utils/labels'
 
 const router = useRouter()
 const scripts = ref([])
@@ -417,7 +420,6 @@ const collapsed = reactive({})
 
 // Drawer state
 const drawerOpen = ref(false)
-const drawerSize = ref('520px')
 const activeScript = ref(null)
 const activeParams = ref([])
 const formValues = ref({})
@@ -446,8 +448,8 @@ const resultHistory = ref(null)
 const resultStdout = ref('')
 const resultStderr = ref('')
 
-const LAST_TENANT_KEY = 'sb.lastTenantId'
-const LAST_PARAMS_KEY = 'sb.lastParams' // map: { [scriptId]: { [paramName]: value } }
+const LAST_TENANT_KEY = KEYS.LAST_TENANT
+const LAST_PARAMS_KEY = KEYS.LAST_PARAMS
 
 const enabledTenants = computed(() =>
   (tenants.value || []).filter((t) => t.enabled !== false)
@@ -498,24 +500,8 @@ function recentDisplayName(r) {
   return s ? (s.displayName || s.name) : (r.scriptName || '')
 }
 
-// V2: full status vocabulary for the recent card tag. Maps the backend's
-// lastStatus (success/timeout/failed/cancelled/running) to the same
-// element-plus tag types used by STATUS_TAG_TYPE elsewhere.
-function recentTagType(s) {
-  return {
-    success:   'success',
-    timeout:   'warning',
-    failed:    'danger',
-    cancelled: 'info',
-    running:   'primary'
-  }[s] || 'info'
-}
-function recentLabel(s) {
-  return {
-    success: '成功', failed: '失败', timeout: '超时',
-    cancelled: '已取消', running: '执行中'
-  }[s] || '—'
-}
+// V2: full status vocabulary for the recent card tag comes from utils/labels
+// (this file used to keep a private copy of the same maps).
 
 function pickInitialTenant(script) {
   // 1) explicit default on the script
@@ -534,6 +520,12 @@ function lastParamsForScript() {
   const all = getItem(LAST_PARAMS_KEY, {}) || {}
   return all[activeScript.value.id] || {}
 }
+
+// Stable reference for the drawer's seed values. Passing the function itself
+// (":initial-values="lastParamsForScript") built a new object on every render,
+// which made ParamForm reseed — and discard in-progress edits — whenever an
+// unrelated part of this view re-rendered (e.g. after uploading a file).
+const lastParams = computed(() => lastParamsForScript())
 
 async function refreshAll() {
   loading.value = true
@@ -559,12 +551,9 @@ async function openDrawerById(id) {
 
 // Honor a one-shot rerun handoff placed by HistoryView.
 async function consumeRerun() {
+  const payload = takeSessionItem(KEYS.RERUN)
+  if (!payload?.scriptId) return
   try {
-    const raw = sessionStorage.getItem('sb.rerun')
-    if (!raw) return
-    sessionStorage.removeItem('sb.rerun')
-    const payload = JSON.parse(raw)
-    if (!payload?.scriptId) return
     const s = scripts.value.find((x) => x.id === payload.scriptId)
     if (!s) {
       ElMessage.warning('原脚本已不存在，无法重跑')
@@ -768,13 +757,17 @@ async function runScript() {
   elapsedTimer = setInterval(() => { elapsed.value += 1 }, 1000)
 
   const params = collectParams()
-  // Persist last params (key/value form, server path mapped)
-  const persistParams = { ...params }
-  for (const [k, v] of Object.entries(persistParams)) {
-    if (fileInputs[k]) persistParams[k] = fileInputs[k].serverPath
-  }
+  // Persist the last-used params for this script so the next open pre-fills the
+  // form. File params are skipped: their value is a server-side path that only
+  // exists for one execution, and re-seeding it would silently reuse a stale
+  // upload.
   setItem(LAST_TENANT_KEY, tenantId.value)
   const all = getItem(LAST_PARAMS_KEY, {}) || {}
+  const persistParams = {}
+  for (const [k, v] of Object.entries(params)) {
+    if (fileInputs[k]) continue
+    persistParams[k] = v
+  }
   all[activeScript.value.id] = persistParams
   setItem(LAST_PARAMS_KEY, all)
 
@@ -821,7 +814,11 @@ async function runScript() {
       )
     }
     if (confirmToken) payload.confirmToken = confirmToken
-    const history = await execute(payload)
+    // The POST blocks until the script finishes, so the request must be allowed
+    // to outlive the script's own timeout (the instance default is 60 s, which
+    // used to abort every run longer than a minute while the backend kept going).
+    const scriptTimeoutMs = (Number(activeScript.value?.timeoutSeconds || 600) + 60) * 1000
+    const history = await execute(payload, scriptTimeoutMs)
     resultHistory.value = history
     try {
       const [so, se] = await Promise.all([
@@ -881,14 +878,25 @@ async function toggleFavorite(s, val) {
   s.favorite = val
 }
 
+// Responsive drawer size. Declared at the top level (not inside the async
+// onMounted body) so the teardown below is actually registered: a lifecycle
+// hook called after an `await` inside onMounted has no live instance and Vue
+// silently drops it, leaking the listener and the 1 s elapsed-time interval.
+const drawerSize = ref('520px')
+function computeDrawerSize() {
+  drawerSize.value = window.innerWidth >= 1280 ? '560px' : '460px'
+}
+
+onUnmounted(() => {
+  window.removeEventListener('resize', computeDrawerSize)
+  if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null }
+})
+
 onMounted(async () => {
+  computeDrawerSize()
+  window.addEventListener('resize', computeDrawerSize)
   await refreshAll()
-  // Compute responsive drawer size
-  const compute = () => { drawerSize.value = window.innerWidth >= 1280 ? '560px' : '460px' }
-  compute()
-  window.addEventListener('resize', compute)
-  onUnmounted(() => window.removeEventListener('resize', compute))
-  // Consume a possible rerun handoff from HistoryView (sessionStorage)
+  // Consume a possible rerun handoff from HistoryView (session storage)
   await consumeRerun()
 })
 </script>

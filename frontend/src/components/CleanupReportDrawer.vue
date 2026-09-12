@@ -35,25 +35,9 @@
             <span class="strong">{{ row.deleted }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="跳过" prop="skipped" width="80" align="center">
-          <template #default="{ row }">
-            <span v-if="row.skipped > 0" class="warn-text">{{ row.skipped }}</span>
-            <span v-else class="muted">0</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="失败" prop="failed" width="80" align="center">
-          <template #default="{ row }">
-            <span v-if="row.failed > 0" class="danger-text">{{ row.failed }}</span>
-            <span v-else class="muted">0</span>
-          </template>
-        </el-table-column>
       </el-table>
 
       <div class="totals">
-        <div class="totals-row">
-          <span class="muted">预计释放</span>
-          <span class="mono">{{ fmtBytes(report.bytesFreed) }}</span>
-        </div>
         <div class="totals-row">
           <span class="muted">实际释放</span>
           <span class="mono">{{ fmtBytes(report.bytesFreed) }}</span>
@@ -113,7 +97,8 @@
 <script setup>
 import { computed } from 'vue'
 import { Close } from '@element-plus/icons-vue'
-import { formatBytes, formatTimestamp } from '../utils/format'
+import { formatBytes as fmtBytes, formatTimestamp as formatTime } from '../utils/format'
+import { cleanupResultLabel, cleanupResultClass } from '../utils/cleanup'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -125,31 +110,25 @@ function onClose(v) { emit('update:open', v) }
 
 const resultLabel = computed(() => {
   const r = props.report?.result
-  if (r === 'SUCCESS') return '清理完成（成功）'
-  if (r === 'PARTIAL') return '清理完成（部分失败）'
-  if (r === 'FAILED')  return '清理失败'
-  return r || '已完成'
+  if (!r) return '已完成'
+  if (r === 'FAILED') return '清理失败'
+  return `清理完成（${cleanupResultLabel(r)}）`
 })
 
-const resultClass = computed(() => {
-  const r = props.report?.result
-  if (r === 'SUCCESS') return 'sub-success'
-  if (r === 'PARTIAL') return 'sub-warning'
-  return 'sub-danger'
-})
+const resultClass = computed(() => cleanupResultClass(props.report?.result))
 
+// The report has no per-category skipped/failed split (the executor records
+// them as flat lists), so the table only carries the deletion counts; the
+// skipped/failed totals are shown below.
 const rows = computed(() => {
   if (!props.report) return []
   return [
-    { key: 'exec',  label: '执行目录', deleted: props.report.executionDeleted || 0, skipped: 0, failed: 0 },
-    { key: 'art',   label: '产物文件', deleted: props.report.artifactDeleted  || 0, skipped: 0, failed: 0 },
-    { key: 'log',   label: '日志',     deleted: props.report.logDeleted       || 0, skipped: 0, failed: 0 },
-    { key: 'hist',  label: '历史',     deleted: props.report.historyDeleted   || 0, skipped: 0, failed: 0 }
+    { key: 'exec',  label: '执行目录', deleted: props.report.executionDeleted || 0 },
+    { key: 'art',   label: '产物文件', deleted: props.report.artifactDeleted  || 0 },
+    { key: 'log',   label: '日志',     deleted: props.report.logDeleted       || 0 },
+    { key: 'hist',  label: '历史',     deleted: props.report.historyDeleted   || 0 }
   ]
 })
-
-const fmtBytes = formatBytes
-const formatTime = formatTimestamp
 </script>
 
 <style scoped>

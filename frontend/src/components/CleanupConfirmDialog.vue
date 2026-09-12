@@ -39,7 +39,6 @@
         v-model="token"
         placeholder='输入 CLEAN'
         :disabled="loading"
-        @input="onTokenChange"
       />
     </div>
 
@@ -59,7 +58,7 @@
 import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { executeCleanup } from '../api/admin'
-import { formatBytes } from '../utils/format'
+import { formatBytes as fmtBytes } from '../utils/format'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -88,8 +87,6 @@ watch(() => props.open, (v) => {
   if (v) token.value = ''
 })
 
-function onTokenChange() { /* reactive via computed */ }
-
 async function onConfirm() {
   if (!canConfirm.value) return
   if (!props.previewId) {
@@ -99,30 +96,21 @@ async function onConfirm() {
   }
   loading.value = true
   try {
-    const r = await executeCleanup({
+    // executeCleanup() resolves the report payload and rejects on a non-zero
+    // code; the previous `r?.code !== 0` guard was always true, so a successful
+    // cleanup reported "执行失败: undefined" and never emitted `done`.
+    const report = await executeCleanup({
       previewId: props.previewId,
       confirmToken: CONFIRM_TOKEN
     })
-    if (r?.code !== 0) {
-      const msg = r?.message || '执行失败'
-      if (msg.includes('PREVIEW_EXPIRED')) {
-        ElMessage.error('预览已过期，请重新预览')
-      } else if (msg.includes('confirmation token')) {
-        ElMessage.error('确认 token 不正确')
-      } else {
-        ElMessage.error(msg)
-      }
-      emit('update:open', false)
-      return
-    }
-    emit('done', r.data || null)
+    emit('done', report || null)
     emit('update:open', false)
   } catch (e) {
-    const msg = e?.response?.data?.message || e?.message || String(e)
+    const msg = e?.message || String(e)
     if (msg.includes('PREVIEW_EXPIRED')) {
       ElMessage.error('预览已过期，请重新预览')
-    } else {
-      ElMessage.error('执行失败: ' + msg)
+    } else if (msg.includes('confirmation token')) {
+      ElMessage.error('确认 token 不正确')
     }
     emit('update:open', false)
   } finally {
@@ -131,8 +119,6 @@ async function onConfirm() {
 }
 
 function onClose(v) { emit('update:open', v) }
-
-const fmtBytes = formatBytes
 </script>
 
 <style scoped>

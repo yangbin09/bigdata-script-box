@@ -109,15 +109,14 @@ import {
   listGlobalVariables, createGlobalVariable,
   updateGlobalVariable, deleteGlobalVariable
 } from '../api/extras'
-import { getItem, setItem } from '../utils/storage'
+import { getItem, setItem, KEYS } from '../utils/storage'
 import CleanupPanel from '../components/CleanupPanel.vue'
 import SBLabel from '../components/SBLabel.vue'
 
 // Persist the active tab across page navigations — users that came from
 // a cleanup run land here often and shouldn't have to re-pick the tab.
-const SETTINGS_TAB_KEY = 'sb.settingsTab'
-const activeTab = ref(getItem(SETTINGS_TAB_KEY, 'vars'))
-watch(activeTab, (v) => setItem(SETTINGS_TAB_KEY, v))
+const activeTab = ref(getItem(KEYS.SETTINGS_TAB, 'vars'))
+watch(activeTab, (v) => setItem(KEYS.SETTINGS_TAB, v))
 
 const rows = ref([])
 const loading = ref(false)
@@ -128,6 +127,11 @@ const form = reactive({
 })
 const saving = ref(false)
 
+// The list endpoint masks sensitive values, so the value we loaded for the row
+// being edited is what must NOT be written back verbatim.
+const MASKED = '******'
+const loadedValue = ref('')
+
 async function refresh() {
   loading.value = true
   try { rows.value = (await listGlobalVariables()) || [] }
@@ -135,6 +139,7 @@ async function refresh() {
 }
 
 function openCreate() {
+  loadedValue.value = ''
   Object.assign(form, {
     id: null, variableKey: '', variableValue: '',
     sensitive: false, enabled: true, description: ''
@@ -143,6 +148,7 @@ function openCreate() {
 }
 
 function openEdit(row) {
+  loadedValue.value = row.variableValue || ''
   Object.assign(form, {
     id: row.id, variableKey: row.variableKey,
     variableValue: row.variableValue || '',
@@ -160,8 +166,16 @@ async function submitForm() {
   try {
     const payload = { ...form }
     delete payload.id
-    if (form.id) await updateGlobalVariable(form.id, payload)
-    else         await createGlobalVariable(payload)
+    if (form.id) {
+      // Editing a sensitive variable without retyping its value: omit the field
+      // so the server keeps the stored secret instead of persisting the mask.
+      if (form.sensitive && form.variableValue === loadedValue.value && loadedValue.value === MASKED) {
+        delete payload.variableValue
+      }
+      await updateGlobalVariable(form.id, payload)
+    } else {
+      await createGlobalVariable(payload)
+    }
     ElMessage.success('已保存')
     formOpen.value = false
     await refresh()
@@ -169,7 +183,9 @@ async function submitForm() {
 }
 
 async function confirmDelete(row) {
-  await ElMessageBox.confirm(`确认删除变量「${row.variableKey}」？`, '确认', { type: 'warning' })
+  const ok = await ElMessageBox.confirm(`确认删除变量「${row.variableKey}」？`, '确认', { type: 'warning' })
+    .catch(() => null)
+  if (!ok) return
   await deleteGlobalVariable(row.id)
   ElMessage.success('已删除')
   await refresh()

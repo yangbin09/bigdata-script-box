@@ -44,14 +44,16 @@
         </template>
       </el-table-column>
       <el-table-column label="描述" min-width="180" prop="description" show-overflow-tooltip />
-      <el-table-column label="状态" width="90" align="center">
+      <el-table-column label="状态" width="110" align="center">
         <template #default="{ row }">
-          <el-tag
+          <el-switch
+            :model-value="row.enabled !== false"
             size="small"
-            :type="row.enabled === false ? 'info' : 'success'"
-            disable-transitions
-            effect="plain"
-          >{{ row.enabled === false ? '已禁用' : '已启用' }}</el-tag>
+            inline-prompt
+            active-text="启用"
+            inactive-text="禁用"
+            @update:model-value="(v) => toggleEnabled(row, v)"
+          />
         </template>
       </el-table-column>
       <el-table-column label="操作" width="320" fixed="right">
@@ -129,7 +131,8 @@
         </div>
       </template>
 
-      <template v-if="testResult">
+      <div v-if="testing" v-loading="testing" class="sb-test-loading" />
+      <template v-else-if="testResult">
         <div class="sb-test-card" :class="{ ok: testResult.ok, fail: !testResult.ok }">
           <el-icon :size="22">
             <component :is="testResult.ok ? CircleCheck : CircleClose" />
@@ -194,6 +197,7 @@ const uploading = ref(false)
 const testOpen = ref(false)
 const testTarget = ref(null)
 const testResult = ref(null)
+const testing = ref(false)
 
 async function refresh() {
   loading.value = true
@@ -213,7 +217,9 @@ function openEdit(row) {
   Object.assign(form, {
     id: row.id, name: row.name, principal: row.principal,
     defaultDatabase: row.defaultDatabase, description: row.description,
-    enabled: row.enabled
+    // Older rows may have a null flag; the table renders 已启用 for those, so
+    // the drawer must not show the switch as off.
+    enabled: row.enabled !== false
   })
   formOpen.value = true
 }
@@ -232,23 +238,33 @@ async function submitForm() {
   } finally { saving.value = false }
 }
 
+// Enable/disable straight from the table (wired to the 状态 column switch).
+// The handler existed but was never referenced, so tenants could not be
+// disabled from the UI at all — while scenarios filter on that flag.
 async function toggleEnabled(row, val) {
-  await setTenantEnabled(row.id, val)
+  const previous = row.enabled !== false
   row.enabled = val
+  try {
+    await setTenantEnabled(row.id, val)
+    ElMessage.success(val ? '已启用' : '已禁用')
+  } catch (_) {
+    row.enabled = previous
+  }
 }
 
 async function confirmDelete(row) {
   let counts = { historyCount: 0 }
   try {
-    const r = await tenantRelatedCounts(row.id)
-    counts = r?.data || counts
+    // tenantRelatedCounts() already resolves the payload.
+    counts = (await tenantRelatedCounts(row.id)) || counts
   } catch (_) { /* tolerate */ }
   const related = counts.historyCount
     ? `\n将关联影响：${counts.historyCount} 条执行历史（删除后这些记录的引用将悬空）`
     : ''
-  await ElMessageBox.confirm(
+  const ok = await ElMessageBox.confirm(
     `确认删除租户「${row.name}」？${related}`,
-    '确认', { type: 'warning' })
+    '确认', { type: 'warning' }).catch(() => null)
+  if (!ok) return
   await deleteTenant(row.id)
   ElMessage.success('已删除')
   await refresh()
@@ -283,9 +299,16 @@ async function submitKeytab() {
 async function runTest(row) {
   testTarget.value = row
   testResult.value = null
+  testing.value = true
   testOpen.value = true
-  try { testResult.value = await testTenant(row.id) }
-  catch { /* keep open */ }
+  try {
+    const res = await testTenant(row.id)
+    // Ignore a late response if the user already opened another tenant's test.
+    if (testTarget.value?.id === row.id) testResult.value = res
+  } catch { /* keep open */ }
+  finally {
+    if (testTarget.value?.id === row.id) testing.value = false
+  }
 }
 
 onMounted(refresh)
@@ -300,6 +323,8 @@ onMounted(refresh)
   align-items: center;
   gap: 4px;
 }
+
+.sb-test-loading { height: 120px; }
 
 .sb-test-card {
   display: flex;

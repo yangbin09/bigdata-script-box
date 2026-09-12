@@ -6,8 +6,15 @@
 :root {
   --sb-bg:        #f5f6f8;
   --sb-bg-panel:  #ffffff;
+  /* Faint panel background used by log panes / inline artifact rows. */
+  --sb-bg-soft:   #fafbfc;
   --sb-border:    #e4e7ed;
   --sb-text:      #1f2329;
+  /* Aliases kept because several cleanup components reach for them; without
+     these declarations the properties were invalid-at-computed-value-time and
+     silently fell back to inherit (muted text rendered full-strength). */
+  --sb-text-1:    #1f2329;
+  --sb-text-muted: #909399;
   --sb-text-2:    #606266;
   --sb-text-3:    #909399;
   --sb-primary:   #2563eb;

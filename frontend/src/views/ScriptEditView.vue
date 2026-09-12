@@ -224,7 +224,7 @@
                       </el-button>
                     </div>
                   </el-form-item>
-                  <el-form-item v-else-if="p.type !== 'select'" />
+                  <el-form-item v-else />
 
                   <el-form-item>
                     <template #label><SBLabel text="默认值" tip="打开执行页面时自动填充的初始值，用户仍然可以修改。" /></template>
@@ -401,7 +401,8 @@ import {
   listVersions, getVersion, rollbackToVersion,
   runPrecheck as runPrecheckApi, savePrecheck
 } from '../api/extras'
-import { formatDateTime } from '../utils/format'
+import { formatDateTime, isValidJson } from '../utils/format'
+import { parseOptions, serializeOptions, parseVisibilityRule } from '../utils/params'
 import {
   RISK_LEVEL_OPTIONS, normalizeRiskLevel,
   PARAM_TYPE_OPTIONS, PARAM_TYPE_HELP, PARAM_TYPE_DEFAULT_PLACEHOLDER, PARAM_TYPE
@@ -414,6 +415,10 @@ const loading = ref(false)
 const saving = ref(false)
 const script = ref(null)
 const tenants = ref([])
+
+// Monotonic token for the async syntax check: a result computed for an older
+// body must never overwrite a newer one.
+let syntaxSeq = 0
 
 const activeTab = ref('info')
 
@@ -441,36 +446,12 @@ const versionOpen = ref(false)
 const activeVersion = ref(null)
 
 /**
- * Parse p.options (a comma-separated string) into a [{label, value}] array.
- * Each entry may be "label:value" or just "value" (in which case label = value).
- * The legacy "ls,ps,df" form keeps working unchanged.
+ * Options round-trip helpers. The parsing/serialising itself lives in
+ * utils/params.js so the editor and the runtime form agree; these thin wrappers
+ * only adapt the ScriptParam row shape used here.
  */
-function parseOptions(p) {
-  const raw = p.options || ''
-  return raw.split(',').map((s) => s.trim()).filter(Boolean).map((entry) => {
-    const i = entry.indexOf(':')
-    if (i >= 0) {
-      return { label: entry.substring(0, i).trim(), value: entry.substring(i + 1).trim() }
-    }
-    return { label: entry, value: entry }
-  })
-}
-
-/** Serialize [{label, value}] back into the comma-separated p.options string. */
-function serializeOptions(opts) {
-  return (opts || [])
-    .map((o) => {
-      const label = (o.label || '').trim()
-      const value = (o.value || '').trim()
-      if (!label && !value) return null
-      // If label === value, keep the old "value-only" form so legacy scripts
-      // round-trip unchanged. Otherwise emit "label:value".
-      if (!label || label === value) return value || label
-      return `${label}:${value}`
-    })
-    .filter(Boolean)
-    .join(',')
-}
+function optionsOf(p) { return parseOptions(p?.options) }
+function optionsToString(list) { return serializeOptions(list) }
 
 function addOption(p) {
   if (!p._options) p._options = []
@@ -484,6 +465,12 @@ async function load() {
   const id = Number(route.query.id)
   if (!id) return
   loading.value = true
+  // Reset per-script editor state so the previous script's syntax errors can't
+  // render against the new body while the 900 ms debounce is pending.
+  syntaxSeq++
+  syntaxErrors.value = []
+  syntaxWarnings.value = []
+  syntaxState.value = 'idle'
   try {
     const [detail, ts, ps, vs] = await Promise.all([
       getScript(id),
@@ -513,33 +500,33 @@ async function load() {
       visibleWhenJson: p.visibleWhenJson || '',
       // _options is a UI-only helper that materializes p.options (a comma-
       // separated string in the backend) into [{label, value}] pairs.
-      _options: parseOptions(p)
+      _options: optionsOf(p)
     }))
     precheckJson.value = detail.script.precheckConfigJson || ''
     tenants.value = ts || []
     presets.value = ps || []
     versions.value = vs || []
     // Snapshot current state so onBeforeRouteLeave can detect unsaved edits.
-    originalSnapshot.value = serialize()
+    resetDirty()
   } finally { loading.value = false }
 }
 
-// Canonical string of every editable field. Used by the route-leave guard
-// to detect unsaved changes without tracking each ref individually.
-// Presets and versions are excluded — they have their own save flows and
-// the load() snapshot is reset after each one.
-function serialize() {
-  return JSON.stringify({
-    form: { ...form },
-    body: body.value,
-    params: params.value,
-    precheckJson: precheckJson.value
-  })
-}
-const originalSnapshot = ref('')
+// Dirty tracking. A watcher-based flag instead of comparing JSON snapshots:
+// the old isDirty ran serialize() — a full JSON.stringify of form + params +
+// the (up to 1 MB) script body — on every reactive update, i.e. per keystroke.
+const dirty = ref(false)
+function markDirty() { dirty.value = true }
+function resetDirty() { dirty.value = false }
+
+// flush: 'sync' so the marks made while load() populates the editor are
+// superseded by the resetDirty() call at the end of load().
+watch(form, markDirty, { deep: true, flush: 'sync' })
+watch(params, markDirty, { deep: true, flush: 'sync' })
+watch(precheckJson, markDirty, { flush: 'sync' })
+watch(body, markDirty, { flush: 'sync' })
 
 onBeforeRouteLeave(async () => {
-  if (serialize() === originalSnapshot.value) return true
+  if (!dirty.value) return true
   try {
     await ElMessageBox.confirm(
       '有未保存的修改。确定离开？已编辑的内容将丢失。',
@@ -552,7 +539,7 @@ onBeforeRouteLeave(async () => {
 
 // Also guard against browser tab close / reload.
 function beforeUnload(e) {
-  if (serialize() !== originalSnapshot.value) {
+  if (dirty.value) {
     e.preventDefault()
     e.returnValue = ''
   }
@@ -563,7 +550,9 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
 function addParam() {
   params.value.push({
     name: '', label: '', type: 'text', defaultValue: '',
-    options: '', required: false, sortOrder: params.value.length,
+    // sortOrder is assigned from the array index on save; the editor's UI order
+    // is the source of truth.
+    options: '', required: false,
     placeholder: '', helpText: '', visibleWhenJson: '',
     _options: []
   })
@@ -579,18 +568,26 @@ async function removeParam(i) {
 function moveUp(i) { if (i <= 0) return; const a = params.value[i - 1]; params.value[i - 1] = params.value[i]; params.value[i] = a }
 function moveDown(i) { if (i >= params.value.length - 1) return; const a = params.value[i + 1]; params.value[i + 1] = params.value[i]; params.value[i] = a }
 
+// Declared names, memoized: this Set used to be rebuilt inside every
+// visibleWhenError() call, i.e. once per param per render (O(n²) per keystroke).
+const declaredParamNames = computed(() =>
+  new Set(params.value.map((q) => q.name).filter(Boolean))
+)
+
+// Validation errors keyed by param name, computed once per change instead of
+// twice per param per render (the template used to call visibleWhenError(p) in
+// both the v-if and the interpolation).
+const visibilityErrors = computed(() => {
+  const m = new Map()
+  for (const p of params.value) {
+    const { error } = parseVisibilityRule(p.visibleWhenJson, declaredParamNames.value)
+    m.set(p, error || null)
+  }
+  return m
+})
+
 function visibleWhenError(p) {
-  const raw = (p.visibleWhenJson || '').trim()
-  if (!raw) return null
-  let rule
-  try { rule = JSON.parse(raw) } catch { return 'visibleWhenJson 不是合法 JSON' }
-  if (!rule || typeof rule !== 'object') return 'visibleWhenJson 必须是 JSON 对象'
-  if (!rule.param || typeof rule.param !== 'string') return '缺少 param 字段（要引用的参数名）'
-  const op = rule.operator
-  if (op !== 'equals' && op !== 'notEquals') return `operator 必须是 equals 或 notEquals（当前: ${op || '(空)'}）`
-  const declared = new Set(params.value.map((q) => q.name).filter(Boolean))
-  if (!declared.has(rule.param)) return `引用了未声明的参数 "${rule.param}"`
-  return null
+  return visibilityErrors.value.get(p) || null
 }
 
 async function saveAll(thenExecute) {
@@ -624,7 +621,7 @@ async function saveAll(thenExecute) {
         // Re-serialize the UI option editor back into the backend's
         // comma-separated string. _options itself is dropped from the payload.
         if (p.type === PARAM_TYPE.SELECT) {
-          out.options = serializeOptions(p._options || [])
+          out.options = optionsToString(p._options || [])
         }
         delete out._options
         return out
@@ -648,8 +645,15 @@ async function savePrecheckOnly() {
 
 async function runPrecheckNow() {
   runningPrecheck.value = true
+  // Clear the previous result first: keeping a stale pass/fail next to a
+  // spinner is misleading if the new run fails.
+  precheckResult.value = null
   try {
-    precheckResult.value = await runPrecheckApi(script.value.id)
+    // The endpoint takes a @RequestBody Map — posting no body at all made
+    // Spring answer 415, so this button could never succeed.
+    precheckResult.value = await runPrecheckApi(script.value.id, {
+      tenantId: form.defaultTenantId || null
+    })
   } finally {
     runningPrecheck.value = false
   }
@@ -669,8 +673,7 @@ function openPresetForm(p) {
 
 async function savePreset() {
   if (!presetForm.name) return ElMessage.warning('名称必填')
-  try { JSON.parse(presetForm.paramsJson) }
-  catch { return ElMessage.warning('参数 JSON 格式错误') }
+  if (!isValidJson(presetForm.paramsJson)) return ElMessage.warning('参数 JSON 格式错误')
   savingPreset.value = true
   try {
     const payload = {
@@ -687,7 +690,9 @@ async function savePreset() {
 }
 
 async function removePreset(p) {
-  await ElMessageBox.confirm(`确认删除方案「${p.name}」？`, '确认', { type: 'warning' })
+  const ok = await ElMessageBox.confirm(`确认删除方案「${p.name}」？`, '确认', { type: 'warning' })
+    .catch(() => null)
+  if (!ok) return
   await deletePreset(script.value.id, p.id)
   presets.value = (await listPresets(script.value.id)) || []
 }
@@ -698,16 +703,37 @@ async function viewVersion(v) {
 }
 
 async function rollback(v) {
-  await ElMessageBox.confirm(
+  const ok = await ElMessageBox.confirm(
     `确认回滚到 v${v.versionNo}？会创建一个新的版本指向此版本，旧版本不会被删除。`,
-    '确认', { type: 'warning' })
+    '确认', { type: 'warning' }).catch(() => null)
+  if (!ok) return
   const res = await rollbackToVersion(script.value.id, v.id)
-  ElMessage.success(`已回滚为 v${res.versionNo}`)
+  // The endpoint answers { newVersion: {...} }, not the version itself.
+  const vno = res?.newVersion?.versionNo
+  ElMessage.success(vno ? `已回滚为 v${vno}` : '已回滚')
   await load()
 }
 
+// Switching the ?id= query while staying on this route does NOT trigger
+// onBeforeRouteLeave, so the unsaved-changes guard has to live here too —
+// otherwise picking another script silently discarded the edits.
 onMounted(load)
-watch(() => route.query.id, load)
+watch(() => route.query.id, async (id, previous) => {
+  if (id === previous) return
+  if (dirty.value) {
+    const ok = await ElMessageBox.confirm(
+      '有未保存的修改。确定切换脚本？已编辑的内容将丢失。',
+      '未保存',
+      { type: 'warning', confirmButtonText: '放弃修改', cancelButtonText: '留在页面' }
+    ).catch(() => null)
+    if (!ok) {
+      // Put the query back so the editor keeps showing the edited script.
+      router.replace({ name: 'script-edit', query: previous ? { id: previous } : {} })
+      return
+    }
+  }
+  load()
+})
 
 // V2: inline syntax-check state. The indicator sits next to the body
 // counter; clicking "检查语法" (or auto-checking after a debounce) calls
@@ -717,18 +743,19 @@ const syntaxErrors = ref([])
 const syntaxWarnings = ref([])
 const syntaxState = ref('idle') // idle | ok | error | warning
 async function runSyntaxCheck() {
-  if (syntaxChecking.value) return
+  const seq = ++syntaxSeq
   syntaxChecking.value = true
+  const checked = body.value
   try {
-    const r = await syntaxCheck(body.value)
-    const data = r?.data || r
+    const data = await syntaxCheck(checked)
+    if (seq !== syntaxSeq) return
     syntaxErrors.value = Array.isArray(data?.errors) ? data.errors : []
     syntaxWarnings.value = Array.isArray(data?.warnings) ? data.warnings : []
     syntaxState.value = data?.ok ? (syntaxWarnings.value.length ? 'warning' : 'ok') : 'error'
   } catch (_) {
-    syntaxState.value = 'idle'
+    if (seq === syntaxSeq) syntaxState.value = 'idle'
   } finally {
-    syntaxChecking.value = false
+    if (seq === syntaxSeq) syntaxChecking.value = false
   }
 }
 const syntaxLabel = computed(() => {
@@ -743,7 +770,7 @@ const syntaxLabel = computed(() => {
 // True when the user has edited any field since the last load / save.
 // Shown as a small badge in the header so the unsaved-warning prompts
 // aren't surprising.
-const isDirty = computed(() => serialize() !== originalSnapshot.value)
+const isDirty = computed(() => dirty.value)
 const syntaxClass = computed(() => syntaxState.value)
 const syntaxIcon = computed(() => syntaxState.value === 'error' ? CircleClose : CircleCheck)
 // Debounced auto-check after edits stop — avoid hammering the server while
@@ -753,6 +780,7 @@ watch(body, () => {
   if (syntaxTimer) clearTimeout(syntaxTimer)
   syntaxTimer = setTimeout(() => { runSyntaxCheck().catch(() => {}) }, 900)
 })
+onBeforeUnmount(() => { if (syntaxTimer) clearTimeout(syntaxTimer) })
 </script>
 
 <style scoped>

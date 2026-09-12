@@ -1,32 +1,65 @@
 /**
- * Thin wrapper over localStorage with JSON (de)serialization.
+ * Thin wrapper over localStorage/sessionStorage with JSON (de)serialization.
  * Used for last-tenant, last-params and other small UX-persistence keys.
- * Silently no-ops if localStorage is unavailable (e.g. private mode).
+ * Silently no-ops if the storage is unavailable (e.g. private mode / quota).
  */
-const safeStorage = (() => {
+
+/** Every persistence key used by the app, so they don't drift as string literals. */
+export const KEYS = {
+  LAST_TENANT: 'sb.lastTenantId',
+  LAST_PARAMS: 'sb.lastParams',
+  RERUN: 'sb.rerun',
+  RERUN_RESULT: 'sb.rerunResult',
+  SETTINGS_TAB: 'sb.settingsTab'
+}
+
+function probe(store) {
   try {
     const t = '__sb_probe__'
-    window.localStorage.setItem(t, '1')
-    window.localStorage.removeItem(t)
-    return window.localStorage
+    store.setItem(t, '1')
+    store.removeItem(t)
+    return store
   } catch (_) {
     return null
   }
-})()
-
-export function getItem(key, fallback = null) {
-  if (!safeStorage) return fallback
-  const raw = safeStorage.getItem(key)
-  if (raw == null) return fallback
-  try { return JSON.parse(raw) } catch { return fallback }
 }
 
-export function setItem(key, value) {
-  if (!safeStorage) return
-  try { safeStorage.setItem(key, JSON.stringify(value)) } catch { /* quota */ }
+const safeLocal = typeof window === 'undefined' ? null : probe(window.localStorage)
+const safeSession = typeof window === 'undefined' ? null : probe(window.sessionStorage)
+
+function make(store) {
+  return {
+    get(key, fallback = null) {
+      if (!store) return fallback
+      const raw = store.getItem(key)
+      if (raw == null) return fallback
+      try { return JSON.parse(raw) } catch { return fallback }
+    },
+    set(key, value) {
+      if (!store) return
+      try { store.setItem(key, JSON.stringify(value)) } catch (_) { /* quota */ }
+    },
+    remove(key) {
+      if (!store) return
+      try { store.removeItem(key) } catch (_) { /* ignore */ }
+    }
+  }
 }
 
-export function removeItem(key) {
-  if (!safeStorage) return
-  try { safeStorage.removeItem(key) } catch { /* */ }
+const local = make(safeLocal)
+const session = make(safeSession)
+
+export const getItem = local.get
+export const setItem = local.set
+export const removeItem = local.remove
+
+export const getSessionItem = session.get
+export const setSessionItem = session.set
+export const removeSessionItem = session.remove
+
+/** Read-and-delete a one-shot handoff payload (used by the rerun flows). */
+export function takeSessionItem(key, fallback = null) {
+  const v = session.get(key, fallback)
+  session.remove(key)
+  return v
 }

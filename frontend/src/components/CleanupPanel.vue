@@ -145,11 +145,8 @@
             <span class="mono">{{ formatBytes(row.bytesFreed) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="耗时" width="90">
-          <template #default="{ row }">
-            <span class="mono">{{ Math.round((row.elapsedMs || 0) / 100) / 10 }}s</span>
-          </template>
-        </el-table-column>
+        <!-- The 耗时 column was removed: cleanup_history has no elapsedMs column
+             (CleanupService only logs it), so it always rendered 0.0s. -->
         <el-table-column label="操作" width="80" fixed="right">
           <template #default="{ row }">
             <el-button size="small" text @click="showHistoryDetail(row)">详情</el-button>
@@ -190,7 +187,8 @@ import {
   previewCleanup, getSettings, updateSettings,
   listCleanupHistory
 } from '../api/admin'
-import { formatBytes, formatTimestamp } from '../utils/format'
+import { formatBytes, formatTimestamp as formatTime } from '../utils/format'
+import { cleanupResultLabel as resultLabel, cleanupResultTagType as resultTagType } from '../utils/cleanup'
 import CleanupPreviewDrawer from './CleanupPreviewDrawer.vue'
 import CleanupConfirmDialog from './CleanupConfirmDialog.vue'
 import CleanupReportDrawer from './CleanupReportDrawer.vue'
@@ -208,24 +206,10 @@ const reportDrawerOpen = ref(false)
 const lastReport = ref(null)
 const history = ref([])
 
-const formatTime = formatTimestamp
-
-function resultLabel(r) {
-  if (r === 'SUCCESS') return '成功'
-  if (r === 'PARTIAL') return '部分失败'
-  if (r === 'FAILED')  return '失败'
-  return r || '—'
-}
-function resultTagType(r) {
-  if (r === 'SUCCESS') return 'success'
-  if (r === 'PARTIAL') return 'warning'
-  return 'danger'
-}
-
 async function loadRetentionFromSettings() {
   try {
-    const raw = await getSettings()
-    const map = raw?.data || raw || {}
+    // getSettings() resolves the key/value payload directly.
+    const map = (await getSettings()) || {}
     if (typeof map['cleanup.historyDays']   !== 'undefined') retention.historyDays   = parseInt(map['cleanup.historyDays'],   10)
     if (typeof map['cleanup.artifactDays']  !== 'undefined') retention.artifactDays  = parseInt(map['cleanup.artifactDays'],  10)
     if (typeof map['cleanup.executionDays'] !== 'undefined') retention.executionDays = parseInt(map['cleanup.executionDays'], 10)
@@ -245,8 +229,8 @@ async function onSaveSettings() {
       'cleanup.logDays':       String(retention.logDays)
     })
     ElMessage.success('已保存')
-  } catch (e) {
-    ElMessage.error('保存失败: ' + (e?.message || e))
+  } catch (_) {
+    // interceptor already surfaced it
   } finally {
     savingSettings.value = false
   }
@@ -262,15 +246,17 @@ async function onPreview() {
       'cleanup.executionDays': String(retention.executionDays),
       'cleanup.logDays':       String(retention.logDays)
     })
-    const r = await previewCleanup({
+    const data = await previewCleanup({
       historyDays:   retention.historyDays,
       artifactDays:  retention.artifactDays,
       executionDays: retention.executionDays,
       logDays:       retention.logDays
     })
-    const data = r?.data || r || null
-    if (!data || r?.code !== 0) {
-      ElMessage.error('预览失败: ' + (r?.message || '未知错误'))
+    // previewCleanup() resolves the snapshot and rejects on error, so a missing
+    // payload is the only failure left to report here. (The old `r?.code !== 0`
+    // check was always true — it made every preview fail with "预览失败: undefined".)
+    if (!data) {
+      ElMessage.error('预览失败：服务端未返回预览内容')
       return
     }
     preview.value = data
@@ -282,11 +268,9 @@ async function onPreview() {
     }
     previewDrawerOpen.value = true
   } catch (e) {
-    const msg = e?.response?.data?.message || e?.message || String(e)
+    const msg = e?.message || String(e)
     if (msg.includes('PREVIEW_EXPIRED')) {
       ElMessage.error('预览已过期，请重新预览')
-    } else {
-      ElMessage.error('预览失败: ' + msg)
     }
   } finally {
     previewLoading.value = false
@@ -309,8 +293,8 @@ async function onExecuteDone(report) {
 
 async function loadHistory() {
   try {
-    const r = await listCleanupHistory(20)
-    history.value = r?.data || r || []
+    // listCleanupHistory() resolves the row array directly.
+    history.value = (await listCleanupHistory(20)) || []
   } catch (_) {
     history.value = []
   }

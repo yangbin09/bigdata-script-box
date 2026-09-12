@@ -144,12 +144,12 @@
       </template>
 
       <template v-if="current">
-        <div class="sb-status-card" :class="statusClass(current)">
+        <div class="sb-status-card" :class="statusClassOf(current)">
           <div class="sb-status-icon">
-            <el-icon :size="28"><component :is="statusIcon(current)" /></el-icon>
+            <el-icon :size="28"><component :is="statusIconOf(current)" /></el-icon>
           </div>
           <div class="sb-status-text">
-            <div class="sb-status-headline">{{ STATUS_LABEL[statusOf(current)] }}</div>
+            <div class="sb-status-headline">{{ statusHeadlineOf(current) }}</div>
             <div class="sb-status-sub">
               <span>耗时 {{ formatDuration(current.durationMs) }}</span>
               <span class="dot">·</span>
@@ -186,7 +186,7 @@
           <!-- V2: structured result.json (written by the script via $RESULT_FILE) -->
           <el-tab-pane label="结果" name="result">
             <div class="sb-log-toolbar">
-              <el-button size="small" :icon="Refresh" :loading="resultLoading" @click="loadResult(current?.id)">刷新</el-button>
+              <el-button size="small" :icon="Refresh" :loading="resultLoading" @click="loadResult(current?.id, true)">刷新</el-button>
               <el-button size="small" :icon="DocumentCopy" :disabled="!resultText" @click="copy(resultText)">复制</el-button>
               <el-button size="small" :icon="Download" :disabled="!resultText" @click="download('result', resultText)">下载</el-button>
             </div>
@@ -198,7 +198,7 @@
           <!-- V2: artifacts registered by the executor under $ARTIFACT_DIR -->
           <el-tab-pane label="产物" name="artifacts">
             <div class="sb-log-toolbar">
-              <el-button size="small" :icon="Refresh" :loading="artifactsLoading" @click="loadArtifacts(current?.id)">刷新</el-button>
+              <el-button size="small" :icon="Refresh" :loading="artifactsLoading" @click="loadArtifacts(current?.id, true)">刷新</el-button>
             </div>
             <el-table v-if="artifacts.length" :data="artifacts" class="sb-card" stripe size="small">
               <el-table-column label="文件名" min-width="220">
@@ -208,7 +208,7 @@
               </el-table-column>
               <el-table-column label="大小" width="110" align="right">
                 <template #default="{ row }">
-                  <span class="mono">{{ formatBytes(row.size) }}</span>
+                  <span class="mono">{{ formatBytes(row.sizeBytes) }}</span>
                 </template>
               </el-table-column>
               <el-table-column label="操作" width="120" align="right">
@@ -258,19 +258,21 @@
 import { onMounted, ref, watch, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  Refresh, RefreshRight, RefreshLeft, Close, DocumentCopy, Download,
-  CircleCheck, CircleClose, WarningFilled
+  Refresh, RefreshRight, RefreshLeft, Close, DocumentCopy, Download
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { listHistory, getHistory } from '../api/history'
 import {
-  readStdout, readStderr, readResult,
+  readStdout, readStderr, readResult, rerunExecution,
   listArtifacts, artifactDownloadUrl
 } from '../api/executions'
 import { listScripts } from '../api/scripts'
 import { listTenants } from '../api/tenants'
-import { formatDateTime, formatDuration, parseParamsJson, formatBytes } from '../utils/format'
-import { STATUS, STATUS_LABEL, STATUS_TAG_TYPE, statusOfHistory } from '../utils/labels'
+import { formatDateTime, formatDuration, parseParamsJson, formatBytes, toDateString } from '../utils/format'
+import { STATUS_CLASS, STATUS_HEADLINE, STATUS_LABEL, STATUS_TAG_TYPE, statusOfHistory } from '../utils/labels'
+import { statusIcon } from '../utils/status'
+import { copyText, downloadText } from '../utils/clipboard'
+import { setSessionItem, KEYS } from '../utils/storage'
 
 const router = useRouter()
 const rows = ref([])
@@ -328,6 +330,8 @@ async function refresh() {
     if (dateFrom.value) params.from = dateFrom.value
     if (dateTo.value) params.to = dateTo.value
     rows.value = (await listHistory(params)) || []
+  } catch (_) {
+    // The interceptor surfaced the message; keep the previous rows visible.
   } finally { loading.value = false }
 }
 
@@ -348,43 +352,38 @@ function resetAllFilters() {
 }
 
 function quickDateRange(days) {
-  // yyyy-MM-dd helper for el-date-picker value-format="YYYY-MM-DD".
   const today = new Date()
-  const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   const past = new Date(today)
   past.setDate(past.getDate() - (days - 1))
-  dateFrom.value = fmt(past)
-  dateTo.value = fmt(today)
+  dateFrom.value = toDateString(past)
+  dateTo.value = toDateString(today)
   refresh()
 }
 
 function statusOf(h) { return statusOfHistory(h) }
 function tagType(h) { return STATUS_TAG_TYPE[statusOf(h)] }
+function statusClassOf(h) { return STATUS_CLASS[statusOf(h)] ?? '' }
+function statusIconOf(h) { return statusIcon(statusOf(h)) }
+function statusHeadlineOf(h) { return STATUS_HEADLINE[statusOf(h)] || '执行完成' }
 
-function statusClass(h) {
-  switch (statusOf(h)) {
-    case STATUS.SUCCESS: return 'ok'
-    case STATUS.TIMEOUT: return 'warn'
-    case STATUS.FAILED:  return 'fail'
-    default: return ''
-  }
-}
+// Parsed once per change instead of on every drawer re-render (they used to be
+// plain functions, so each keystroke re-parsed and re-stringified the payload).
+const paramsObj = computed(() => parseParamsJson(current.value?.parametersJson))
+const paramsPretty = computed(() =>
+  Object.keys(paramsObj.value).length ? JSON.stringify(paramsObj.value, null, 2) : '(无参数)'
+)
 
-function statusIcon(h) {
-  switch (statusOf(h)) {
-    case STATUS.SUCCESS: return CircleCheck
-    case STATUS.TIMEOUT: return WarningFilled
-    case STATUS.FAILED:  return CircleClose
-    default: return CircleCheck
-  }
-}
-
-const paramsPretty = () => {
-  const p = parseParamsJson(current.value?.parametersJson)
-  return Object.keys(p).length ? JSON.stringify(p, null, 2) : '(无参数)'
-}
+// V2: snapshot pretty-print — pull from current.snapshotJson, fall back to
+// the params block. Snapshot shape is { body, params, snapshotAt }.
+const snapshotText = computed(() => {
+  const raw = current.value?.snapshotJson
+  if (!raw) return ''
+  try { return JSON.stringify(JSON.parse(raw), null, 2) } catch { return raw }
+})
 
 async function openDetail(row) {
+  if (!row?.id) return
+  const id = row.id
   current.value = row
   stdout.value = ''
   stderr.value = ''
@@ -394,46 +393,47 @@ async function openDetail(row) {
   artifactsLoadedFor.value = null
   tab.value = 'params'
   detailOpen.value = true
-  try { current.value = await getHistory(row.id) } catch { /* keep original */ }
-  try { stdout.value = (await readStdout(row.id)) || '' } catch {}
-  try { stderr.value = (await readStderr(row.id)) || '' } catch {}
+  // One round-trip instead of three, and the results are dropped if the user
+  // opened another row while they were in flight.
+  const [detail, so, se] = await Promise.all([
+    getHistory(id).catch(() => null),
+    readStdout(id).catch(() => ''),
+    readStderr(id).catch(() => '')
+  ])
+  if (current.value?.id !== id) return
+  if (detail) current.value = detail
+  stdout.value = so || ''
+  stderr.value = se || ''
 }
 
-// V2: snapshot pretty-print — pull from current.snapshotJson, fall back to
-// the params block. Snapshot shape is { body, params, snapshotAt }.
-const snapshotText = () => {
-  const raw = current.value?.snapshotJson
-  if (!raw) return ''
-  let parsed = null
-  try { parsed = JSON.parse(raw) } catch { return raw }
-  return JSON.stringify(parsed, null, 2)
-}
-
-async function loadResult(id) {
+async function loadResult(id, force = false) {
   if (!id) return
-  if (resultLoadedFor.value === id) return
+  if (!force && resultLoadedFor.value === id) return
   resultLoading.value = true
   try {
-    const r = await readResult(id)
-    const obj = r?.data
+    // readResult() resolves the parsed payload (null when the script wrote none).
+    const obj = await readResult(id)
     resultText.value = obj == null ? '' : JSON.stringify(obj, null, 2)
-  } catch { resultText.value = '' }
-  finally {
     resultLoadedFor.value = id
+  } catch {
+    resultText.value = ''
+  } finally {
     resultLoading.value = false
   }
 }
 
-async function loadArtifacts(id) {
+async function loadArtifacts(id, force = false) {
   if (!id) return
-  if (artifactsLoadedFor.value === id) return
+  if (!force && artifactsLoadedFor.value === id) return
   artifactsLoading.value = true
   try {
-    const r = await listArtifacts(id)
-    artifacts.value = r?.data || []
-  } catch { artifacts.value = [] }
-  finally {
+    // listArtifacts() resolves the artifact array directly.
+    const list = await listArtifacts(id)
+    artifacts.value = Array.isArray(list) ? list : []
     artifactsLoadedFor.value = id
+  } catch {
+    artifacts.value = []
+  } finally {
     artifactsLoading.value = false
   }
 }
@@ -446,71 +446,56 @@ function downloadArtifact(row) {
 function rerun(row) {
   if (!row) return
   // Navigate to ExecuteView with a one-shot rerun payload that ExecuteView consumes
-  // from query/router state. Use a tiny sessionStorage handoff to keep the URL clean.
+  // from session storage to keep the URL clean.
   const payload = {
     scriptId: row.scriptId,
     tenantId: row.tenantId,
     params: parseParamsJson(row.parametersJson)
   }
-  sessionStorage.setItem('sb.rerun', JSON.stringify(payload))
+  setSessionItem(KEYS.RERUN, payload)
   detailOpen.value = false
   router.push({ name: 'execute' })
 }
 
 // V2: rerun using the snapshotted body + params, even if the script has been
 // edited since. The backend restores the original body on disk for the
-// duration of the run, then puts it back.
+// duration of the run, then puts it back — and blocks until it is done, so the
+// new run's logs can be shown straight away.
 const rerunning = ref(false)
 async function rerunFromSnapshot(row) {
-  if (!row || !row.id) return
+  if (!row?.id) return
   rerunning.value = true
   try {
-    const { rerunExecution } = await import('../api/executions')
     const h = await rerunExecution(row.id)
-    ElMessage.success(`按快照重跑成功 (executionId=${h.id})`)
+    ElMessage.success(`按快照重跑完成 (executionId=${h.id})`)
+    await refresh()
     detailOpen.value = false
-    // Route to the result view so the user sees stdout/stderr.
-    router.push({ name: 'execute' })
+    await openDetail({ id: h.id })
   } catch (_) { /* interceptor toasted */ }
   finally { rerunning.value = false }
 }
 
 function copyParams() {
-  const p = parseParamsJson(current.value?.parametersJson)
-  const text = Object.keys(p).length ? JSON.stringify(p, null, 2) : ''
-  if (!text) return ElMessage.warning('无可复制的参数')
-  navigator.clipboard?.writeText(text).then(
-    () => ElMessage.success('已复制'),
-    () => ElMessage.error('复制失败')
-  )
+  copyText(Object.keys(paramsObj.value).length ? paramsPretty.value : '', '无可复制的参数')
 }
 
 function copy(text) {
-  if (!text) return ElMessage.warning('没有内容可以复制')
-  navigator.clipboard?.writeText(text).then(
-    () => ElMessage.success('已复制'),
-    () => ElMessage.error('复制失败')
-  )
+  copyText(text)
 }
 
 function download(name, text) {
-  if (!text) return ElMessage.warning('没有内容可以下载')
-  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `${name}-${current.value?.id || 'history'}.log`
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
+  downloadText(`${name}-${current.value?.id || 'history'}.log`, text)
 }
 
-onMounted(async () => {
-  const [s, t] = await Promise.all([listScripts().catch(() => []), listTenants().catch(() => [])])
-  scripts.value = s || []
-  tenants.value = t || []
-  await refresh()
+onMounted(() => {
+  // Fire the (independent) lookups in parallel: the table no longer waits for
+  // the tenant/script dropdown data before its first paint.
+  refresh()
+  Promise.all([listScripts().catch(() => []), listTenants().catch(() => [])])
+    .then(([s, t]) => {
+      scripts.value = s || []
+      tenants.value = t || []
+    })
 })
 
 // V2: lazy-load result.json / artifacts the first time the user clicks the

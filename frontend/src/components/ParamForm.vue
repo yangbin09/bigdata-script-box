@@ -6,6 +6,9 @@
         are not rendered AND not emitted in update:modelValue. The form re-evaluates
         visibility on every value change, so picking a parent select immediately
         shows/hides dependents.
+  - `file` params are NOT rendered here: the caller (ExecuteView) owns their
+        upload widget. They used to fall through to a plain text input and
+        duplicate the upload row.
   - Seed value precedence (highest first):
         1) initialValues (last-params from localStorage)
         2) param defaultValue
@@ -24,7 +27,7 @@
       :key="p.name"
       :label="paramLabel(p)"
       :prop="p.name"
-      :rules="rulesFor(p)"
+      :rules="rulesByName.get(p.name)"
     >
       <!-- text -->
       <el-input
@@ -57,7 +60,7 @@
         style="width: 100%"
       >
         <el-option
-          v-for="opt in selectOptions(p)"
+          v-for="opt in optionsOf(p)"
           :key="opt.value"
           :label="opt.label"
           :value="opt.value"
@@ -90,6 +93,8 @@
 
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
+import { parseOptions, visibilityMap } from '../utils/params'
+import { PARAM_TYPE } from '../utils/labels'
 
 const props = defineProps({
   params: { type: Array, required: true },
@@ -103,20 +108,37 @@ const emit = defineEmits(['update:modelValue'])
 const formRef = ref(null)
 const form = reactive({})
 
+const orderedParams = computed(() =>
+  [...(props.params || [])].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+)
+
+// Params whose widget belongs to the caller (upload section).
+const formParams = computed(() => orderedParams.value.filter((p) => p.type !== PARAM_TYPE.FILE))
+
+/**
+ * Structural fingerprint of the param list. The form is reseeded only when the
+ * shape actually changes — a deep watcher on `params` used to rebuild (and so
+ * clobber whatever the user had typed) on any nested mutation.
+ */
+const paramsSignature = computed(() => formParams.value.map((p) => [
+  p.name, p.type, p.required ? 1 : 0, p.defaultValue ?? '', p.options ?? '',
+  p.sortOrder ?? 0, p.visibleWhenJson ?? ''
+].join(':')).join('|'))
+
 function seedValue(p) {
   const last = props.initialValues?.[p.name]
   if (last != null && last !== '') return last
   if (p.defaultValue != null && p.defaultValue !== '') return p.defaultValue
-  return p.type === 'boolean' ? false : ''
+  return p.type === PARAM_TYPE.BOOLEAN ? false : ''
 }
 
 function coerce(p, v) {
-  if (p.type === 'number') {
+  if (p.type === PARAM_TYPE.NUMBER) {
     if (v === '' || v == null) return undefined
     const n = Number(v)
     return isNaN(n) ? undefined : n
   }
-  if (p.type === 'boolean') {
+  if (p.type === PARAM_TYPE.BOOLEAN) {
     if (typeof v === 'boolean') return v
     return v === true || v === 'true' || v === '1'
   }
@@ -125,13 +147,20 @@ function coerce(p, v) {
 
 function rebuild() {
   for (const k of Object.keys(form)) delete form[k]
-  for (const p of props.params || []) {
+  for (const p of formParams.value) {
     if (!p.name) continue
     form[p.name] = coerce(p, seedValue(p))
   }
 }
-rebuild()
-watch(() => [props.params, props.initialValues], rebuild, { deep: true })
+
+// Reseed on a real change of the param set or of the seed overrides. Both
+// watchers compare content signatures rather than object identity: callers
+// routinely pass a freshly-built object/array on every render, and an identity
+// watcher would rebuild the form (wiping what the user typed) each time the
+// parent re-rendered. Deep watchers on the props had the same effect.
+const initialSignature = computed(() => JSON.stringify(props.initialValues || {}))
+
+watch([paramsSignature, initialSignature], rebuild, { immediate: true })
 
 // Mirror local form back to parent as plain string map. Hidden params are
 // excluded: we never publish a value the user couldn't see.
@@ -146,71 +175,44 @@ watch(form, (v) => {
   emit('update:modelValue', out)
 }, { deep: true })
 
-const orderedParams = computed(() =>
-  [...(props.params || [])].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
-)
-
-// V2: parse visibleWhenJson for each declared param, then filter using current form.
-const parsedVisibility = computed(() => {
-  const m = new Map()  // name -> { visible: boolean, invalid: boolean, reason?: string }
-  for (const p of orderedParams.value) {
-    if (!p.name) continue
-    const raw = (p.visibleWhenJson || '').trim()
-    if (!raw) { m.set(p.name, { visible: true, invalid: false }); continue }
-    let rule
-    try { rule = JSON.parse(raw) } catch { m.set(p.name, { visible: true, invalid: true, reason: 'visibleWhenJson 不是合法 JSON' }); continue }
-    if (!rule || typeof rule !== 'object') { m.set(p.name, { visible: true, invalid: true, reason: 'visibleWhenJson 不是对象' }); continue }
-    const ref = (rule.param || '').trim()
-    const op = String(rule.operator || '').trim()
-    const val = rule.value == null ? '' : String(rule.value)
-    if (!ref) { m.set(p.name, { visible: true, invalid: true, reason: 'visibleWhenJson 缺少 param 字段' }); continue }
-    if (op !== 'equals' && op !== 'notEquals') { m.set(p.name, { visible: true, invalid: true, reason: `operator 不支持: ${op || '(空)'}` }); continue }
-    const current = form[ref]
-    const cur = current == null ? '' : String(current)
-    const eq = cur === val
-    const visible = op === 'equals' ? eq : !eq
-    m.set(p.name, { visible, invalid: false, ref })
-  }
-  return m
-})
+// V2: conditional visibility, evaluated once per value change and reused by the
+// template, the emitter and resetToDefaults().
+const visibility = computed(() => visibilityMap(formParams.value, form, null))
 
 const visibleParams = computed(() =>
-  orderedParams.value.filter((p) => {
-    const info = parsedVisibility.value.get(p.name)
-    return !info || info.visible !== false
-  })
+  formParams.value.filter((p) => visibility.value.get(p.name)?.visible !== false)
 )
 
 const hiddenNameSet = computed(() => {
   const s = new Set()
-  for (const [n, info] of parsedVisibility.value.entries()) {
+  for (const [n, info] of visibility.value.entries()) {
     if (info.visible === false) s.add(n)
   }
   return s
 })
 
-// Helpers for the drawer: which params are hidden right now (used by the
-// "复位默认值" button and for debug chips in the execute drawer).
+// Rules are derived from the param declaration, not from user input — building
+// them once per param instead of per render keeps the v-for cheap.
+const rulesByName = computed(() => {
+  const m = new Map()
+  for (const p of formParams.value) m.set(p.name, rulesFor(p))
+  return m
+})
+
+// Helpers for the caller's drawer.
 defineExpose({
   validate: () => (formRef.value ? formRef.value.validate() : Promise.resolve()),
   resetToDefaults: () => {
-    for (const p of props.params || []) {
+    for (const p of formParams.value) {
       if (!p.name) continue
       if (p.defaultValue != null && p.defaultValue !== '') {
         form[p.name] = coerce(p, p.defaultValue)
-      } else if (p.type === 'boolean') {
+      } else if (p.type === PARAM_TYPE.BOOLEAN) {
         form[p.name] = false
       } else {
         form[p.name] = ''
       }
     }
-  },
-  hiddenParams: () => {
-    const out = []
-    for (const [n, info] of parsedVisibility.value.entries()) {
-      if (info.visible === false) out.push(n)
-    }
-    return out
   }
 })
 
@@ -220,20 +222,8 @@ function paramLabel(p) {
   return s
 }
 
-/**
- * Parse ScriptParam.options (comma-separated string) into [{label, value}].
- * Each entry may be "label:value" — execute uses value, UI shows label.
- * Legacy "value" entries round-trip with label === value.
- */
-function selectOptions(p) {
-  const raw = p.options || ''
-  return raw.split(',').map((s) => s.trim()).filter(Boolean).map((entry) => {
-    const i = entry.indexOf(':')
-    if (i >= 0) {
-      return { label: entry.substring(0, i).trim(), value: entry.substring(i + 1).trim() }
-    }
-    return { label: entry, value: entry }
-  })
+function optionsOf(p) {
+  return parseOptions(p.options)
 }
 
 function rulesFor(p) {
@@ -245,7 +235,7 @@ function rulesFor(p) {
       trigger: ['blur', 'change']
     })
   }
-  if (p.type === 'number') {
+  if (p.type === PARAM_TYPE.NUMBER) {
     r.push({
       validator: (_, value, cb) => {
         if (value === '' || value == null) return cb()
@@ -256,11 +246,11 @@ function rulesFor(p) {
       trigger: ['blur', 'change']
     })
   }
-  if (p.type === 'select') {
+  if (p.type === PARAM_TYPE.SELECT) {
+    const opts = optionsOf(p)
     r.push({
       validator: (_, value, cb) => {
         if (!p.required && (value === '' || value == null)) return cb()
-        const opts = selectOptions(p)
         if (opts.some((o) => o.value === String(value))) return cb()
         cb(new Error(`必须是 ${opts.map((o) => o.label).join('/')} 之一`))
       },

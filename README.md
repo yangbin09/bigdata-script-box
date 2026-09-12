@@ -130,14 +130,15 @@ bigdata-script-box/
 │   ├── vite.config.js                   # dev server 代理 /api → :80
 │   ├── index.html                       # Vite SPA 入口
 │   └── src/
-│       ├── main.js                      # Vue 启动 + Element Plus 注册
+│       ├── main.js                      # Vue 启动 + Element Plus / 图标注册
 │       ├── App.vue                      # 根组件（包 AppLayout + <router-view/>）
-│       ├── router.js                    # Vue Router（hash 模式）
-│       ├── style.css                    # 全局样式（中性色 + JetBrains Mono）
-│       ├── api/                         # axios 封装 + 各模块端点
-│       ├── components/                  # AppLayout / ParamForm / ExecutionResultDialog
-│       ├── views/                       # ExecuteView / ScriptsView / ScriptEditView / TenantsView / HistoryView
-│       └── utils/format.js              # 日期/时长/参数 JSON 解析
+│       ├── router.js                    # Vue Router（hash 模式，7 个路由）
+│       ├── style.css                    # 全局样式 + 设计 token（中性色 + JetBrains Mono）
+│       ├── api/                         # axios 封装（统一解包 {code,message,data}）+ 各模块端点
+│       ├── components/                  # AppLayout / ParamForm / LogPane / ExecutionResultPanel /
+│       │                                # ScriptCard / SBLabel / Cleanup*
+│       ├── views/                       # Execute / Scripts / ScriptEdit / Tenants / Scenarios / History / Settings
+│       └── utils/                       # format / labels / status / params / cleanup / clipboard / storage
 └── src/                                 # Spring Boot 后端
     ├── main/
     │   ├── java/com/bigdata/scriptbox/
@@ -157,15 +158,17 @@ bigdata-script-box/
     └── test/...
 ```
 
-## 页面（4 个 SPA 路由）
+## 页面（7 个 SPA 路由）
 
 | Hash 路径 | 功能 |
 | --- | --- |
-| `#/` | **执行中心**：按 category 分组卡片，点击打开 Drawer 渲染动态参数表单，执行后弹出会话框显示状态卡 + stdout/stderr/参数 Tabs |
-| `#/scripts` | **脚本管理**：Element Plus Table 列出所有脚本，新增 Drawer 上传 .sh，行内启停 / 编辑 / 删除 |
-| `#/scripts/edit?id=N` | **脚本编辑**：左侧基本信息和脚本正文，右侧动态参数（增删、类型、必填、默认值、选项） |
+| `#/` | **执行中心**：按 category 分组卡片，点击打开 Drawer 渲染动态参数表单，执行后显示状态卡 + 结果/stdout/stderr/参数/产物 Tabs |
+| `#/scripts` | **脚本管理**：Element Plus Table 列出所有脚本，新增 Drawer 上传 .sh，行内启停 / 收藏 / 复制 / 导入导出 / 编辑 / 删除 |
+| `#/scripts/edit?id=N` | **脚本编辑**：基本信息 + 脚本正文 + 动态参数（增删、类型、必填、默认值、选项、显示条件），含语法检查、执行前检查、参数方案、版本回滚 |
 | `#/tenants` | **租户管理**：Element Plus Table，新增/编辑 Drawer，keytab 上传，测试租户（Mock 模式返回模拟 kinit 输出） |
-| `#/history` | **执行历史**：Element Plus Table，点行弹窗看 stdout/stderr/参数 |
+| `#/scenarios` | **场景**：多脚本顺序编排（每步可选参数方案 / 失败继续），一键按租户执行并查看分步结果 |
+| `#/history` | **执行历史**：筛选（状态/脚本/租户/关键字/日期）+ 详情抽屉（参数 / stdout / stderr / 结果 / 产物 / 快照，可按快照重跑） |
+| `#/settings` | **设置**：全局变量管理与清理面板（预览 → 输入 CLEAN 确认 → 报告 / 历史） |
 
 > Vue Router 使用 hash 模式 (`createWebHashHistory`)，这样 SPA 路由完全在浏览器端处理，Spring Boot 只需服务 `index.html` 和静态资源，无需任何 rewrite 规则。
 

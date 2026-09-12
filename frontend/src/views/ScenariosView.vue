@@ -108,7 +108,13 @@
           <el-form label-position="top" :model="s" class="sb-step-form">
             <el-form-item required>
               <template #label><SBLabel text="脚本" tip="该步骤要执行的脚本。只能选择已启用的脚本。" required /></template>
-              <el-select v-model="s.scriptId" filterable placeholder="选择脚本" style="width: 100%">
+              <el-select
+                v-model="s.scriptId"
+                filterable
+                placeholder="选择脚本"
+                style="width: 100%"
+                @change="onStepScriptChange(s)"
+              >
                 <el-option
                   v-for="sc in enabledScripts"
                   :key="sc.id"
@@ -251,14 +257,17 @@ async function refresh() {
   loading.value = true
   try {
     rows.value = (await listScenarios()) || []
-    for (const k of Object.keys(stepCounts)) delete stepCounts[k]
-    await Promise.all(rows.value.map(async (s) => {
-      try {
-        const d = await getScenario(s.id)
-        stepCounts[s.id] = (d.steps || []).length
-      } catch { stepCounts[s.id] = 0 }
-    }))
-  } finally { loading.value = false }
+  } finally {
+    loading.value = false
+  }
+  // Step counts are a per-row extra lookup; they hydrate after the table paints.
+  for (const k of Object.keys(stepCounts)) delete stepCounts[k]
+  await Promise.all(rows.value.map(async (s) => {
+    try {
+      const d = await getScenario(s.id)
+      stepCounts[s.id] = (d.steps || []).length
+    } catch { stepCounts[s.id] = 0 }
+  }))
 }
 
 function resetForm() {
@@ -283,10 +292,22 @@ async function openEdit(row) {
       scriptId: s.scriptId, presetId: s.presetId || null,
       continueOnFailure: !!s.continueOnFailure
     }))
-  } catch { steps.value = [] }
+  } catch (_) {
+    // Don't open an editor with an empty step list: saving it would silently
+    // replace the persisted steps with nothing.
+    ElMessage.error('加载场景步骤失败，请重试')
+    return
+  }
   // Refresh presets for each referenced script
   await loadPresetsForSteps()
   formOpen.value = true
+}
+
+// Switching a step's script invalidates its parameter preset (presets belong to
+// one script), so clear it instead of persisting a preset from another script.
+function onStepScriptChange(step) {
+  step.presetId = null
+  loadPresetsForSteps()
 }
 
 async function loadPresetsForSteps() {
@@ -319,8 +340,15 @@ async function submitForm() {
   saving.value = true
   try {
     let id = form.id
-    if (id) await updateScenario(id, { ...form })
-    else id = (await createScenario({ ...form })).id
+    if (id) {
+      await updateScenario(id, { ...form })
+    } else {
+      id = (await createScenario({ ...form })).id
+      // Adopt the new id immediately: if the steps call below fails the drawer
+      // stays open, and a second 保存 must update this scenario instead of
+      // creating a duplicate one.
+      form.id = id
+    }
     await replaceScenarioSteps(id, steps.value.map((s) => ({
       scriptId: s.scriptId, presetId: s.presetId,
       continueOnFailure: !!s.continueOnFailure
@@ -334,15 +362,16 @@ async function submitForm() {
 async function confirmDelete(row) {
   let counts = { historyCount: 0 }
   try {
-    const r = await scenarioRelatedCounts(row.id)
-    counts = r?.data || counts
+    // scenarioRelatedCounts() already resolves the payload.
+    counts = (await scenarioRelatedCounts(row.id)) || counts
   } catch (_) { /* tolerate */ }
   const related = counts.historyCount
     ? `\n将关联影响：${counts.historyCount} 条执行历史（删除后这些记录的引用将悬空）`
     : ''
-  await ElMessageBox.confirm(
+  const ok = await ElMessageBox.confirm(
     `确认删除场景「${row.name}」？${related}`,
-    '确认', { type: 'warning' })
+    '确认', { type: 'warning' }).catch(() => null)
+  if (!ok) return
   await deleteScenario(row.id)
   ElMessage.success('已删除')
   await refresh()
@@ -364,7 +393,13 @@ async function doRun() {
   } finally { running.value = false }
 }
 
-watch(steps, () => { loadPresetsForSteps() }, { deep: true })
+// Watch only the referenced script ids: a deep watcher on `steps` also fired
+// for presetId / continueOnFailure edits and duplicated the explicit call in
+// openEdit().
+watch(
+  () => steps.value.map((s) => s.scriptId).join(','),
+  () => { loadPresetsForSteps() }
+)
 
 onMounted(async () => {
   const [s, t] = await Promise.all([listScripts().catch(() => []), listTenants().catch(() => [])])

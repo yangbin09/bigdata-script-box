@@ -3,11 +3,10 @@
   and configurable context. Used by ExecutionResultPanel.
 
   V2 features:
-  - search box (substring by default; toggles to regex via the .* chip).
+  - search box (substring by default; toggles to regex via the 正则 chip).
   - quick-filter chips: ERROR / WARN / Exception / Caused by / FAILED
-    (multi-select; combines with search as AND).
+    (multi-select; combines with search as OR within a line).
   - context lines: how many lines around each match to keep (0 / 3 / 5 / 10).
-    Context is rendered in a muted style so matches stand out.
   - highlight: every match in the kept lines is wrapped in <mark>; the
     preview pane is a v-html so we can colour the matches.
   - download: streams whatever the user is currently viewing, not the
@@ -27,7 +26,6 @@
         size="small"
         :prefix-icon="Search"
         class="sb-logpane-search"
-        @input="onSearchInput"
       />
       <el-checkbox v-model="regexMode" size="small" class="sb-logpane-regex">正则</el-checkbox>
       <el-button-group size="small" class="sb-logpane-context">
@@ -57,25 +55,25 @@
         size="small"
         text
         :icon="RefreshLeft"
-        @click="clearChips"
+        @click="clearFilters"
       >重置</el-button>
       <span class="sb-logpane-counter">
         {{ matchSummary }}
       </span>
     </div>
 
-    <div class="sb-log-toolbar">
+    <div class="sb-logpane-actions">
       <el-button size="small" :icon="DocumentCopy" @click="$emit('copy', visibleText)">复制可见</el-button>
       <el-button size="small" :icon="Download" @click="$emit('download', streamName, visibleText)">下载</el-button>
       <el-button size="small" text :icon="CopyDocument" @click="copyRaw">复制原始</el-button>
     </div>
 
-    <pre v-if="!props.text" class="sb-log sb-log-empty">无 {{ streamName }} 输出</pre>
+    <pre v-if="!text" class="sb-logpane-pre sb-logpane-empty">无 {{ streamName }} 输出</pre>
     <pre
       v-else-if="!visibleText"
-      class="sb-log sb-log-empty"
+      class="sb-logpane-pre sb-logpane-empty"
     >无匹配 (尝试调整搜索 / 上下文 / 重置快速过滤)</pre>
-    <pre v-else class="sb-log sb-log-highlighted" v-html="renderedHtml"></pre>
+    <pre v-else class="sb-logpane-pre sb-logpane-highlighted" v-html="renderedHtml"></pre>
   </div>
 </template>
 
@@ -84,12 +82,14 @@ import { computed, ref, watch } from 'vue'
 import {
   Search, DocumentCopy, Download, CopyDocument, RefreshLeft, WarningFilled
 } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { copyText } from '../utils/clipboard'
 
 const props = defineProps({
   text: { type: String, default: '' },
   streamName: { type: String, required: true }, // 'stdout' | 'stderr'
-  executionId: { type: [Number, String], required: true }
+  // Identifies the run being viewed: when the parent swaps to another
+  // execution the filters reset, so a stale search can't hide the new log.
+  executionId: { type: [Number, String], default: null }
 })
 
 defineEmits(['copy', 'download'])
@@ -110,10 +110,6 @@ const search = ref('')
 const regexMode = ref(false)
 const context = ref(0)
 const activeChips = ref(new Set())
-// Compile-failure guard so we don't blow up on a bad regex. We keep the
-// previous valid regex (and surface an inline message) instead.
-const regexError = ref('')
-let compiledRegex = null
 
 function isChipOn(token) {
   return activeChips.value.has(token)
@@ -123,104 +119,94 @@ function toggleChip(token) {
   if (next.has(token)) next.delete(token); else next.add(token)
   activeChips.value = next
 }
-function clearChips() {
+function clearFilters() {
   activeChips.value = new Set()
   search.value = ''
   regexMode.value = false
   context.value = 0
-  compiledRegex = null
-  regexError.value = ''
 }
 
-function onSearchInput() {
-  regexError.value = ''
-  compiledRegex = null
-  if (!search.value) return
+// Rebuild the filter state when the parent switches execution.
+watch(() => props.executionId, () => clearFilters())
+
+/**
+ * Compiled matcher. A computed (not a mutated closure cell) so that toggling
+ * between substring and regex mode actually invalidates every derived value —
+ * previously the regex was cached in a plain variable and the results stayed in
+ * the old mode until the next keystroke.
+ */
+const matcher = computed(() => {
+  const q = search.value
+  if (!q) return {}
   if (regexMode.value) {
-    try { compiledRegex = new RegExp(search.value, 'i') }
-    catch (e) { regexError.value = '正则无效: ' + e.message }
+    try { return { re: new RegExp(q, 'i') } }
+    catch (e) { return { error: '正则无效: ' + e.message } }
   }
-}
+  return { literal: q.toLowerCase() }
+})
 
-// Re-compile when mode flips.
-watch(regexMode, () => onSearchInput())
+const regexError = computed(() => matcher.value.error || '')
 
 const lines = computed(() => (props.text || '').split(/\r?\n/))
 
-// Map of indices that should be displayed given the active filters + context.
+/**
+ * Single pass over the log: which lines match, and how many. The old code ran
+ * the same matching loop twice (visible lines + match count) and then walked
+ * the line array again for the text and the HTML.
+ */
+const matchInfo = computed(() => {
+  const m = matcher.value
+  const chips = [...activeChips.value].map((t) => t.toLowerCase())
+  const literal = m.literal || null
+  const re = m.re || null
+  const active = chips.length > 0 || !!literal || !!re
+  const idx = new Set()
+  if (!active) return { idx, active: false, count: 0 }
+  const all = lines.value
+  let count = 0
+  for (let i = 0; i < all.length; i++) {
+    const line = all[i]
+    const low = line.toLowerCase()
+    let hit = chips.length ? chips.some((t) => low.includes(t)) : false
+    if (!hit && literal) hit = low.includes(literal)
+    if (!hit && re) hit = re.test(line)
+    if (hit) { idx.add(i); count++ }
+  }
+  return { idx, active: true, count }
+})
+
+// Indices kept on screen: every match plus its context window.
 const visibleLineSet = computed(() => {
-  const set = new Set()
-  const searchActive = !!search.value
-  const chipsActive = activeChips.value.size > 0
-  if (!searchActive && !chipsActive) {
-    for (let i = 0; i < lines.value.length; i++) set.add(i)
-    return set
+  const { idx, active } = matchInfo.value
+  const all = lines.value
+  const out = new Set()
+  if (!active) {
+    for (let i = 0; i < all.length; i++) out.add(i)
+    return out
   }
-  for (let i = 0; i < lines.value.length; i++) {
-    const line = lines.value[i]
-    let match = false
-    // chip filter: any active chip must hit (AND across chips)
-    for (const tok of activeChips.value) {
-      if (line.toLowerCase().includes(tok.toLowerCase())) { match = true; break }
-    }
-    if (!match && searchActive) {
-      if (compiledRegex) {
-        compiledRegex.lastIndex = 0
-        match = compiledRegex.test(line)
-      } else if (search.value) {
-        match = line.toLowerCase().includes(search.value.toLowerCase())
-      }
-    }
-    if (match) {
-      const ctx = context.value
-      const from = Math.max(0, i - ctx)
-      const to = Math.min(lines.value.length - 1, i + ctx)
-      for (let j = from; j <= to; j++) set.add(j)
-    }
+  const ctx = context.value
+  for (const i of idx) {
+    const from = Math.max(0, i - ctx)
+    const to = Math.min(all.length - 1, i + ctx)
+    for (let j = from; j <= to; j++) out.add(j)
   }
-  return set
+  return out
 })
 
 const visibleText = computed(() => {
+  const all = lines.value
+  const kept = visibleLineSet.value
   const out = []
-  for (let i = 0; i < lines.value.length; i++) {
-    if (visibleLineSet.value.has(i)) out.push(lines.value[i])
+  for (let i = 0; i < all.length; i++) {
+    if (kept.has(i)) out.push(all[i])
   }
   return out.join('\n')
 })
 
-const matchCount = computed(() => {
-  // Count lines that hit the search OR a chip (not context-bumped).
-  const searchActive = !!search.value
-  const chipsActive = activeChips.value.size > 0
-  if (!searchActive && !chipsActive) return 0
-  let n = 0
-  for (const line of lines.value) {
-    let match = false
-    for (const tok of activeChips.value) {
-      if (line.toLowerCase().includes(tok.toLowerCase())) { match = true; break }
-    }
-    if (!match && searchActive) {
-      if (compiledRegex) {
-        compiledRegex.lastIndex = 0
-        match = compiledRegex.test(line)
-      } else if (search.value) {
-        match = line.toLowerCase().includes(search.value.toLowerCase())
-      }
-    }
-    if (match) n++
-  }
-  return n
-})
-
 const matchSummary = computed(() => {
   const total = lines.value.length
-  const kept = visibleLineSet.value.size
-  const matched = matchCount.value
-  if (!search.value && activeChips.value.size === 0) {
-    return `全部 ${total} 行`
-  }
-  return `匹配 ${matched} / ${total} 行，显示 ${kept} 行`
+  if (!matchInfo.value.active) return `全部 ${total} 行`
+  return `匹配 ${matchInfo.value.count} / ${total} 行，显示 ${visibleLineSet.value.size} 行`
 })
 
 function escapeHtml(s) {
@@ -233,31 +219,30 @@ function escapeRegExp(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
+/**
+ * Highlight matches by splitting the RAW text on the combined pattern and
+ * escaping each fragment afterwards. Matching against pre-escaped HTML (the
+ * previous approach) never highlighted `&`, `<`, `>` or `"` and could inject a
+ * <mark> into the middle of an entity.
+ */
 const renderedHtml = computed(() => {
+  const text = visibleText.value
   const tokens = []
-  if (compiledRegex) tokens.push({ regex: compiledRegex })
-  else if (search.value) tokens.push({ literal: search.value })
-  for (const tok of activeChips.value) tokens.push({ literal: tok })
-  if (tokens.length === 0) return escapeHtml(visibleText.value)
-  // Build a single combined regex so we can replace every match in one pass.
-  const parts = tokens.map((t) => t.regex ? t.regex.source : escapeRegExp(t.literal))
-  const flags = 'gi' + (tokens.some((t) => t.regex) ? '' : '')
-  let combined
-  try { combined = new RegExp('(' + parts.join('|') + ')', flags) }
-  catch (e) { return escapeHtml(visibleText.value) }
-  const esc = escapeHtml(visibleText.value)
-  return esc.replace(combined, (m) => `<mark>${m}</mark>`)
+  if (matcher.value.re) tokens.push(matcher.value.re.source)
+  else if (matcher.value.literal) tokens.push(escapeRegExp(matcher.value.literal))
+  for (const tok of activeChips.value) tokens.push(escapeRegExp(tok))
+  if (!tokens.length) return escapeHtml(text)
+  let re
+  try { re = new RegExp('(' + tokens.join('|') + ')', 'gi') } catch { return escapeHtml(text) }
+  // A capturing group makes every odd chunk of split() a match.
+  return text
+    .split(re)
+    .map((chunk, i) => (i % 2 ? `<mark>${escapeHtml(chunk)}</mark>` : escapeHtml(chunk)))
+    .join('')
 })
 
 function copyRaw() {
-  if (!props.text) {
-    ElMessage.warning('没有内容可以复制')
-    return
-  }
-  navigator.clipboard?.writeText(props.text).then(
-    () => ElMessage.success('已复制原始日志'),
-    () => ElMessage.error('复制失败')
-  )
+  copyText(props.text, '没有内容可以复制', '已复制原始日志')
 }
 </script>
 
@@ -301,8 +286,15 @@ function copyRaw() {
   color: var(--el-text-color-secondary);
   white-space: nowrap;
 }
-.sb-log {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+.sb-logpane-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+/* Own class rather than shadowing the global `.sb-log`: this pane is a light
+   "paper" log, the result/params panes are dark terminals. */
+.sb-logpane-pre {
+  font-family: var(--sb-mono);
   white-space: pre-wrap;
   word-break: break-all;
   font-size: 12px;
@@ -313,16 +305,11 @@ function copyRaw() {
   border: 1px solid var(--sb-border);
   border-radius: 6px;
   padding: 8px 10px;
+  margin: 0;
 }
-.sb-log-empty { color: var(--el-text-color-secondary); }
-.sb-log-toolbar {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-/* Highlighted log: matches are wrapped in <mark>; context-only lines are
-   slightly muted so the eye lands on the matches. */
-.sb-log-highlighted :deep(mark) {
+.sb-logpane-empty { color: var(--el-text-color-secondary); font-style: italic; }
+/* Highlighted log: matches are wrapped in <mark>. */
+.sb-logpane-highlighted :deep(mark) {
   background: #ffe58f;
   color: inherit;
   padding: 0 2px;

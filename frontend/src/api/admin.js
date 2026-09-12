@@ -5,18 +5,18 @@ import http from './http'
 // operator confirms by sending that previewId + the literal token
 // 'CLEAN' to executeCleanup.
 export const previewCleanup = (retention) =>
-  http.post('/admin/cleanup/preview', retention).then((r) => r.data)
+  http.post('/admin/cleanup/preview', retention)
 
 export const executeCleanup = (body) =>
-  http.post('/admin/cleanup/execute', body).then((r) => r.data)
+  http.post('/admin/cleanup/execute', body)
 
 export const listCleanupHistory = (limit = 20) =>
-  http.get(`/admin/cleanup/history?limit=${limit}`).then((r) => r.data)
+  http.get('/admin/cleanup/history', { params: { limit } })
 
 // V2: persisted runtime settings. Keys are dotted (e.g.
 // 'cleanup.historyDays'); values are strings.
 export const getSettings = () =>
-  http.get('/admin/settings').then((r) => r.data)
+  http.get('/admin/settings')
 
 export const updateSettings = (kv) =>
-  http.put('/admin/settings', kv).then((r) => r.data)
+  http.put('/admin/settings', kv)
