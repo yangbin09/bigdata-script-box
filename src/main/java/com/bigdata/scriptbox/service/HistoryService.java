@@ -3,6 +3,7 @@ package com.bigdata.scriptbox.service;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.bigdata.scriptbox.entity.ExecutionHistory;
 import com.bigdata.scriptbox.mapper.ExecutionHistoryMapper;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -15,14 +16,10 @@ import java.util.List;
  * <p>提供按过滤条件的历史查询、最近脚本摘要等只读能力。
  */
 @Service
+@RequiredArgsConstructor
 public class HistoryService {
 
     private final ExecutionHistoryMapper historyMapper;
-
-    /** 构造器注入：依赖显式化，字段 final 不可变。 */
-    public HistoryService(ExecutionHistoryMapper historyMapper) {
-        this.historyMapper = historyMapper;
-    }
 
     /**
      * 最近 N 条历史。

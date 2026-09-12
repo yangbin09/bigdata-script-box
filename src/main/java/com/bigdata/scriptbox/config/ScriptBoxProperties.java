@@ -1,5 +1,6 @@
 package com.bigdata.scriptbox.config;
 
+import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
@@ -15,7 +16,11 @@ import org.springframework.context.annotation.Configuration;
  *   <li>并发执行上限（{@link #getMaxConcurrent()}）；</li>
  *   <li>清理功能保留天数（{@link #getRetentionHistoryDays()} 等）。</li>
  * </ul>
+ *
+ * <p>部分 setter 含边界校验（如并发数 ≥ 1、保留天数 ≥ 0），由 Lombok 生成默认
+ * setter 后再通过本类内的显式 setter 覆盖即可保留校验逻辑。
  */
+@Data
 @Configuration
 @ConfigurationProperties(prefix = "scriptbox")
 public class ScriptBoxProperties {
@@ -54,241 +59,33 @@ public class ScriptBoxProperties {
     // 目录不存在时日志保留类别自动禁用。
     private String logsDir = "./logs";
 
-    /**
-     * 获取 Mock 模式开关。
-     *
-     * @return 是否启用 Mock 模式
-     */
-    public boolean isMock() { return mock; }
+    /** 显式 setter：保留原有的"并发上限最小为 1"边界校验。 */
+    public void setMaxConcurrent(int maxConcurrent) {
+        this.maxConcurrent = Math.max(1, maxConcurrent);
+    }
 
-    /**
-     * 设置 Mock 模式开关。
-     *
-     * @param mock true 启用 Mock 模式
-     */
-    public void setMock(boolean mock) { this.mock = mock; }
+    /** 显式 setter：保留原有的"产物文件数最小为 1"边界校验。 */
+    public void setMaxArtifactFiles(int maxArtifactFiles) {
+        this.maxArtifactFiles = Math.max(1, maxArtifactFiles);
+    }
 
-    /**
-     * 获取数据根目录。
-     *
-     * @return 数据根目录路径
-     */
-    public String getDataDir() { return dataDir; }
+    /** 显式 setter：保留原有的"历史保留天数 ≥ 0"边界校验（0 表示禁用）。 */
+    public void setRetentionHistoryDays(int v) {
+        this.retentionHistoryDays = Math.max(0, v);
+    }
 
-    /**
-     * 设置数据根目录。
-     *
-     * @param dataDir 数据根目录路径
-     */
-    public void setDataDir(String dataDir) { this.dataDir = dataDir; }
+    /** 显式 setter：保留原有的"产物保留天数 ≥ 0"边界校验。 */
+    public void setRetentionArtifactDays(int v) {
+        this.retentionArtifactDays = Math.max(0, v);
+    }
 
-    /**
-     * 获取脚本目录。
-     *
-     * @return 脚本目录路径
-     */
-    public String getScriptsDir() { return scriptsDir; }
+    /** 显式 setter：保留原有的"执行目录保留天数 ≥ 0"边界校验。 */
+    public void setRetentionExecutionDays(int v) {
+        this.retentionExecutionDays = Math.max(0, v);
+    }
 
-    /**
-     * 设置脚本目录。
-     *
-     * @param scriptsDir 脚本目录路径
-     */
-    public void setScriptsDir(String scriptsDir) { this.scriptsDir = scriptsDir; }
-
-    /**
-     * 获取 keytab 目录。
-     *
-     * @return keytab 目录路径
-     */
-    public String getKeytabsDir() { return keytabsDir; }
-
-    /**
-     * 设置 keytab 目录。
-     *
-     * @param keytabsDir keytab 目录路径
-     */
-    public void setKeytabsDir(String keytabsDir) { this.keytabsDir = keytabsDir; }
-
-    /**
-     * 获取执行目录。
-     *
-     * @return 执行目录路径
-     */
-    public String getExecutionsDir() { return executionsDir; }
-
-    /**
-     * 设置执行目录。
-     *
-     * @param executionsDir 执行目录路径
-     */
-    public void setExecutionsDir(String executionsDir) { this.executionsDir = executionsDir; }
-
-    /**
-     * 获取日志最大字节数。
-     *
-     * @return 日志最大字节数
-     */
-    public long getMaxLogBytes() { return maxLogBytes; }
-
-    /**
-     * 设置日志最大字节数。
-     *
-     * @param maxLogBytes 日志最大字节数
-     */
-    public void setMaxLogBytes(long maxLogBytes) { this.maxLogBytes = maxLogBytes; }
-
-    /**
-     * 获取脚本最大字节数。
-     *
-     * @return 脚本最大字节数
-     */
-    public long getMaxScriptBytes() { return maxScriptBytes; }
-
-    /**
-     * 设置脚本最大字节数。
-     *
-     * @param maxScriptBytes 脚本最大字节数
-     */
-    public void setMaxScriptBytes(long maxScriptBytes) { this.maxScriptBytes = maxScriptBytes; }
-
-    /**
-     * 获取输入文件最大字节数。
-     *
-     * @return 输入文件最大字节数
-     */
-    public long getMaxInputFileBytes() { return maxInputFileBytes; }
-
-    /**
-     * 设置输入文件最大字节数。
-     *
-     * @param maxInputFileBytes 输入文件最大字节数
-     */
-    public void setMaxInputFileBytes(long maxInputFileBytes) { this.maxInputFileBytes = maxInputFileBytes; }
-
-    /**
-     * 获取并发上限。
-     *
-     * @return 并发上限
-     */
-    public int getMaxConcurrent() { return maxConcurrent; }
-
-    /**
-     * 设置并发上限，最小值 1。
-     *
-     * @param maxConcurrent 并发上限
-     */
-    public void setMaxConcurrent(int maxConcurrent) { this.maxConcurrent = Math.max(1, maxConcurrent); }
-
-    /**
-     * 获取单产物最大字节数。
-     *
-     * @return 单产物最大字节数
-     */
-    public long getMaxArtifactBytes() { return maxArtifactBytes; }
-
-    /**
-     * 设置单产物最大字节数。
-     *
-     * @param maxArtifactBytes 单产物最大字节数
-     */
-    public void setMaxArtifactBytes(long maxArtifactBytes) { this.maxArtifactBytes = maxArtifactBytes; }
-
-    /**
-     * 获取产物最大文件数。
-     *
-     * @return 产物最大文件数
-     */
-    public int getMaxArtifactFiles() { return maxArtifactFiles; }
-
-    /**
-     * 设置产物最大文件数，最小值 1。
-     *
-     * @param maxArtifactFiles 产物最大文件数
-     */
-    public void setMaxArtifactFiles(int maxArtifactFiles) { this.maxArtifactFiles = Math.max(1, maxArtifactFiles); }
-
-    /**
-     * 获取单次执行产物总字节数上限。
-     *
-     * @return 单次执行产物总字节数上限
-     */
-    public long getMaxArtifactTotalBytes() { return maxArtifactTotalBytes; }
-
-    /**
-     * 设置单次执行产物总字节数上限。
-     *
-     * @param maxArtifactTotalBytes 单次执行产物总字节数上限
-     */
-    public void setMaxArtifactTotalBytes(long maxArtifactTotalBytes) { this.maxArtifactTotalBytes = maxArtifactTotalBytes; }
-
-    /**
-     * 获取历史保留天数。
-     *
-     * @return 历史保留天数
-     */
-    public int getRetentionHistoryDays() { return retentionHistoryDays; }
-
-    /**
-     * 设置历史保留天数，最小值 0（0 表示禁用）。
-     *
-     * @param v 历史保留天数
-     */
-    public void setRetentionHistoryDays(int v) { this.retentionHistoryDays = Math.max(0, v); }
-
-    /**
-     * 获取产物保留天数。
-     *
-     * @return 产物保留天数
-     */
-    public int getRetentionArtifactDays() { return retentionArtifactDays; }
-
-    /**
-     * 设置产物保留天数，最小值 0。
-     *
-     * @param v 产物保留天数
-     */
-    public void setRetentionArtifactDays(int v) { this.retentionArtifactDays = Math.max(0, v); }
-
-    /**
-     * 获取执行目录保留天数。
-     *
-     * @return 执行目录保留天数
-     */
-    public int getRetentionExecutionDays() { return retentionExecutionDays; }
-
-    /**
-     * 设置执行目录保留天数，最小值 0。
-     *
-     * @param v 执行目录保留天数
-     */
-    public void setRetentionExecutionDays(int v) { this.retentionExecutionDays = Math.max(0, v); }
-
-    /**
-     * 获取应用日志保留天数。
-     *
-     * @return 应用日志保留天数
-     */
-    public int getRetentionLogDays() { return retentionLogDays; }
-
-    /**
-     * 设置应用日志保留天数，最小值 0。
-     *
-     * @param v 应用日志保留天数
-     */
-    public void setRetentionLogDays(int v) { this.retentionLogDays = Math.max(0, v); }
-
-    /**
-     * 获取应用日志目录。
-     *
-     * @return 应用日志目录路径
-     */
-    public String getLogsDir() { return logsDir; }
-
-    /**
-     * 设置应用日志目录。
-     *
-     * @param logsDir 应用日志目录路径
-     */
-    public void setLogsDir(String logsDir) { this.logsDir = logsDir; }
+    /** 显式 setter：保留原有的"应用日志保留天数 ≥ 0"边界校验。 */
+    public void setRetentionLogDays(int v) {
+        this.retentionLogDays = Math.max(0, v);
+    }
 }

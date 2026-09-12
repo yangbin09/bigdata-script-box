@@ -3,6 +3,7 @@ package com.bigdata.scriptbox.entity;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import lombok.Data;
 
 import java.time.LocalDateTime;
 
@@ -17,6 +18,7 @@ import java.time.LocalDateTime;
  *   <li>{@link #paramsJson} — 可选的 ScriptParam 数组 JSON；新建脚本时一并复制。</li>
  * </ul>
  */
+@Data
 @TableName("script_template")
 public class ScriptTemplate {
     /** 主键。 */
@@ -42,49 +44,4 @@ public class ScriptTemplate {
     private LocalDateTime createTime;
     /** 更新时间。 */
     private LocalDateTime updateTime;
-
-    /** @return 主键 */
-    public Long getId() { return id; }
-    /** @param id 主键 */
-    public void setId(Long id) { this.id = id; }
-    /** @return 模板编码 */
-    public String getCode() { return code; }
-    /** @param code 模板编码 */
-    public void setCode(String code) { this.code = code; }
-    /** @return 模板名 */
-    public String getName() { return name; }
-    /** @param name 模板名 */
-    public void setName(String name) { this.name = name; }
-    /** @return 分类 */
-    public String getCategory() { return category; }
-    /** @param category 分类 */
-    public void setCategory(String category) { this.category = category; }
-    /** @return 描述 */
-    public String getDescription() { return description; }
-    /** @param description 描述 */
-    public void setDescription(String description) { this.description = description; }
-    /** @return 脚本正文 */
-    public String getContent() { return content; }
-    /** @param content 脚本正文 */
-    public void setContent(String content) { this.content = content; }
-    /** @return ScriptParam 数组 JSON */
-    public String getParamsJson() { return paramsJson; }
-    /** @param paramsJson ScriptParam 数组 JSON */
-    public void setParamsJson(String paramsJson) { this.paramsJson = paramsJson; }
-    /** @return 排序 */
-    public Integer getSortOrder() { return sortOrder; }
-    /** @param sortOrder 排序 */
-    public void setSortOrder(Integer sortOrder) { this.sortOrder = sortOrder; }
-    /** @return 是否启用 */
-    public Boolean getEnabled() { return enabled; }
-    /** @param enabled 是否启用 */
-    public void setEnabled(Boolean enabled) { this.enabled = enabled; }
-    /** @return 创建时间 */
-    public LocalDateTime getCreateTime() { return createTime; }
-    /** @param createTime 创建时间 */
-    public void setCreateTime(LocalDateTime createTime) { this.createTime = createTime; }
-    /** @return 更新时间 */
-    public LocalDateTime getUpdateTime() { return updateTime; }
-    /** @param updateTime 更新时间 */
-    public void setUpdateTime(LocalDateTime updateTime) { this.updateTime = updateTime; }
 }

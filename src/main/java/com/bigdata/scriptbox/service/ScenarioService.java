@@ -8,8 +8,8 @@ import com.bigdata.scriptbox.entity.ScenarioStep;
 import com.bigdata.scriptbox.executor.ScriptExecutor;
 import com.bigdata.scriptbox.mapper.ScenarioMapper;
 import com.bigdata.scriptbox.mapper.ScenarioStepMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -26,22 +26,13 @@ import java.util.Map;
  * 上选择"失败继续"。
  */
 @Service
+@Slf4j
+@RequiredArgsConstructor
 public class ScenarioService {
-
-    private static final Logger log = LoggerFactory.getLogger(ScenarioService.class);
 
     private final ScenarioMapper scenarioMapper;
     private final ScenarioStepMapper stepMapper;
     private final ScriptExecutor executor;
-
-    /** 构造器注入：依赖显式化，字段 final 不可变。 */
-    public ScenarioService(ScenarioMapper scenarioMapper,
-                           ScenarioStepMapper stepMapper,
-                           ScriptExecutor executor) {
-        this.scenarioMapper = scenarioMapper;
-        this.stepMapper = stepMapper;
-        this.executor = executor;
-    }
 
     /**
      * 创建场景。{@code id} 与 {@code enabled} 同时为空时默认启用。

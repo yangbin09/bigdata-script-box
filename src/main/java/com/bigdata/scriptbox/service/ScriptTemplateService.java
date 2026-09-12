@@ -3,6 +3,7 @@ package com.bigdata.scriptbox.service;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.bigdata.scriptbox.entity.ScriptTemplate;
 import com.bigdata.scriptbox.mapper.ScriptTemplateMapper;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -15,14 +16,10 @@ import java.util.List;
  * 成真实 Script 行。
  */
 @Service
+@RequiredArgsConstructor
 public class ScriptTemplateService {
 
     private final ScriptTemplateMapper mapper;
-
-    /** 构造器注入：依赖显式化，字段 final 不可变。 */
-    public ScriptTemplateService(ScriptTemplateMapper mapper) {
-        this.mapper = mapper;
-    }
 
     /** 列出所有启用的模板（前端展示用）。 */
     public List<ScriptTemplate> listEnabled() {

@@ -7,9 +7,8 @@ import com.bigdata.scriptbox.entity.ExecutionHistory;
 import com.bigdata.scriptbox.entity.Tenant;
 import com.bigdata.scriptbox.mapper.ExecutionHistoryMapper;
 import com.bigdata.scriptbox.service.TenantService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -28,13 +27,13 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/tenants")
+@Slf4j
+@RequiredArgsConstructor
 public class TenantController {
 
-    private static final Logger log = LoggerFactory.getLogger(TenantController.class);
-
-    @Autowired private TenantService tenantService;
-    @Autowired private ScriptBoxProperties props;
-    @Autowired private ExecutionHistoryMapper historyMapper;
+    private final TenantService tenantService;
+    private final ScriptBoxProperties props;
+    private final ExecutionHistoryMapper historyMapper;
 
     /**
      * 列出全部租户。

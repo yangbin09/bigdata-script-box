@@ -5,8 +5,8 @@ import com.bigdata.scriptbox.config.ScriptBoxProperties;
 import com.bigdata.scriptbox.entity.Tenant;
 import com.bigdata.scriptbox.mapper.TenantMapper;
 import jakarta.annotation.PostConstruct;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -30,22 +30,13 @@ import java.util.UUID;
  * 日志里也只打印 keytab 路径而非内容。
  */
 @Service
+@Slf4j
+@RequiredArgsConstructor
 public class TenantService {
-
-    private static final Logger log = LoggerFactory.getLogger(TenantService.class);
 
     private final TenantMapper tenantMapper;
     private final ScriptBoxProperties props;
     private final StoragePathService storagePathService;
-
-    /** 构造器注入：依赖在对象创建时就齐备，便于测试中手工 mock。 */
-    public TenantService(TenantMapper tenantMapper,
-                         ScriptBoxProperties props,
-                         StoragePathService storagePathService) {
-        this.tenantMapper = tenantMapper;
-        this.props = props;
-        this.storagePathService = storagePathService;
-    }
 
     /** 启动时确保 keytab 根目录存在。 */
     @PostConstruct

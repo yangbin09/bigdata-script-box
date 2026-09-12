@@ -23,8 +23,8 @@ import com.bigdata.scriptbox.service.StoragePathService;
 import com.bigdata.scriptbox.service.TenantService;
 import com.bigdata.scriptbox.util.MdcContext;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.io.File;
@@ -70,9 +70,9 @@ import java.util.concurrent.atomic.AtomicLong;
  * </ul>
  */
 @Component
+@Slf4j
+@RequiredArgsConstructor
 public class ScriptExecutor {
-
-    private static final Logger log = LoggerFactory.getLogger(ScriptExecutor.class);
 
     private final ScriptBoxProperties props;
     private final com.bigdata.scriptbox.service.ScriptService scriptService;
@@ -90,39 +90,6 @@ public class ScriptExecutor {
     private final ProcessRunner processRunner;
     private final ObjectMapper mapper;
     private final AtomicLong counter = new AtomicLong(System.currentTimeMillis() * 1000L);
-
-    /** 构造器注入：14 个依赖一次性收齐，字段全部 final。 */
-    public ScriptExecutor(ScriptBoxProperties props,
-                          com.bigdata.scriptbox.service.ScriptService scriptService,
-                          ExecutionHistoryMapper historyMapper,
-                          TenantService tenantService,
-                          GlobalVariableService globalVariableService,
-                          PresetService presetService,
-                          ResultParserService resultParserService,
-                          FileUploadService fileUploadService,
-                          PrecheckService precheckService,
-                          RunningExecutionRegistry runningRegistry,
-                          ArtifactService artifactService,
-                          StoragePathService storagePathService,
-                          SensitiveDataMasker sensitiveDataMasker,
-                          ProcessRunner processRunner,
-                          ObjectMapper mapper) {
-        this.props = props;
-        this.scriptService = scriptService;
-        this.historyMapper = historyMapper;
-        this.tenantService = tenantService;
-        this.globalVariableService = globalVariableService;
-        this.presetService = presetService;
-        this.resultParserService = resultParserService;
-        this.fileUploadService = fileUploadService;
-        this.precheckService = precheckService;
-        this.runningRegistry = runningRegistry;
-        this.artifactService = artifactService;
-        this.storagePathService = storagePathService;
-        this.sensitiveDataMasker = sensitiveDataMasker;
-        this.processRunner = processRunner;
-        this.mapper = mapper;
-    }
 
     public ExecutionHistory history(Long id) {
         return historyMapper.selectById(id);

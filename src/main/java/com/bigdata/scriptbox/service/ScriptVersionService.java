@@ -6,6 +6,7 @@ import com.bigdata.scriptbox.entity.Script;
 import com.bigdata.scriptbox.entity.ScriptVersion;
 import com.bigdata.scriptbox.mapper.ScriptMapper;
 import com.bigdata.scriptbox.mapper.ScriptVersionMapper;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,23 +26,13 @@ import java.util.List;
  * 脚本单调递增。
  */
 @Service
+@RequiredArgsConstructor
 public class ScriptVersionService {
 
     private final ScriptVersionMapper versionMapper;
     private final ScriptMapper scriptMapper;
     private final ScriptBoxProperties props;
     private final StoragePathService storagePathService;
-
-    /** 构造器注入：依赖显式化，字段 final 不可变。 */
-    public ScriptVersionService(ScriptVersionMapper versionMapper,
-                                ScriptMapper scriptMapper,
-                                ScriptBoxProperties props,
-                                StoragePathService storagePathService) {
-        this.versionMapper = versionMapper;
-        this.scriptMapper = scriptMapper;
-        this.props = props;
-        this.storagePathService = storagePathService;
-    }
 
     /**
      * 给当前脚本正文拍一份快照。版本号在已有最大版本号基础上 +1。

@@ -5,7 +5,8 @@ import com.bigdata.scriptbox.dto.ExecutionRequest;
 import com.bigdata.scriptbox.entity.ExecutionHistory;
 import com.bigdata.scriptbox.executor.ScriptExecutor;
 import com.bigdata.scriptbox.service.RunningExecutionRegistry;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -31,12 +32,14 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/executions")
+@Slf4j
+@RequiredArgsConstructor
 public class ExecutionController {
 
-    @Autowired private ScriptExecutor executor;
-    @Autowired private com.bigdata.scriptbox.service.ResultParserService resultParserService;
-    @Autowired private RunningExecutionRegistry runningRegistry;
-    @Autowired private com.bigdata.scriptbox.service.ArtifactService artifactService;
+    private final ScriptExecutor executor;
+    private final com.bigdata.scriptbox.service.ResultParserService resultParserService;
+    private final RunningExecutionRegistry runningRegistry;
+    private final com.bigdata.scriptbox.service.ArtifactService artifactService;
 
     /**
      * 同步执行一次脚本。
@@ -264,7 +267,4 @@ public class ExecutionController {
         // 过滤掉会破坏响应头的控制字符与引号
         return base.replaceAll("[\\r\\n\\\"\\\\]", "_");
     }
-
-    private static final org.slf4j.Logger log =
-            org.slf4j.LoggerFactory.getLogger(ExecutionController.class);
 }

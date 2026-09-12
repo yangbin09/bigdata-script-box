@@ -45,6 +45,13 @@
             <version>${mybatis-plus.version}</version>
         </dependency>
 
+        <!-- Lombok: 减少 entity/dto/service 样板代码（@Data / @Builder / @Slf4j / @RequiredArgsConstructor 等）。 -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
@@ -128,6 +135,21 @@
                 <configuration>
                     <!-- JDK 17 + Mockito 5 inline mock maker requires self-attach. -->
                     <argLine>-Djdk.attach.allowAttachSelf=true</argLine>
+                </configuration>
+            </plugin>
+
+            <!-- Lombok annotation processor: 在 compile 阶段生成 getter/setter 等字节码。
+                 Spring Boot 3 的父 POM 已默认开启 annotationProcessorPaths，这里显式列出以稳定行为。 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </path>
+                    </annotationProcessorPaths>
                 </configuration>
             </plugin>
         </plugins>

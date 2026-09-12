@@ -3,11 +3,11 @@ package com.bigdata.scriptbox.service;
 import com.bigdata.scriptbox.dto.ExecutionRequest;
 import com.bigdata.scriptbox.entity.ExecutionHistory;
 import com.bigdata.scriptbox.executor.ScriptExecutor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.bigdata.scriptbox.mapper.ExecutionHistoryMapper;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -24,23 +24,16 @@ import java.util.concurrent.atomic.AtomicLong;
  * <p>默认顺序执行：脚本执行器调用较慢且可能启子进程，避免批量并发把宿主机打爆；
  * 当 {@code concurrency > 1} 时启用并行模式，最多 8 路并发。
  */
+@Slf4j
 @Service
+@RequiredArgsConstructor
 public class BatchService {
-
-    private static final Logger log = LoggerFactory.getLogger(BatchService.class);
 
     /** 硬上限，避免失控批次。 */
     private static final int MAX_ROWS = 200;
 
     private final ScriptExecutor executor;
-    private final com.bigdata.scriptbox.mapper.ExecutionHistoryMapper historyMapper;
-
-    /** 构造器注入：依赖显式化，字段 final 不可变。 */
-    public BatchService(ScriptExecutor executor,
-                        com.bigdata.scriptbox.mapper.ExecutionHistoryMapper historyMapper) {
-        this.executor = executor;
-        this.historyMapper = historyMapper;
-    }
+    private final ExecutionHistoryMapper historyMapper;
 
     /** 单调递增的 batchId 计数器（基于当前毫秒时间戳起步）。 */
     private final AtomicLong batchCounter = new AtomicLong(System.currentTimeMillis() * 1000L);

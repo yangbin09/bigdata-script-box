@@ -14,7 +14,8 @@ import com.bigdata.scriptbox.mapper.ScenarioStepMapper;
 import com.bigdata.scriptbox.service.ScriptService;
 import com.bigdata.scriptbox.service.ScriptTemplateService;
 import com.bigdata.scriptbox.service.SyntaxCheckService;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -35,14 +36,16 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/scripts")
+@Slf4j
+@RequiredArgsConstructor
 public class ScriptController {
 
-    @Autowired private ScriptService scriptService;
-    @Autowired private ScriptTemplateService templateService;
-    @Autowired private ExecutionHistoryMapper historyMapper;
-    @Autowired private ScriptPresetMapper presetMapper;
-    @Autowired private ScenarioStepMapper scenarioStepMapper;
-    @Autowired private ScriptBoxProperties props;
+    private final ScriptService scriptService;
+    private final ScriptTemplateService templateService;
+    private final ExecutionHistoryMapper historyMapper;
+    private final ScriptPresetMapper presetMapper;
+    private final ScenarioStepMapper scenarioStepMapper;
+    private final ScriptBoxProperties props;
 
     /**
      * 列出全部脚本（按分类、ID 排序）。
@@ -371,7 +374,4 @@ public class ScriptController {
         out.put("precheckConfigJson", s.getPrecheckConfigJson());
         return ApiResponse.ok(out);
     }
-
-    private static final org.slf4j.Logger log =
-            org.slf4j.LoggerFactory.getLogger(ScriptController.class);
 }

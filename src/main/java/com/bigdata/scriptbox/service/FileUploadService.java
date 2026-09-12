@@ -1,8 +1,8 @@
 package com.bigdata.scriptbox.service;
 
 import com.bigdata.scriptbox.config.ScriptBoxProperties;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -28,21 +28,15 @@ import java.util.regex.Pattern;
  * <p>两个端点都会校验文件名（不允许 {@code ..}、路径分隔符）并对大小做限制。
  */
 @Service
+@Slf4j
+@RequiredArgsConstructor
 public class FileUploadService {
-
-    private static final Logger log = LoggerFactory.getLogger(FileUploadService.class);
 
     /** 文件名合法字符集（白名单：字母 / 数字 / 点 / 下划线 / 短横）。 */
     private static final Pattern SAFE_NAME = Pattern.compile("[^A-Za-z0-9._-]");
 
     private final ScriptBoxProperties props;
     private final StoragePathService storagePathService;
-
-    /** 构造器注入：依赖显式化，字段 final 不可变。 */
-    public FileUploadService(ScriptBoxProperties props, StoragePathService storagePathService) {
-        this.props = props;
-        this.storagePathService = storagePathService;
-    }
 
     /**
      * 暂存一个上传文件，返回 token + 原名 + 暂存绝对路径 + 大小。

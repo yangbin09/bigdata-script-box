@@ -2,8 +2,8 @@ package com.bigdata.scriptbox.service;
 
 import com.bigdata.scriptbox.entity.ExecutionHistory;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.nio.file.Files;
@@ -21,18 +21,14 @@ import java.util.Map;
  * 文件缺失 / 格式错误 / 过大都不会影响脚本执行的最终结论，仅 WARN 日志告警。
  */
 @Service
+@Slf4j
+@RequiredArgsConstructor
 public class ResultParserService {
-
-    private static final Logger log = LoggerFactory.getLogger(ResultParserService.class);
 
     /** 单文件 1 MB 硬上限，超出视为脚本异常输出，不再尝试解析。 */
     private static final long MAX_BYTES = 1024L * 1024L;
 
     private final ObjectMapper mapper;
-
-    public ResultParserService(ObjectMapper mapper) {
-        this.mapper = mapper;
-    }
 
     /**
      * 读取 result.json；若存在且可解析，把原始 JSON 串写入

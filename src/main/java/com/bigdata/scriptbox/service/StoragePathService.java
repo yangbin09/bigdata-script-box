@@ -3,8 +3,8 @@ package com.bigdata.scriptbox.service;
 import com.bigdata.scriptbox.config.ScriptBoxProperties;
 import com.bigdata.scriptbox.exception.BusinessErrorCode;
 import com.bigdata.scriptbox.exception.BusinessException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -39,9 +39,9 @@ import java.nio.file.Paths;
  * 归一化后的路径前缀最简单可靠。
  */
 @Service
+@Slf4j
+@RequiredArgsConstructor
 public class StoragePathService {
-
-    private static final Logger log = LoggerFactory.getLogger(StoragePathService.class);
 
     /** 执行目录名（每个 execution 一个子目录）。 */
     public static final String EXEC_DIR_PREFIX = "";
@@ -53,10 +53,6 @@ public class StoragePathService {
     public static final String PENDING_UPLOAD_SUBDIR = "uploads";
 
     private final ScriptBoxProperties props;
-
-    public StoragePathService(ScriptBoxProperties props) {
-        this.props = props;
-    }
 
     // ----------------------------------------------------------------------
     // 路径生成

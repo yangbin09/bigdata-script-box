@@ -1,8 +1,8 @@
 package com.bigdata.scriptbox.config;
 
 import com.bigdata.scriptbox.service.StoragePathService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
@@ -19,23 +19,12 @@ import java.nio.file.Path;
  * <p>为何不打 WARN：启动阶段不打错误；任何路径问题会在第一次 IO 时自然暴露。
  */
 @Component
+@Slf4j
+@RequiredArgsConstructor
 public class StartupLogger {
-
-    private static final Logger log = LoggerFactory.getLogger(StartupLogger.class);
 
     private final ScriptBoxProperties props;
     private final StoragePathService storagePathService;
-
-    /**
-     * 构造启动日志器。
-     *
-     * @param props 应用配置项
-     * @param storagePathService 路径解析服务（用于把相对路径转绝对路径）
-     */
-    public StartupLogger(ScriptBoxProperties props, StoragePathService storagePathService) {
-        this.props = props;
-        this.storagePathService = storagePathService;
-    }
 
     /**
      * 监听 {@link ApplicationReadyEvent} 事件，输出启动就绪的关键信息。

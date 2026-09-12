@@ -30,6 +30,7 @@ public class PrecheckStrategyRegistry {
 
     private final Map<String, List<PrecheckStrategy>> byType;
 
+    /** 构造器注入：把全部 PrecheckStrategy 按 type() 分组。 */
     public PrecheckStrategyRegistry(List<PrecheckStrategy> strategies) {
         Map<String, List<PrecheckStrategy>> map = new HashMap<>();
         for (PrecheckStrategy s : strategies) {

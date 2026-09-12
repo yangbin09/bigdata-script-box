@@ -1,7 +1,6 @@
 package com.bigdata.scriptbox.service;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
@@ -19,10 +18,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <p>cancel API 不会触碰 executionId 未知（即已结束）的进程 —— 说明那次执行已经
  * 完成，没必要再 kill。
  */
+@Slf4j
 @Component
 public class RunningExecutionRegistry {
-
-    private static final Logger log = LoggerFactory.getLogger(RunningExecutionRegistry.class);
 
     /**
      * 单个正在运行的执行。

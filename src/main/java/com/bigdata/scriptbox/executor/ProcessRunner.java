@@ -1,8 +1,8 @@
 package com.bigdata.scriptbox.executor;
 
 import com.bigdata.scriptbox.service.RunningExecutionRegistry;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
@@ -37,9 +37,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * 是更可靠的做法。
  */
 @Component
+@Slf4j
+@RequiredArgsConstructor
 public class ProcessRunner {
-
-    private static final Logger log = LoggerFactory.getLogger(ProcessRunner.class);
 
     /** drain 线程最多再等 2 秒，避免 cancel 后 drain 永远 hang。 */
     private static final long DRAIN_JOIN_MS = 2000L;
@@ -47,10 +47,6 @@ public class ProcessRunner {
     private static final long CANCEL_WAIT_SECONDS = 5L;
 
     private final RunningExecutionRegistry registry;
-
-    public ProcessRunner(RunningExecutionRegistry registry) {
-        this.registry = registry;
-    }
 
     /**
      * 启动进程，按 {@link ProcessRequest} 配置执行；返回 {@link ProcessResult}。

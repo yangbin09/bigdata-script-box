@@ -1,5 +1,7 @@
 package com.bigdata.scriptbox.dto;
 
+import lombok.Data;
+
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -22,6 +24,7 @@ import java.util.Map;
  *   <li>{@link #bypassDangerousCheck} — 历史重跑时由 HistoricalRerunService 设置，跳过二次确认。</li>
  * </ul>
  */
+@Data
 public class ExecutionRequest {
     /** 脚本 ID。 */
     private Long scriptId;
@@ -49,53 +52,4 @@ public class ExecutionRequest {
     /** 历史快照重跑标记：为 true 时脚本路径落在 executionDir 内（临时副本），
      *  captureSnapshot 会跳过 scriptsRoot 路径校验。 */
     private boolean rerunSnapshot;
-
-    /** @return 脚本 ID */
-    public Long getScriptId() { return scriptId; }
-    /** @param scriptId 脚本 ID */
-    public void setScriptId(Long scriptId) { this.scriptId = scriptId; }
-    /** @return 租户 ID */
-    public Long getTenantId() { return tenantId; }
-    /** @param tenantId 租户 ID */
-    public void setTenantId(Long tenantId) { this.tenantId = tenantId; }
-    /** @return 参数 Map（保持插入顺序） */
-    public Map<String, String> getParams() { return params; }
-    /** @param params 参数 Map */
-    public void setParams(Map<String, String> params) { this.params = params; }
-    /** @return 预设 ID，可空 */
-    public Long getPresetId() { return presetId; }
-    /** @param presetId 预设 ID */
-    public void setPresetId(Long presetId) { this.presetId = presetId; }
-    /** @return 文件输入 Map（参数名 → 服务端路径） */
-    public Map<String, String> getFileInputs() { return fileInputs; }
-    /** @param fileInputs 文件输入 Map */
-    public void setFileInputs(Map<String, String> fileInputs) { this.fileInputs = fileInputs; }
-    /** @return 批次 ID（空表示单次执行） */
-    public String getBatchId() { return batchId; }
-    /** @param batchId 批次 ID */
-    public void setBatchId(String batchId) { this.batchId = batchId; }
-    /** @return 当前行号（批次内 0-based） */
-    public Integer getBatchRowIndex() { return batchRowIndex; }
-    /** @param batchRowIndex 批次内行号 */
-    public void setBatchRowIndex(Integer batchRowIndex) { this.batchRowIndex = batchRowIndex; }
-    /** @return 场景 ID（空表示单次执行） */
-    public Long getScenarioId() { return scenarioId; }
-    /** @param scenarioId 场景 ID */
-    public void setScenarioId(Long scenarioId) { this.scenarioId = scenarioId; }
-    /** @return 场景内步骤序号（1-based） */
-    public Integer getScenarioStepNo() { return scenarioStepNo; }
-    /** @param scenarioStepNo 场景内步骤序号 */
-    public void setScenarioStepNo(Integer scenarioStepNo) { this.scenarioStepNo = scenarioStepNo; }
-    /** @return 危险脚本确认 token */
-    public String getConfirmToken() { return confirmToken; }
-    /** @param confirmToken 危险脚本确认 token */
-    public void setConfirmToken(String confirmToken) { this.confirmToken = confirmToken; }
-    /** @return 是否绕过危险脚本确认（历史重跑场景） */
-    public boolean isBypassDangerousCheck() { return bypassDangerousCheck; }
-    /** @param bypassDangerousCheck 是否绕过危险脚本确认 */
-    public void setBypassDangerousCheck(boolean bypassDangerousCheck) { this.bypassDangerousCheck = bypassDangerousCheck; }
-    /** @return 是否 snapshot 重跑（临时副本路径，不在 scriptsRoot 下） */
-    public boolean isRerunSnapshot() { return rerunSnapshot; }
-    /** @param rerunSnapshot 是否 snapshot 重跑 */
-    public void setRerunSnapshot(boolean rerunSnapshot) { this.rerunSnapshot = rerunSnapshot; }
 }

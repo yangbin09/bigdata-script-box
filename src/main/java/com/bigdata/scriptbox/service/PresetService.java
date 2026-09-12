@@ -5,6 +5,7 @@ import com.bigdata.scriptbox.entity.ScriptPreset;
 import com.bigdata.scriptbox.mapper.ScriptPresetMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -24,16 +25,11 @@ import java.util.Map;
  * </ul>
  */
 @Service
+@RequiredArgsConstructor
 public class PresetService {
 
     private final ScriptPresetMapper presetMapper;
     private final ObjectMapper mapper;
-
-    /** 构造器注入：依赖显式化，字段 final 不可变。 */
-    public PresetService(ScriptPresetMapper presetMapper, ObjectMapper mapper) {
-        this.presetMapper = presetMapper;
-        this.mapper = mapper;
-    }
 
     /**
      * 列出脚本的全部预设。

@@ -7,9 +7,8 @@ import com.bigdata.scriptbox.service.CleanupExecutor;
 import com.bigdata.scriptbox.service.CleanupService;
 import com.bigdata.scriptbox.service.PreviewStore;
 import com.bigdata.scriptbox.service.SystemSettingService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Collections;
@@ -33,12 +32,12 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/admin")
+@Slf4j
+@RequiredArgsConstructor
 public class AdminController {
 
-    private static final Logger log = LoggerFactory.getLogger(AdminController.class);
-
-    @Autowired private CleanupService cleanupService;
-    @Autowired private SystemSettingService settingsService;
+    private final CleanupService cleanupService;
+    private final SystemSettingService settingsService;
 
     // ----------------------------------------------------------------------
     // 局部异常处理：本控制器的清理接口对前端契约保留 "PREVIEW_EXPIRED: ..." /

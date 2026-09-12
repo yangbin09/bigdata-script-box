@@ -12,8 +12,8 @@ import com.bigdata.scriptbox.service.PreviewStore.CleanupPreview;
 import com.bigdata.scriptbox.service.PreviewStore.ControlledPaths;
 import com.bigdata.scriptbox.service.PreviewStore.Totals;
 import com.bigdata.scriptbox.util.FileSystemUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -48,9 +48,9 @@ import java.util.stream.Stream;
  * 仅接受保留天数 + previewId 确认 token。
  */
 @Service
+@Slf4j
+@RequiredArgsConstructor
 public class CleanupService {
-
-    private static final Logger log = LoggerFactory.getLogger(CleanupService.class);
 
     /** 保留天数配置项 key（对应 {@link SystemSettingService}）。 */
     public static final String K_HISTORY = "cleanup.historyDays";
@@ -60,27 +60,6 @@ public class CleanupService {
 
     /** 运维必须输入的确认字符串。 */
     public static final String CONFIRM_TOKEN = "CLEAN";
-
-    /** 构造器注入：所有依赖在对象创建时就齐备，便于测试与单元测试中手工 mock。 */
-    public CleanupService(ScriptBoxProperties props,
-                          SystemSettingService settings,
-                          ExecutionHistoryMapper historyMapper,
-                          ExecutionArtifactMapper artifactMapper,
-                          RunningExecutionRegistry runningRegistry,
-                          PreviewStore previewStore,
-                          CleanupExecutor executor,
-                          CleanupHistoryService historyService,
-                          StoragePathService storagePathService) {
-        this.props = props;
-        this.settings = settings;
-        this.historyMapper = historyMapper;
-        this.artifactMapper = artifactMapper;
-        this.runningRegistry = runningRegistry;
-        this.previewStore = previewStore;
-        this.executor = executor;
-        this.historyService = historyService;
-        this.storagePathService = storagePathService;
-    }
 
     private final ScriptBoxProperties props;
     private final SystemSettingService settings;

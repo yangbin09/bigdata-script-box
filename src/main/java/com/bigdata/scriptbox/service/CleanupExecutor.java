@@ -5,8 +5,8 @@ import com.bigdata.scriptbox.entity.ExecutionArtifact;
 import com.bigdata.scriptbox.mapper.ExecutionArtifactMapper;
 import com.bigdata.scriptbox.mapper.ExecutionHistoryMapper;
 import com.bigdata.scriptbox.util.FileSystemUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -34,25 +34,14 @@ import java.util.List;
  * {@code cleanup_history} 表（由 {@link CleanupService#execute(String, String)} 完成）。
  */
 @Service
+@Slf4j
+@RequiredArgsConstructor
 public class CleanupExecutor {
-
-    private static final Logger log = LoggerFactory.getLogger(CleanupExecutor.class);
 
     private final RunningExecutionRegistry runningRegistry;
     private final ExecutionHistoryMapper historyMapper;
     private final ExecutionArtifactMapper artifactMapper;
     private final StoragePathService storagePathService;
-
-    /** 构造器注入：依赖显式化，字段 final 不可变。 */
-    public CleanupExecutor(RunningExecutionRegistry runningRegistry,
-                           ExecutionHistoryMapper historyMapper,
-                           ExecutionArtifactMapper artifactMapper,
-                           StoragePathService storagePathService) {
-        this.runningRegistry = runningRegistry;
-        this.historyMapper = historyMapper;
-        this.artifactMapper = artifactMapper;
-        this.storagePathService = storagePathService;
-    }
 
     /**
      * 应用快照。分四步：执行目录 → 产物（孤儿）→ 应用日志 → 历史表行。

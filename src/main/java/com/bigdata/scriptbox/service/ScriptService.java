@@ -9,8 +9,8 @@ import com.bigdata.scriptbox.mapper.ScriptParamMapper;
 import com.bigdata.scriptbox.model.RiskLevel;
 import com.bigdata.scriptbox.model.VisibleWhen;
 import jakarta.annotation.PostConstruct;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -35,9 +35,9 @@ import java.util.Set;
  * Preset 由各自的 Service 维护。
  */
 @Service
+@Slf4j
+@RequiredArgsConstructor
 public class ScriptService {
-
-    private static final Logger log = LoggerFactory.getLogger(ScriptService.class);
 
     /** 允许的参数类型集合（前端 select 用）。 */
     private static final Set<String> ALLOWED_TYPES = Set.of(
@@ -50,23 +50,6 @@ public class ScriptService {
     private final PresetService presetService;
     private final SyntaxCheckService syntaxCheckService;
     private final StoragePathService storagePathService;
-
-    /** 构造器注入：依赖显式化，字段 final 不可变，便于单元测试。 */
-    public ScriptService(ScriptMapper scriptMapper,
-                         ScriptParamMapper scriptParamMapper,
-                         ScriptBoxProperties props,
-                         ScriptVersionService versionService,
-                         PresetService presetService,
-                         SyntaxCheckService syntaxCheckService,
-                         StoragePathService storagePathService) {
-        this.scriptMapper = scriptMapper;
-        this.scriptParamMapper = scriptParamMapper;
-        this.props = props;
-        this.versionService = versionService;
-        this.presetService = presetService;
-        this.syntaxCheckService = syntaxCheckService;
-        this.storagePathService = storagePathService;
-    }
 
     /** 启动时确保脚本根目录存在。 */
     @PostConstruct

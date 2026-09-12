@@ -6,8 +6,8 @@ import com.bigdata.scriptbox.service.precheck.PrecheckStrategy;
 import com.bigdata.scriptbox.service.precheck.PrecheckStrategyRegistry;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -37,17 +37,12 @@ import java.util.Map;
  * <p>如何新增检查类型：实现 {@link PrecheckStrategy} 接口即可，本类无需改动。
  */
 @Service
+@Slf4j
+@RequiredArgsConstructor
 public class PrecheckService {
-
-    private static final Logger log = LoggerFactory.getLogger(PrecheckService.class);
 
     private final PrecheckStrategyRegistry registry;
     private final ObjectMapper mapper;
-
-    public PrecheckService(PrecheckStrategyRegistry registry, ObjectMapper mapper) {
-        this.registry = registry;
-        this.mapper = mapper;
-    }
 
     /** 单条检查结果（与前端 CheckResult 对齐）。 */
     public static class CheckResult {

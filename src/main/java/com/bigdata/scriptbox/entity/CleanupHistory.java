@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import lombok.Data;
 
 import java.time.LocalDateTime;
 
@@ -14,6 +15,7 @@ import java.time.LocalDateTime;
  * 无论实际删了多少文件 / 行，都写入一条本表。用于「Settings → Data Cleanup」
  * 页面底部「最近清理历史」列表，以及回答"上周二 03:14 哪些数据被删了"。
  */
+@Data
 @TableName("cleanup_history")
 public class CleanupHistory {
 
@@ -61,57 +63,4 @@ public class CleanupHistory {
     private Integer failedCount;
     /** 备注信息（错误原因等）。 */
     private String message;
-
-    /** @return 主键 */
-    public Long getId() { return id; }
-    /** @param id 主键 */
-    public void setId(Long id) { this.id = id; }
-    /** @return 创建时间 */
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    /** @param createdAt 创建时间 */
-    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
-    /** @return 预览快照 ID */
-    public String getPreviewId() { return previewId; }
-    /** @param previewId 预览快照 ID */
-    public void setPreviewId(String previewId) { this.previewId = previewId; }
-    /** @return 保留天数字典 JSON */
-    public String getRetentionJson() { return retentionJson; }
-    /** @param retentionJson 保留天数字典 JSON */
-    public void setRetentionJson(String retentionJson) { this.retentionJson = retentionJson; }
-    /** @return 执行结果码 */
-    public String getResult() { return result; }
-    /** @param result 执行结果码 */
-    public void setResult(String result) { this.result = result; }
-    /** @return 删除的执行目录个数 */
-    public Integer getExecutionDeleted() { return executionDeleted; }
-    /** @param v 删除的执行目录个数 */
-    public void setExecutionDeleted(Integer v) { this.executionDeleted = v; }
-    /** @return 删除的 artifact 个数 */
-    public Integer getArtifactDeleted() { return artifactDeleted; }
-    /** @param v 删除的 artifact 个数 */
-    public void setArtifactDeleted(Integer v) { this.artifactDeleted = v; }
-    /** @return 删除的日志文件个数 */
-    public Integer getLogDeleted() { return logDeleted; }
-    /** @param v 删除的日志文件个数 */
-    public void setLogDeleted(Integer v) { this.logDeleted = v; }
-    /** @return 删除的历史行数 */
-    public Integer getHistoryDeleted() { return historyDeleted; }
-    /** @param v 删除的历史行数 */
-    public void setHistoryDeleted(Integer v) { this.historyDeleted = v; }
-    /** @return 释放字节数 */
-    public Long getBytesFreed() { return bytesFreed; }
-    /** @param bytesFreed 释放字节数 */
-    public void setBytesFreed(Long bytesFreed) { this.bytesFreed = bytesFreed; }
-    /** @return 跳过条数 */
-    public Integer getSkippedCount() { return skippedCount; }
-    /** @param v 跳过条数 */
-    public void setSkippedCount(Integer v) { this.skippedCount = v; }
-    /** @return 失败条数 */
-    public Integer getFailedCount() { return failedCount; }
-    /** @param v 失败条数 */
-    public void setFailedCount(Integer v) { this.failedCount = v; }
-    /** @return 备注信息 */
-    public String getMessage() { return message; }
-    /** @param message 备注信息 */
-    public void setMessage(String message) { this.message = message; }
 }

@@ -1,5 +1,9 @@
 package com.bigdata.scriptbox.dto;
 
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
 /**
  * 统一 API 响应包装。
  *
@@ -10,6 +14,9 @@ package com.bigdata.scriptbox.dto;
  *   <li>{@code data} — 业务负载（成功时携带）。</li>
  * </ul>
  */
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
 public class ApiResponse<T> {
     /** 业务返回码：0 表示成功，其它值表示失败。 */
     private int code;
@@ -17,22 +24,6 @@ public class ApiResponse<T> {
     private String message;
     /** 业务负载。 */
     private T data;
-
-    /** Jackson 反序列化用的空构造。 */
-    public ApiResponse() {}
-
-    /**
-     * 全字段构造。
-     *
-     * @param code 业务返回码
-     * @param message 提示信息
-     * @param data 负载
-     */
-    public ApiResponse(int code, String message, T data) {
-        this.code = code;
-        this.message = message;
-        this.data = data;
-    }
 
     /**
      * 构造一个成功响应。
@@ -58,17 +49,4 @@ public class ApiResponse<T> {
     public static <T> ApiResponse<T> error(String message) {
         return new ApiResponse<>(1, message, null);
     }
-
-    /** @return 业务返回码 */
-    public int getCode() { return code; }
-    /** @param code 业务返回码 */
-    public void setCode(int code) { this.code = code; }
-    /** @return 提示信息 */
-    public String getMessage() { return message; }
-    /** @param message 提示信息 */
-    public void setMessage(String message) { this.message = message; }
-    /** @return 业务负载 */
-    public T getData() { return data; }
-    /** @param data 业务负载 */
-    public void setData(T data) { this.data = data; }
 }

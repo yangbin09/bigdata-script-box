@@ -5,8 +5,8 @@ import com.bigdata.scriptbox.config.ScriptBoxProperties;
 import com.bigdata.scriptbox.entity.ExecutionArtifact;
 import com.bigdata.scriptbox.entity.ExecutionHistory;
 import com.bigdata.scriptbox.mapper.ExecutionArtifactMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -45,22 +45,13 @@ import java.util.List;
  * 任何 {@code ..} / 绝对路径 / Windows 盘符都会被拒绝，与日志下载共用同一套防御。
  */
 @Service
+@Slf4j
+@RequiredArgsConstructor
 public class ArtifactService {
-
-    private static final Logger log = LoggerFactory.getLogger(ArtifactService.class);
 
     private final ScriptBoxProperties props;
     private final ExecutionArtifactMapper artifactMapper;
     private final StoragePathService storagePathService;
-
-    /** 构造器注入：依赖显式化，字段 final 不可变。 */
-    public ArtifactService(ScriptBoxProperties props,
-                           ExecutionArtifactMapper artifactMapper,
-                           StoragePathService storagePathService) {
-        this.props = props;
-        this.artifactMapper = artifactMapper;
-        this.storagePathService = storagePathService;
-    }
 
     /**
      * 获取某个执行的 artifacts/ 目录绝对路径，按需创建（不存在则创建）。

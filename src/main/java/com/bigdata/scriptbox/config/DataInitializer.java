@@ -7,9 +7,8 @@ import com.bigdata.scriptbox.entity.Tenant;
 import com.bigdata.scriptbox.service.ScriptService;
 import com.bigdata.scriptbox.service.ScriptTemplateService;
 import com.bigdata.scriptbox.service.TenantService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 
@@ -35,14 +34,14 @@ import java.util.List;
  * 不会被反复重置。
  */
 @Component
+@Slf4j
+@RequiredArgsConstructor
 public class DataInitializer implements CommandLineRunner {
 
-    private static final Logger log = LoggerFactory.getLogger(DataInitializer.class);
-
-    @Autowired private TenantService tenantService;
-    @Autowired private ScriptService scriptService;
-    @Autowired private ScriptTemplateService templateService;
-    @Autowired private ScriptBoxProperties props;
+    private final TenantService tenantService;
+    private final ScriptService scriptService;
+    private final ScriptTemplateService templateService;
+    private final ScriptBoxProperties props;
 
     /**
      * Spring Boot 启动完成后调用，执行示例数据注入。
