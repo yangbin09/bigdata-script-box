@@ -81,6 +81,19 @@ public class TenantService {
      */
     public Tenant create(Tenant tenant) {
         if (tenant.getEnabled() == null) tenant.setEnabled(Boolean.TRUE);
+        // V3 (PR-1): auth_name UNIQUE 校验。与 principal 一一对应（前端约束同改同存）。
+        if (tenant.getAuthName() != null && !tenant.getAuthName().isBlank()) {
+            Long dup = countByAuthName(tenant.getAuthName());
+            if (dup > 0) {
+                throw new BusinessException(BusinessErrorCode.INTERNAL_ERROR,
+                        "authName 已存在：" + tenant.getAuthName() + "（认证名称 = Principal 别名，必须全局唯一）");
+            }
+        }
+        // 改了 principal 视为认证已变更：清空 last_test_at
+        if (tenant.getAuthName() != null && !tenant.getAuthName().isBlank()) {
+            tenant.setLastTestAt(null);
+            tenant.setLastTestOk(null);
+        }
         LocalDateTime now = LocalDateTime.now();
         tenant.setCreateTime(now);
         tenant.setUpdateTime(now);
@@ -93,9 +106,67 @@ public class TenantService {
      * 更新一个租户的元数据。
      */
     public Tenant update(Tenant tenant) {
+        // V3 (PR-1): principal 或 authName 修改后，标记认证为"待重新测试"（lastTestAt=null）。
+        Tenant existing = tenantMapper.selectById(tenant.getId());
+        if (existing != null) {
+            boolean principalChanged = tenant.getPrincipal() != null
+                    && !tenant.getPrincipal().equals(existing.getPrincipal());
+            boolean authNameChanged = tenant.getAuthName() != null
+                    && !tenant.getAuthName().equals(existing.getAuthName());
+            if (principalChanged || authNameChanged) {
+                tenant.setLastTestAt(null);
+                tenant.setLastTestOk(null);
+            }
+        }
+        // V3 (PR-1): authName 唯一性也按"修改后是否撞名"做应用层预检，
+        // 避免 DB 层 DuplicateKeyException 直接穿透到 Controller。
+        if (tenant.getAuthName() != null && !tenant.getAuthName().isBlank()) {
+            Long dup = tenantMapper.selectCount(
+                    new QueryWrapper<Tenant>()
+                            .eq("auth_name", tenant.getAuthName())
+                            .ne("id", tenant.getId()));
+            if (dup > 0) {
+                throw new BusinessException(BusinessErrorCode.INTERNAL_ERROR,
+                        "authName 已存在：" + tenant.getAuthName() + "（认证名称 = Principal 别名，必须全局唯一）");
+            }
+        }
         tenant.setUpdateTime(LocalDateTime.now());
         tenantMapper.updateById(tenant);
         return tenantMapper.selectById(tenant.getId());
+    }
+
+    /**
+     * V3 (PR-1): 按 authName 查重（不含自己）。
+     */
+    private Long countByAuthName(String authName) {
+        return tenantMapper.selectCount(new QueryWrapper<Tenant>().eq("auth_name", authName));
+    }
+
+    /**
+     * V3 (PR-1): 把"认证为待重新测试"标记直接写库。由前端在用户改 principal/keytab 后调用。
+     */
+    public Tenant markAuthStale(Long id) {
+        Tenant t = tenantMapper.selectById(id);
+        if (t == null) return null;
+        t.setLastTestAt(null);
+        t.setLastTestOk(null);
+        t.setUpdateTime(LocalDateTime.now());
+        tenantMapper.updateById(t);
+        log.info("租户认证标记为待重新测试，tenantId={}", id);
+        return t;
+    }
+
+    /**
+     * V3 (PR-1): 记录一次认证测试结果。testConnectivity 成功后由 Controller 调用。
+     */
+    public Tenant recordTestResult(Long id, boolean ok) {
+        Tenant t = tenantMapper.selectById(id);
+        if (t == null) return null;
+        t.setLastTestAt(LocalDateTime.now());
+        t.setLastTestOk(ok);
+        t.setUpdateTime(LocalDateTime.now());
+        tenantMapper.updateById(t);
+        return t;
     }
 
     /**
@@ -192,6 +263,8 @@ public class TenantService {
      * 既让 Controller 越界触碰进程层，又可能在 KDC 无响应时挂死 Tomcat 线程。
      * 现在统一走 {@link CommandExecutor}（硬超时 + 排空 + 进程树回收 + 不占并发槽位）。
      *
+     * <p>V3 (PR-1): 测试成功后写 last_test_at / last_test_ok；失败时也写 ok=false。
+     *
      * @param id 租户 ID
      * @return 结果视图；租户不存在时返回 {@code null}
      */
@@ -202,7 +275,9 @@ public class TenantService {
         if (props.isMock()) {
             // mock 模式下避免触碰真实 kinit；给一份假输出
             log.info("租户连通性测试 (mock)，tenant={}", t.getName());
-            return TenantConnectivity.mock(t);
+            TenantConnectivity res = TenantConnectivity.mock(t);
+            recordTestResult(id, true);
+            return res;
         }
 
         if (t.getKeytabPath() == null || t.getKeytabPath().isBlank()) {
@@ -227,15 +302,18 @@ public class TenantService {
                 result.put("ok", false);
                 log.warn("租户连通性测试失败：kinit exit={} timeout={}，tenant={}",
                         kinit.exitCode(), kinit.timeout(), t.getName());
+                recordTestResult(id, false);
                 return new TenantConnectivity(t, false, result);
             }
             CommandResult klist = commandExecutor.exec(CommandSpec.of(
                     List.of(props.getKlistExecutable()), props.getCommandTimeoutSeconds(), "klist"));
             result.put("ok", true);
             log.info("租户连通性测试通过，tenant={}", t.getName());
+            recordTestResult(id, true);
             return new TenantConnectivity(t, true, result);
         } catch (IOException ioe) {
             log.warn("租户连通性测试异常，tenant={}，error={}", t.getName(), ioe.getMessage());
+            recordTestResult(id, false);
             throw new IllegalStateException("test failed: " + ioe.getMessage(), ioe);
         }
     }

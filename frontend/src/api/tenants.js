@@ -32,3 +32,12 @@ export const testTenant = (id) =>
 // V2: count of execution_history rows referencing this tenant.
 export const tenantRelatedCounts = (id) =>
   http.get(`/tenants/${id}/related-counts`)
+
+/**
+ * V3 (PR-1): 把租户认证标记为"待重新测试"。
+ *
+ * <p>前端在用户改 principal/keytab 后调用，让 UI 能显示"Principal 或 Keytab
+ * 已变更，请重新测试认证"横幅。服务端只清空 {@code lastTestAt} / {@code lastTestOk}。
+ */
+export const markTenantStale = (id) =>
+  http.post(`/tenants/${id}/mark-stale`)

@@ -78,4 +78,5 @@ frontend/dist/
 frontend/.vite/
 frontend/*.local
 frontend/npm-debug.log*
-frontend/yarn-error.log*
+frontend/yarn-error.log*script-box.out
+script-box.pid

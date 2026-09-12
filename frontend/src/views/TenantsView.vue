@@ -1,9 +1,23 @@
 <!--
-  TenantsView — tenant table + create/edit drawer + keytab upload + test drawer.
+  TenantsView — V3 (PR-1): single drawer for config + keytab + auth test.
 
-  Visual improvements:
-    - keytab column shows ✓ 已配置 / 未配置 (full path on hover via tooltip)
-    - Test result is shown in a dedicated drawer with clearer status pills.
+  Three previously-separate floats (form / keytab / test) now live in one
+  drawer with three zones:
+    - 基础信息: name, authName, principal, defaultDatabase, description, enabled
+    - Keytab:    drag-drop upload zone
+    - 测试结果:  fixed area showing the most recent test result + time
+
+  Footer offers two save buttons:
+    - 保存              : write metadata (and keytab if selected) only
+    - 保存并测试认证    : same, then run kinit + record lastTestAt/lastTestOk
+
+  When principal / authName / keytab changes, the UI calls
+  POST /tenants/{id}/mark-stale to clear lastTestAt, and shows the
+  "待重新测试" banner.
+
+  Creation flow: submit without id → server returns row with id → store id
+  on the form so a re-submit (e.g. retrying the keytab upload) takes the
+  update path. This keeps authName UNIQUE race-free in practice.
 -->
 <template>
   <div>
@@ -25,25 +39,37 @@
           <div class="sb-name-main">{{ row.name }}</div>
         </template>
       </el-table-column>
-      <el-table-column label="Principal（Kerberos 主体）" min-width="220">
+      <el-table-column label="Auth 名称" min-width="140">
+        <template #default="{ row }">
+          <span class="mono">{{ row.authName || '—' }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="Principal" min-width="200">
         <template #default="{ row }">
           <span class="mono">{{ row.principal }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="默认数据库" min-width="120" prop="defaultDatabase" />
-      <el-table-column label="Keytab 文件" min-width="120">
+      <el-table-column label="Keytab 文件" min-width="100">
         <template #default="{ row }">
-          <el-tooltip
-            v-if="row.keytabPath"
-            :content="row.keytabPath"
-            placement="top"
-          >
+          <el-tooltip v-if="row.keytabPath" :content="row.keytabPath" placement="top">
             <span class="sb-kt-configured">✓ 已配置</span>
           </el-tooltip>
           <span v-else class="muted">未配置</span>
         </template>
       </el-table-column>
-      <el-table-column label="描述" min-width="180" prop="description" show-overflow-tooltip />
+      <el-table-column label="最近测试" min-width="160">
+        <template #default="{ row }">
+          <span v-if="!row.lastTestAt" class="muted">—</span>
+          <span v-else>
+            <el-tag :type="row.lastTestOk ? 'success' : 'danger'" size="small" effect="light">
+              {{ row.lastTestOk ? '通过' : '失败' }}
+            </el-tag>
+            <span class="muted" style="margin-left: 6px; font-size: 12px">
+              {{ formatDate(row.lastTestAt) }}
+            </span>
+          </span>
+        </template>
+      </el-table-column>
       <el-table-column label="状态" width="110" align="center">
         <template #default="{ row }">
           <el-switch
@@ -56,148 +82,186 @@
           />
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="320" fixed="right">
+      <el-table-column label="操作" width="200" fixed="right">
         <template #default="{ row }">
-          <el-button size="small" @click="openEdit(row)">编辑</el-button>
-          <el-button size="small" @click="openKeytab(row)">keytab</el-button>
-          <el-button size="small" type="primary" plain @click="runTest(row)">测试</el-button>
+          <el-button size="small" type="primary" plain @click="openEdit(row)">编辑 / 测试</el-button>
           <el-button size="small" type="danger" plain @click="confirmDelete(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
 
-    <!-- Create / Edit Drawer -->
-    <el-drawer v-model="formOpen" :title="form.id ? '编辑租户' : '新增租户'" direction="rtl" size="440px">
-      <el-form :model="form" label-position="top">
-        <el-form-item required>
-          <template #label><SBLabel text="名称" tip="显示给用户的友好名称。建议简短、语义清晰，例如 mock-hive、prod-hive。" required /></template>
-          <el-input v-model="form.name" placeholder="例如：mock-hive" />
-        </el-form-item>
-        <el-form-item required>
-          <template #label><SBLabel text="Principal（Kerberos 主体）" tip="Kerberos 主体名，格式为 user/instance@REALM。例如 hive@EXAMPLE.COM。执行脚本时会用此 principal 进行 kinit 认证。" required /></template>
-          <el-input v-model="form.principal" placeholder="hive@EXAMPLE.COM" />
-        </el-form-item>
-        <el-form-item>
-          <template #label><SBLabel text="默认数据库" tip="脚本执行时使用的默认 Hive/Spark 数据库。仅作提示，实际脚本里仍可自由切换。" /></template>
-          <el-input v-model="form.defaultDatabase" placeholder="default" />
-        </el-form-item>
-        <el-form-item>
-          <template #label><SBLabel text="描述" tip="对该租户的简短说明，便于协作者区分环境或业务范围。" /></template>
-          <el-input v-model="form.description" type="textarea" :rows="2" placeholder="例如：开发环境 Hive 租户" />
-        </el-form-item>
-        <el-form-item>
-          <template #label><SBLabel text="启用" tip="关闭后此租户不会出现在执行页面的租户下拉列表中。" /></template>
-          <el-switch v-model="form.enabled" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="formOpen = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="submitForm">保存</el-button>
-      </template>
-    </el-drawer>
-
-    <!-- Keytab upload dialog -->
-    <el-dialog v-model="keytabOpen" :title="`上传 Keytab 文件 — ${keytabTarget?.name || ''}`" width="440px">
-      <p class="sb-help" style="margin-top: 0">
-        上传与租户 Principal 匹配的 Keytab 文件。Keytab 通常小于 1 KB，过大的文件将被拒绝。
-      </p>
-      <el-upload
-        ref="keytabUploadRef"
-        :auto-upload="false"
-        :limit="1"
-        :on-change="onKeytabFile"
-        accept=".keytab"
-        drag
-      >
-        <div class="el-upload__text">拖拽 .keytab 到此处或<em>点击选择</em></div>
-      </el-upload>
-      <template #footer>
-        <el-button @click="keytabOpen = false">取消</el-button>
-        <el-button type="primary" :loading="uploading" @click="submitKeytab">上传</el-button>
-      </template>
-    </el-dialog>
-
-    <!-- Test result drawer -->
-    <el-drawer v-model="testOpen" direction="rtl" size="520px" :show-close="false" class="sb-exec-drawer">
+    <!-- V3 (PR-1): unified drawer -->
+    <el-drawer
+      v-model="drawerOpen"
+      :title="form.id ? `编辑租户 #${form.id}` : '新增租户'"
+      direction="rtl"
+      size="520px"
+      :show-close="false"
+      :destroy-on-close="false"
+      class="sb-tenant-drawer"
+    >
       <template #header>
         <div class="sb-drawer-header">
           <div>
-            <div class="sb-drawer-title">租户测试 — {{ testTarget?.name || '' }}</div>
-            <div v-if="testTarget" class="sb-exec-sub">
-              <span>{{ testTarget.principal }}</span>
+            <div class="sb-drawer-title">
+              {{ form.id ? `编辑租户 #${form.id}` : '新增租户' }}
+            </div>
+            <div v-if="form.id" class="sb-exec-sub">
+              <span>{{ form.principal || '—' }}</span>
             </div>
           </div>
-          <el-button text :icon="Close" @click="testOpen = false" />
+          <el-button text :icon="Close" @click="drawerOpen = false" />
         </div>
       </template>
 
-      <div v-if="testing" v-loading="testing" class="sb-test-loading" />
-      <template v-else-if="testResult">
-        <div class="sb-test-card" :class="{ ok: testResult.ok, fail: !testResult.ok }">
-          <el-icon :size="22">
-            <component :is="testResult.ok ? CircleCheck : CircleClose" />
-          </el-icon>
-          <span>{{ testResult.ok ? '通过' : '失败' }}</span>
-          <span v-if="testResult.mode" class="muted">· 环境 {{ testResult.mode }}</span>
-          <span v-if="testResult.kinitExit != null" class="muted">· kinit exit={{ testResult.kinitExit }}</span>
-        </div>
+      <!-- "待重新测试" banner when principal/keytab/authName changed -->
+      <el-alert
+        v-if="form.id && needsRetest"
+        type="warning"
+        :closable="false"
+        show-icon
+        title="Principal / Auth 名称 / Keytab 已变更，请重新测试认证"
+        description="本次保存后会自动清除测试状态，点击「保存并测试认证」可立即重测。"
+        style="margin-bottom: 14px"
+      />
 
-        <h4 class="sb-test-section-title">Kerberos</h4>
-        <div class="sb-test-row">
-          <span class="dot-green">●</span><span>kinit</span>
-          <span class="status">{{ testResult.kinitExit == null ? (testResult.ok ? '成功' : '失败') : (testResult.kinitExit === 0 ? '成功' : `exit ${testResult.kinitExit}`) }}</span>
-        </div>
-        <div class="sb-test-row">
-          <span class="dot-green">●</span><span>principal</span>
-          <span class="mono">{{ testTarget?.principal }}</span>
-        </div>
-        <div v-if="testResult.klist != null" class="sb-test-row">
-          <span class="dot-green">●</span><span>klist</span>
-          <span class="status">{{ testResult.ok ? '正常' : '异常' }}</span>
-        </div>
-        <div class="sb-test-row">
-          <span class="dot-green">●</span><span>环境</span>
-          <span class="status">{{ testResult.mode === 'mock' ? 'Mock' : 'Real' }}</span>
-        </div>
+      <!-- Zone 1: 基础信息 -->
+      <section class="sb-zone">
+        <h4 class="sb-zone-title">基础信息</h4>
+        <el-form :model="form" label-position="top">
+          <el-form-item required>
+            <template #label><SBLabel text="名称" tip="显示给用户的友好名称。" required /></template>
+            <el-input v-model="form.name" placeholder="例如：mock-hive" />
+          </el-form-item>
+          <el-form-item required>
+            <template #label><SBLabel text="Auth 名称（Principal 别名）" tip="与 Principal 一一对应，全局唯一。脚本执行时按此名称选租户。" required /></template>
+            <el-input v-model="form.authName" placeholder="例如：hive-prod" />
+          </el-form-item>
+          <el-form-item required>
+            <template #label><SBLabel text="Principal（Kerberos 主体）" tip="格式 user/instance@REALM。修改后会清除认证测试状态。" required /></template>
+            <el-input v-model="form.principal" placeholder="hive@EXAMPLE.COM" @change="onAuthChanged" />
+          </el-form-item>
+          <el-form-item>
+            <template #label><SBLabel text="默认数据库" tip="脚本执行时使用的默认数据库。" /></template>
+            <el-input v-model="form.defaultDatabase" placeholder="default" />
+          </el-form-item>
+          <el-form-item>
+            <template #label><SBLabel text="描述" tip="对租户的简短说明。" /></template>
+            <el-input v-model="form.description" type="textarea" :rows="2" placeholder="例如：开发环境 Hive 租户" />
+          </el-form-item>
+          <el-form-item>
+            <template #label><SBLabel text="启用" tip="关闭后此租户不会出现在执行页面的下拉列表中。" /></template>
+            <el-switch v-model="form.enabled" />
+          </el-form-item>
+        </el-form>
+      </section>
 
-        <pre v-if="testResult.stdout" class="sb-log">{{ testResult.stdout }}</pre>
-        <pre v-if="testResult.klist" class="sb-log">{{ testResult.klist }}</pre>
+      <!-- Zone 2: Keytab -->
+      <section class="sb-zone">
+        <h4 class="sb-zone-title">
+          Keytab 文件
+          <span v-if="form.keytabPath" class="sb-zone-meta mono">已配置</span>
+        </h4>
+        <p class="sb-zone-help">
+          上传与 Principal 匹配的 Keytab 文件（小于 1 MB）。修改后会清除认证测试状态。
+        </p>
+        <el-upload
+          ref="keytabUploadRef"
+          :auto-upload="false"
+          :limit="1"
+          :on-change="onKeytabFile"
+          :on-remove="() => { keytabFile = null }"
+          accept=".keytab"
+          drag
+        >
+          <div class="el-upload__text">拖拽 .keytab 到此处或<em>点击选择</em></div>
+        </el-upload>
+      </section>
+
+      <!-- Zone 3: 测试结果 -->
+      <section class="sb-zone">
+        <h4 class="sb-zone-title">
+          认证测试
+          <span v-if="form.lastTestAt" class="sb-zone-meta">
+            {{ form.lastTestOk ? '通过' : '失败' }} · {{ formatDate(form.lastTestAt) }}
+          </span>
+        </h4>
+        <div v-if="testing" v-loading="testing" class="sb-test-loading" />
+        <template v-else-if="testResult">
+          <div class="sb-test-card" :class="{ ok: testResult.ok, fail: !testResult.ok }">
+            <el-icon :size="22">
+              <component :is="testResult.ok ? CircleCheck : CircleClose" />
+            </el-icon>
+            <span>{{ testResult.ok ? '通过' : '失败' }}</span>
+            <span v-if="testResult.mode" class="muted">· 环境 {{ testResult.mode }}</span>
+            <span v-if="testResult.kinitExit != null" class="muted">· kinit exit={{ testResult.kinitExit }}</span>
+          </div>
+          <pre v-if="testResult.stdout" class="sb-log">{{ testResult.stdout }}</pre>
+        </template>
+        <p v-else-if="form.id && !form.lastTestAt" class="muted sb-zone-help">
+          尚未测试，或上次测试后修改了 Principal / Auth 名称 / Keytab。
+        </p>
+        <p v-else-if="!form.id" class="muted sb-zone-help">
+          请先保存基本信息后再测试认证。
+        </p>
+      </section>
+
+      <template #footer>
+        <div style="display: flex; gap: 8px; justify-content: flex-end">
+          <el-button @click="drawerOpen = false">取消</el-button>
+          <el-button type="primary" :loading="saving" @click="saveOnly">保存</el-button>
+          <el-button
+            type="success"
+            :loading="saving || testing"
+            :disabled="!form.id"
+            @click="saveAndTest"
+          >
+            保存并测试认证
+          </el-button>
+        </div>
       </template>
     </el-drawer>
   </div>
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { Plus, CircleCheck, CircleClose, Close } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   listTenants, createTenant, updateTenant, deleteTenant,
   setTenantEnabled, uploadKeytab, testTenant,
-  tenantRelatedCounts
+  tenantRelatedCounts, markTenantStale
 } from '../api/tenants'
 import SBLabel from '../components/SBLabel.vue'
 
 const rows = ref([])
 const loading = ref(false)
 
-const formOpen = ref(false)
+const drawerOpen = ref(false)
 const form = reactive({
-  id: null, name: '', principal: '', defaultDatabase: '',
-  description: '', enabled: true
+  id: null, name: '', authName: '', principal: '', defaultDatabase: '',
+  description: '', enabled: true,
+  keytabPath: null, lastTestAt: null, lastTestOk: null
 })
 const saving = ref(false)
-
-const keytabOpen = ref(false)
-const keytabTarget = ref(null)
 const keytabFile = ref(null)
 const keytabUploadRef = ref(null)
-const uploading = ref(false)
 
-const testOpen = ref(false)
-const testTarget = ref(null)
-const testResult = ref(null)
+// Snapshot of the originally-loaded principal/authName/keytabPath — used to
+// decide whether to display the "待重新测试" banner after edits.
+const original = ref({ principal: '', authName: '', keytabPath: null })
+
 const testing = ref(false)
+const testResult = ref(null)
+
+const needsRetest = computed(() => {
+  if (!form.id) return false
+  if (!form.lastTestAt) return true
+  return form.principal !== original.value.principal
+      || form.authName   !== original.value.authName
+      || (keytabFile.value != null)  // a new keytab is staged
+})
 
 async function refresh() {
   loading.value = true
@@ -205,42 +269,141 @@ async function refresh() {
   finally { loading.value = false }
 }
 
-function openCreate() {
+function resetForm() {
   Object.assign(form, {
-    id: null, name: '', principal: '', defaultDatabase: '',
-    description: '', enabled: true
+    id: null, name: '', authName: '', principal: '',
+    defaultDatabase: '', description: '', enabled: true,
+    keytabPath: null, lastTestAt: null, lastTestOk: null
   })
-  formOpen.value = true
+  keytabFile.value = null
+  keytabUploadRef.value?.clearFiles?.()
+  testResult.value = null
+  original.value = { principal: '', authName: '', keytabPath: null }
+}
+
+function snapshotOriginal(row) {
+  original.value = {
+    principal: row.principal || '',
+    authName: row.authName || '',
+    keytabPath: row.keytabPath || null
+  }
+}
+
+function openCreate() {
+  resetForm()
+  drawerOpen.value = true
 }
 
 function openEdit(row) {
+  resetForm()
   Object.assign(form, {
-    id: row.id, name: row.name, principal: row.principal,
-    defaultDatabase: row.defaultDatabase, description: row.description,
-    // Older rows may have a null flag; the table renders 已启用 for those, so
-    // the drawer must not show the switch as off.
-    enabled: row.enabled !== false
+    id: row.id, name: row.name, authName: row.authName || '',
+    principal: row.principal, defaultDatabase: row.defaultDatabase,
+    description: row.description,
+    enabled: row.enabled !== false,
+    keytabPath: row.keytabPath || null,
+    lastTestAt: row.lastTestAt || null,
+    lastTestOk: row.lastTestOk ?? null
   })
-  formOpen.value = true
+  snapshotOriginal(row)
+  drawerOpen.value = true
 }
 
-async function submitForm() {
-  if (!form.name || !form.principal) return ElMessage.warning('名称和 principal 必填')
+function onAuthChanged() {
+  // Backend already clears lastTestAt on update — but if the user only types
+  // and abandons, we still want to display the warning banner while editing.
+  // (The actual DB write happens in saveOnly/saveAndTest.)
+}
+
+function formatDate(s) {
+  if (!s) return ''
+  const d = new Date(s)
+  if (Number.isNaN(d.getTime())) return s
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} `
+      + `${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+async function persistMetadata() {
+  if (!form.name || !form.principal) {
+    ElMessage.warning('名称和 principal 必填')
+    throw new Error('validation')
+  }
+  const payload = {
+    name: form.name, authName: form.authName || null,
+    principal: form.principal,
+    defaultDatabase: form.defaultDatabase || null,
+    description: form.description || null,
+    enabled: form.enabled !== false
+  }
+  let saved
+  if (form.id) {
+    saved = await updateTenant(form.id, payload)
+  } else {
+    saved = await createTenant(payload)
+    // V3 (PR-1): 回填 ID，第二次提交走 update 防重复创建
+    form.id = saved.id
+    form.keytabPath = saved.keytabPath
+    form.lastTestAt = saved.lastTestAt
+    form.lastTestOk = saved.lastTestOk
+    snapshotOriginal(saved)
+  }
+  return saved
+}
+
+async function persistKeytab() {
+  if (!keytabFile.value) return
+  if (!keytabFile.value.name.toLowerCase().endsWith('.keytab')) {
+    ElMessage.warning('只接受 .keytab 文件')
+    throw new Error('validation')
+  }
+  if (keytabFile.value.size > 1024 * 1024) {
+    ElMessage.warning(`keytab 文件过大（${(keytabFile.value.size / 1024).toFixed(1)} KB > 1 MB）`)
+    throw new Error('validation')
+  }
+  await uploadKeytab(form.id, keytabFile.value)
+  // Mark stale on the server side too so task-center / ⌘K see consistent state.
+  try { await markTenantStale(form.id) } catch (_) { /* tolerate */ }
+  // Clear the staged file so subsequent saves don't re-upload.
+  keytabFile.value = null
+  keytabUploadRef.value?.clearFiles?.()
+}
+
+async function saveOnly() {
   saving.value = true
   try {
-    const payload = { ...form }
-    delete payload.id
-    if (form.id) await updateTenant(form.id, payload)
-    else         await createTenant(payload)
+    await persistMetadata()
+    await persistKeytab()
     ElMessage.success('已保存')
-    formOpen.value = false
+    drawerOpen.value = false
     await refresh()
+  } catch (e) {
+    if (e?.message !== 'validation') console.error(e)
   } finally { saving.value = false }
 }
 
-// Enable/disable straight from the table (wired to the 状态 column switch).
-// The handler existed but was never referenced, so tenants could not be
-// disabled from the UI at all — while scenarios filter on that flag.
+async function saveAndTest() {
+  saving.value = true
+  try {
+    await persistMetadata()
+    await persistKeytab()
+    // Refresh from server to pick up the persisted keytabPath + ensure ID is set.
+    await refresh()
+    // Look up the now-saved row to test against.
+    const row = rows.value.find((r) => r.id === form.id)
+    if (!row) throw new Error('tenant not visible after save')
+    await runTest(row)
+    if (!testResult.value?.ok) {
+      ElMessage.warning('已保存，但认证测试未通过')
+    } else {
+      ElMessage.success('已保存，认证通过')
+      drawerOpen.value = false
+    }
+  } catch (e) {
+    if (e?.message !== 'validation') console.error(e)
+  } finally { saving.value = false }
+}
+
 async function toggleEnabled(row, val) {
   const previous = row.enabled !== false
   row.enabled = val
@@ -255,11 +418,10 @@ async function toggleEnabled(row, val) {
 async function confirmDelete(row) {
   let counts = { historyCount: 0 }
   try {
-    // tenantRelatedCounts() already resolves the payload.
     counts = (await tenantRelatedCounts(row.id)) || counts
   } catch (_) { /* tolerate */ }
   const related = counts.historyCount
-    ? `\n将关联影响：${counts.historyCount} 条执行历史（删除后这些记录的引用将悬空）`
+    ? `\n将关联影响：${counts.historyCount} 条执行历史`
     : ''
   const ok = await ElMessageBox.confirm(
     `确认删除租户「${row.name}」？${related}`,
@@ -270,45 +432,25 @@ async function confirmDelete(row) {
   await refresh()
 }
 
-function openKeytab(row) {
-  keytabTarget.value = row
-  keytabFile.value = null
-  keytabUploadRef.value?.clearFiles?.()
-  keytabOpen.value = true
-}
 function onKeytabFile(file) { keytabFile.value = file.raw }
 
-async function submitKeytab() {
-  if (!keytabFile.value) return ElMessage.warning('请选择文件')
-  if (!keytabFile.value.name.toLowerCase().endsWith('.keytab'))
-    return ElMessage.warning('只接受 .keytab 文件')
-  // Keytabs are tiny (usually < 1 KB). Reject anything larger than 1 MB so a
-  // mis-dropped binary doesn't silently sit on the server.
-  if (keytabFile.value.size > 1024 * 1024) {
-    return ElMessage.warning(`keytab 文件过大（${(keytabFile.value.size / 1024).toFixed(1)} KB > 1 MB），请确认这是正确的文件`)
-  }
-  uploading.value = true
-  try {
-    await uploadKeytab(keytabTarget.value.id, keytabFile.value)
-    ElMessage.success('已上传')
-    keytabOpen.value = false
-    await refresh()
-  } finally { uploading.value = false }
-}
-
 async function runTest(row) {
-  testTarget.value = row
   testResult.value = null
   testing.value = true
-  testOpen.value = true
   try {
     const res = await testTenant(row.id)
-    // Ignore a late response if the user already opened another tenant's test.
-    if (testTarget.value?.id === row.id) testResult.value = res
-  } catch { /* keep open */ }
-  finally {
-    if (testTarget.value?.id === row.id) testing.value = false
-  }
+    testResult.value = res
+    // Sync the form fields so the banner reflects reality without a refresh.
+    form.lastTestAt = new Date().toISOString()
+    form.lastTestOk = !!res?.ok
+    // After a successful test, the "modified" state has been cleared —
+    // refresh original snapshot so the banner goes away if no further edits.
+    const fresh = rows.value.find((r) => r.id === row.id)
+    if (fresh) snapshotOriginal(fresh)
+    original.value.lastTestAt = form.lastTestAt
+  } catch (e) {
+    testResult.value = { ok: false, mode: '?', error: e?.message || String(e) }
+  } finally { testing.value = false }
 }
 
 onMounted(refresh)
@@ -319,12 +461,33 @@ onMounted(refresh)
 .sb-kt-configured {
   color: var(--sb-success);
   font-weight: 500;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
 }
-
-.sb-test-loading { height: 120px; }
+.sb-zone {
+  border: 1px solid var(--sb-border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  background: #fafbfc;
+}
+.sb-zone-title {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.sb-zone-meta {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--sb-text-2);
+}
+.sb-zone-help {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--sb-text-2);
+}
+.sb-test-loading { height: 80px; }
 
 .sb-test-card {
   display: flex;
@@ -333,33 +496,19 @@ onMounted(refresh)
   padding: 12px 14px;
   border-radius: 6px;
   font-weight: 600;
-  margin-bottom: 14px;
   border: 1px solid var(--sb-border);
   background: #f8fafc;
 }
 .sb-test-card.ok   { background: #f0fdf4; border-color: #bbf7d0; color: var(--sb-success); }
 .sb-test-card.fail { background: #fef2f2; border-color: #fecaca; color: var(--sb-danger); }
-
-.sb-test-section-title {
-  margin: 12px 0 6px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--sb-text-2);
-}
-
-.sb-test-row {
-  display: grid;
-  grid-template-columns: 16px 100px 1fr;
-  gap: 8px;
-  align-items: center;
-  padding: 6px 0;
-  border-bottom: 1px dashed var(--sb-border);
-  font-size: 13px;
-}
-.sb-test-row:last-of-type { border-bottom: 0; }
-.sb-test-row .dot-green { color: var(--sb-success); }
-.sb-test-row .status {
-  color: var(--sb-text-2);
-  font-weight: 500;
+.sb-log {
+  background: #0b1220;
+  color: #d6e2ff;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 12px;
+  max-height: 200px;
+  overflow: auto;
+  margin-top: 10px;
 }
 </style>

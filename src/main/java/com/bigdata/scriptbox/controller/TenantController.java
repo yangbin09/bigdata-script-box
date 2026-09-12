@@ -122,4 +122,18 @@ public class TenantController {
         if (result == null) return ApiResponse.error("tenant not found");
         return ApiResponse.ok(result.details());
     }
+
+    /**
+     * V3 (PR-1): 把租户认证标记为"待重新测试"。
+     *
+     * <p>前端在用户修改 principal 或 keytab 后调用，让 UI 能直接显示横幅
+     * "Principal 或 Keytab 已变更，请重新测试认证"，避免在 DB 状态与
+     * UI 状态之间产生歧义。
+     */
+    @PostMapping("/{id}/mark-stale")
+    public ApiResponse<Tenant> markStale(@PathVariable Long id) {
+        Tenant t = tenantService.markAuthStale(id);
+        if (t == null) return ApiResponse.error("tenant not found");
+        return ApiResponse.ok(t);
+    }
 }
