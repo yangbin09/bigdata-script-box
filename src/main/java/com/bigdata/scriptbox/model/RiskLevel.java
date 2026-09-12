@@ -1,5 +1,8 @@
 package com.bigdata.scriptbox.model;
 
+import com.bigdata.scriptbox.exception.BusinessErrorCode;
+import com.bigdata.scriptbox.exception.BusinessException;
+
 import java.util.Set;
 
 /**
@@ -33,10 +36,15 @@ public final class RiskLevel {
         return ALL.contains(upper) ? upper : READ_ONLY;
     }
 
-    /** Strictly validates that a value is one of the canonical levels. */
+    /**
+     * Strictly validates that a value is one of the canonical levels.
+     *
+     * <p>V3（#9）：抛 {@link BusinessException}（{@code RISK_LEVEL_INVALID}）而不是
+     * 裸 {@code IllegalArgumentException}，让前端可按 {@code errorCode} 分流。
+     */
     public static void requireValid(String raw) {
         if (raw == null || !ALL.contains(raw.trim().toUpperCase())) {
-            throw new IllegalArgumentException(
+            throw new BusinessException(BusinessErrorCode.RISK_LEVEL_INVALID,
                 "invalid risk level: " + raw + " (expected one of " + ALL + ")");
         }
     }

@@ -2,6 +2,8 @@ package com.bigdata.scriptbox.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.bigdata.scriptbox.entity.GlobalVariable;
+import com.bigdata.scriptbox.exception.BusinessErrorCode;
+import com.bigdata.scriptbox.exception.BusinessException;
 import com.bigdata.scriptbox.mapper.GlobalVariableMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -81,7 +83,8 @@ public class GlobalVariableService {
     public GlobalVariable create(String key, String value, String description, boolean sensitive, boolean enabled) {
         validateKey(key);
         if (variableMapper.selectCount(new QueryWrapper<GlobalVariable>().eq("variable_key", key)) > 0)
-            throw new IllegalArgumentException("variable key already exists: " + key);
+            throw new BusinessException(BusinessErrorCode.NAME_ALREADY_EXISTS,
+                    "variable key already exists: " + key);
         GlobalVariable v = new GlobalVariable();
         v.setVariableKey(key);
         v.setVariableValue(value == null ? "" : value);
@@ -102,13 +105,15 @@ public class GlobalVariableService {
     public GlobalVariable update(Long id, String key, String value, String description,
                                  boolean sensitive, boolean enabled) {
         GlobalVariable v = variableMapper.selectById(id);
-        if (v == null) throw new IllegalArgumentException("variable not found");
+        if (v == null) throw new BusinessException(BusinessErrorCode.GLOBAL_VARIABLE_NOT_FOUND,
+                "variable not found");
         if (key != null && !key.isBlank()) {
             validateKey(key);
             if (!key.equals(v.getVariableKey())) {
                 if (variableMapper.selectCount(
                         new QueryWrapper<GlobalVariable>().eq("variable_key", key).ne("id", id)) > 0)
-                    throw new IllegalArgumentException("variable key already exists: " + key);
+                    throw new BusinessException(BusinessErrorCode.NAME_ALREADY_EXISTS,
+                            "variable key already exists: " + key);
                 v.setVariableKey(key);
             }
         }
@@ -155,10 +160,12 @@ public class GlobalVariableService {
      * 校验变量名：必填、长度限制、字符集匹配。
      */
     private void validateKey(String key) {
-        if (key == null || key.isBlank()) throw new IllegalArgumentException("variable key is required");
+        if (key == null || key.isBlank())
+            throw new BusinessException(BusinessErrorCode.VARIABLE_KEY_INVALID, "variable key is required");
         if (!KEY_PATTERN.matcher(key).matches())
-            throw new IllegalArgumentException(
+            throw new BusinessException(BusinessErrorCode.VARIABLE_KEY_INVALID,
                 "invalid variable key: must match [A-Za-z_][A-Za-z0-9_]*");
-        if (key.length() > 128) throw new IllegalArgumentException("variable key too long");
+        if (key.length() > 128)
+            throw new BusinessException(BusinessErrorCode.VARIABLE_KEY_INVALID, "variable key too long");
     }
 }

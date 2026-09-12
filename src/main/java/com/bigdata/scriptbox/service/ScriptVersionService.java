@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.bigdata.scriptbox.config.ScriptBoxProperties;
 import com.bigdata.scriptbox.entity.Script;
 import com.bigdata.scriptbox.entity.ScriptVersion;
+import com.bigdata.scriptbox.exception.BusinessErrorCode;
+import com.bigdata.scriptbox.exception.BusinessException;
 import com.bigdata.scriptbox.mapper.ScriptMapper;
 import com.bigdata.scriptbox.mapper.ScriptVersionMapper;
 import lombok.RequiredArgsConstructor;
@@ -44,7 +46,8 @@ public class ScriptVersionService {
     @Transactional
     public ScriptVersion snapshot(Long scriptId, String remark) throws IOException {
         Script s = scriptMapper.selectById(scriptId);
-        if (s == null) throw new IllegalArgumentException("script not found: " + scriptId);
+        if (s == null) throw new BusinessException(BusinessErrorCode.SCRIPT_NOT_FOUND,
+                "script not found: " + scriptId);
         String body = readBodyFromDisk(s);
         ScriptVersion latest = versionMapper.selectMaxVersion(scriptId);
         int nextNo = (latest == null) ? 1 : (latest.getVersionNo() + 1);
@@ -79,9 +82,10 @@ public class ScriptVersionService {
     @Transactional
     public ScriptVersion rollback(Long scriptId, Integer versionNo) throws IOException {
         ScriptVersion target = get(scriptId, versionNo);
-        if (target == null) throw new IllegalArgumentException("version not found: v" + versionNo);
+        if (target == null) throw new BusinessException(BusinessErrorCode.VERSION_NOT_FOUND,
+                "version not found: v" + versionNo);
         Script s = scriptMapper.selectById(scriptId);
-        if (s == null) throw new IllegalArgumentException("script not found");
+        if (s == null) throw new BusinessException(BusinessErrorCode.SCRIPT_NOT_FOUND, "script not found");
         Path file = scriptFilePath(scriptId);
         Files.createDirectories(file.getParent());
         Files.writeString(file, target.getScriptContent() == null ? "" : target.getScriptContent(),

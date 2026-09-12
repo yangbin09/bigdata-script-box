@@ -1,6 +1,8 @@
 package com.bigdata.scriptbox.service;
 
 import com.bigdata.scriptbox.config.ScriptBoxProperties;
+import com.bigdata.scriptbox.exception.BusinessErrorCode;
+import com.bigdata.scriptbox.exception.BusinessException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -316,10 +318,22 @@ public class ExecutionGate {
 
         public boolean isGranted() { return permit != null; }
 
-        /** 被拒绝时抛出携带原始消息的异常，保持与旧实现一致的异常类型与文案。 */
+        /**
+         * 被拒绝时抛出携带原始消息的异常。
+         *
+         * <p>V3（#9）：根据 {@code Rejection.kind} 选择对应的 {@link BusinessErrorCode}，
+         * 让前端可按 {@code errorCode} 分流：
+         * <ul>
+         *   <li>{@code ALREADY_RUNNING} → {@code EXECUTION_ALREADY_RUNNING}</li>
+         *   <li>{@code SLOT_LIMIT} → {@code EXECUTION_SLOT_LIMIT_REACHED}</li>
+         * </ul>
+         */
         public Permit orThrow() {
             if (permit != null) return permit;
-            throw new IllegalStateException(rejection.message());
+            BusinessErrorCode code = rejection.kind() == Rejection.Kind.ALREADY_RUNNING
+                    ? BusinessErrorCode.EXECUTION_ALREADY_RUNNING
+                    : BusinessErrorCode.EXECUTION_SLOT_LIMIT_REACHED;
+            throw new BusinessException(code, rejection.message());
         }
     }
 

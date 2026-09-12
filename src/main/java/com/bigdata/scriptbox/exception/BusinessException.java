@@ -5,11 +5,17 @@ package com.bigdata.scriptbox.exception;
  *
  * <p>统一承载业务层面的可预期错误（资源缺失、参数非法、并发冲突等）。
  * 全局异常处理器（{@link GlobalExceptionHandler}）会把它转换成
- * {@code ApiResponse(code=1, message=...)} 返回给前端。
+ * {@code ApiResponse(code=1, errorCode=枚举名, message=...)} 返回给前端。
+ *
+ * <p>V3（#9）继承 {@link IllegalArgumentException}（而非裸 {@link RuntimeException}），
+ * 出于迁移期兼容：旧代码里 {@code catch (IllegalArgumentException)} 仍然能接住
+ * {@code BusinessException}，新代码可继续写更具体的 {@code catch (BusinessException)}。
+ * Spring 的 {@code @ExceptionHandler} 解析也会优先匹配更具体的
+ * {@code BusinessException.class}，行为正确。
  *
  * <p>为什么需要业务异常而不是直接抛 {@link IllegalArgumentException}：
  * <ol>
- *   <li>业务异常携带稳定的 {@link BusinessErrorCode}，前端可基于 code
+ *   <li>业务异常携带稳定的 {@link BusinessErrorCode}，前端可基于 {@code errorCode}
  *       做精确分支判断；原始异常的 message 是面向运维的中文描述，会随
  *       调整而变化，不适合做契约。</li>
  *   <li>Controller 不再各自写 try/catch 块；一个 {@code @RestControllerAdvice}
@@ -24,7 +30,7 @@ package com.bigdata.scriptbox.exception;
  *   <li>系统错误（数据库无法连接）→ 让 Spring 自动包装为 500 错误，不要走 BusinessException</li>
  * </ul>
  */
-public class BusinessException extends RuntimeException {
+public class BusinessException extends IllegalArgumentException {
 
     private final BusinessErrorCode code;
 

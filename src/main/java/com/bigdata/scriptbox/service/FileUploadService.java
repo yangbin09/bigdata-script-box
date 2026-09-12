@@ -1,6 +1,8 @@
 package com.bigdata.scriptbox.service;
 
 import com.bigdata.scriptbox.config.ScriptBoxProperties;
+import com.bigdata.scriptbox.exception.BusinessErrorCode;
+import com.bigdata.scriptbox.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -44,14 +46,18 @@ public class FileUploadService {
      * @throws IllegalArgumentException 文件为空 / 超大 / 名称非法
      */
     public Map<String, Object> savePending(MultipartFile file) throws IOException {
-        if (file == null || file.isEmpty()) throw new IllegalArgumentException("empty file");
+        if (file == null || file.isEmpty())
+            throw new BusinessException(BusinessErrorCode.FILE_INPUT_INVALID, "empty file");
         long max = props.getMaxInputFileBytes();
-        if (file.getSize() > max) throw new IllegalArgumentException("file too large (max " + max + " bytes)");
+        if (file.getSize() > max)
+            throw new BusinessException(BusinessErrorCode.FILE_INPUT_INVALID,
+                    "file too large (max " + max + " bytes)");
 
         String original = file.getOriginalFilename() == null ? "upload.bin" : file.getOriginalFilename();
         // 先用原始名做校验：拒绝任何包含 .. 或路径分隔符的"文件名"
         if (original.contains("..") || original.contains("/") || original.contains("\\")) {
-            throw new IllegalArgumentException("invalid filename: " + original);
+            throw new BusinessException(BusinessErrorCode.FILE_INPUT_INVALID,
+                    "invalid filename: " + original);
         }
         String base = Paths.get(original).getFileName() == null
                 ? "upload.bin"
@@ -103,11 +109,16 @@ public class FileUploadService {
             if (src == null || src.isBlank()) continue;
             Path srcPath;
             try { srcPath = Paths.get(src).toAbsolutePath(); }
-            catch (Exception ex) { throw new IllegalArgumentException("invalid file input for " + param); }
-            if (!Files.exists(srcPath)) throw new IllegalArgumentException("uploaded file not found: " + src);
+            catch (Exception ex) {
+                throw new BusinessException(BusinessErrorCode.FILE_INPUT_INVALID,
+                        "invalid file input for " + param);
+            }
+            if (!Files.exists(srcPath))
+                throw new BusinessException(BusinessErrorCode.FILE_INPUT_INVALID,
+                        "uploaded file not found: " + src);
             // 源路径必须从已知安全的 uploads 根解析 —— 客户端无法诱导我们读任意路径
             if (!srcPath.startsWith(uploadsRoot)) {
-                throw new IllegalArgumentException(
+                throw new BusinessException(BusinessErrorCode.PATH_ESCAPE,
                         "file input must come from the upload endpoint: " + src);
             }
             String name = srcPath.getFileName().toString();
@@ -115,7 +126,8 @@ public class FileUploadService {
             // 路径校验：目标必须同时落在 input dir 与 executionsRoot 之内
             storagePathService.assertInside(target, execDir, "input file");
             if (!execDir.toAbsolutePath().startsWith(executionsRoot)) {
-                throw new IllegalStateException("input dir escapes executions root");
+                throw new BusinessException(BusinessErrorCode.PATH_ESCAPE,
+                        "input dir escapes executions root");
             }
             Files.copy(srcPath, target, StandardCopyOption.REPLACE_EXISTING);
             out.put(param, target.toAbsolutePath().toString());

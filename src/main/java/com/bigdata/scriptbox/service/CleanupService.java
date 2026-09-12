@@ -301,12 +301,14 @@ public class CleanupService {
      * @param previewId    preview 阶段返回的预览 ID
      * @param confirmToken 必须等于 {@link #CONFIRM_TOKEN}（字面量），其他任何字符串都抛异常
      * @return 执行报告（删除数量、跳过项、失败项、释放字节数、耗时等）
-     * @throws IllegalArgumentException                token 不匹配
-     * @throws PreviewStore.PreviewExpiredException    快照丢失或已过期
+     * @throws BusinessException                        token 不匹配 → CONFIRM_TOKEN_MISMATCH
+     * @throws PreviewStore.PreviewExpiredException    快照丢失或已过期 → PREVIEW_EXPIRED
      */
     public CleanupExecutor.CleanupReport execute(String previewId, String confirmToken) {
         if (!CONFIRM_TOKEN.equals(confirmToken)) {
-            throw new IllegalArgumentException("confirmation token mismatch");
+            throw new com.bigdata.scriptbox.exception.BusinessException(
+                    com.bigdata.scriptbox.exception.BusinessErrorCode.CONFIRM_TOKEN_MISMATCH,
+                    "confirmation token mismatch");
         }
         CleanupPreview preview = previewStore.get(previewId); // 找不到或过期会抛 PreviewExpiredException
         CleanupExecutor.CleanupReport report = executor.execute(preview);

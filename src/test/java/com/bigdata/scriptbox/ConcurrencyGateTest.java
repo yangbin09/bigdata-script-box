@@ -6,6 +6,7 @@ import com.bigdata.scriptbox.dto.ExecutionRequest;
 import com.bigdata.scriptbox.entity.ExecutionHistory;
 import com.bigdata.scriptbox.entity.Script;
 import com.bigdata.scriptbox.entity.Tenant;
+import com.bigdata.scriptbox.exception.BusinessException;
 import com.bigdata.scriptbox.executor.ScriptExecutor;
 import com.bigdata.scriptbox.mapper.ScriptMapper;
 import com.bigdata.scriptbox.service.ExecutionGate;
@@ -111,7 +112,7 @@ class ConcurrencyGateTest extends BaseIntegrationTest {
 
             // Second request for the same script must be refused while the
             // first is still running (allowConcurrent=false).
-            IllegalStateException ex = assertThrows(IllegalStateException.class,
+            BusinessException ex = assertThrows(BusinessException.class,
                     () -> executor.execute(request(sid, tid)));
             assertTrue(ex.getMessage().contains("already running"),
                     "should mention duplicate-runner: " + ex.getMessage());
@@ -172,7 +173,7 @@ class ConcurrencyGateTest extends BaseIntegrationTest {
 
                 // The global cap is 1 — second execution (different script,
                 // both allowConcurrent=true) must still be rejected.
-                IllegalStateException ex = assertThrows(IllegalStateException.class,
+                BusinessException ex = assertThrows(BusinessException.class,
                         () -> executor.execute(request(sidB, tid)));
                 assertTrue(ex.getMessage().toLowerCase().contains("slot limit"),
                         "should mention slot limit: " + ex.getMessage());

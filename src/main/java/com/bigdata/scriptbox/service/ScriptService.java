@@ -3,6 +3,8 @@ package com.bigdata.scriptbox.service;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.bigdata.scriptbox.config.ScriptBoxProperties;
 import com.bigdata.scriptbox.entity.ExecutionHistory;
+import com.bigdata.scriptbox.exception.BusinessErrorCode;
+import com.bigdata.scriptbox.exception.BusinessException;
 import com.bigdata.scriptbox.entity.ScenarioStep;
 import com.bigdata.scriptbox.entity.Script;
 import com.bigdata.scriptbox.entity.ScriptParam;
@@ -124,7 +126,7 @@ public class ScriptService {
         SyntaxCheckService.SyntaxResult sr = syntaxCheckService.check(body);
         if (!sr.ok) {
             log.warn("脚本创建语法校验失败，原因={}", String.join(" | ", sr.errors));
-            throw new IllegalArgumentException(
+            throw new BusinessException(BusinessErrorCode.SYNTAX_CHECK_FAILED,
                     "syntax check failed: " + String.join(" | ", sr.errors));
         }
 
@@ -154,7 +156,8 @@ public class ScriptService {
     @Transactional
     public Script update(Script script, MultipartFile file) throws IOException {
         Script db = scriptMapper.selectById(script.getId());
-        if (db == null) throw new IllegalArgumentException("script not found: " + script.getId());
+        if (db == null) throw new BusinessException(BusinessErrorCode.SCRIPT_NOT_FOUND,
+                "script not found: " + script.getId());
 
         if (file != null && !file.isEmpty()) {
             String body = readScriptFile(file);
@@ -162,7 +165,7 @@ public class ScriptService {
             SyntaxCheckService.SyntaxResult sr = syntaxCheckService.check(body);
             if (!sr.ok) {
                 log.warn("脚本更新语法校验失败，scriptId={}，原因={}", script.getId(), String.join(" | ", sr.errors));
-                throw new IllegalArgumentException(
+                throw new BusinessException(BusinessErrorCode.SYNTAX_CHECK_FAILED,
                         "syntax check failed: " + String.join(" | ", sr.errors));
             }
             Path scriptFile = persistScriptBody(db.getId(), body);
@@ -194,11 +197,12 @@ public class ScriptService {
      */
     public Script saveScriptBody(Long id, String body) throws IOException {
         Script db = scriptMapper.selectById(id);
-        if (db == null) throw new IllegalArgumentException("script not found: " + id);
+        if (db == null) throw new BusinessException(BusinessErrorCode.SCRIPT_NOT_FOUND,
+                "script not found: " + id);
         // V2: 编辑器保存也强制 bash -n，阻止一个 typo 让脚本不可执行直到人肉发现
         SyntaxCheckService.SyntaxResult sr = syntaxCheckService.check(body);
         if (!sr.ok) {
-            throw new IllegalArgumentException(
+            throw new BusinessException(BusinessErrorCode.SYNTAX_CHECK_FAILED,
                     "syntax check failed: " + String.join(" | ", sr.errors));
         }
         Path scriptFile = persistScriptBody(id, body);
@@ -217,7 +221,8 @@ public class ScriptService {
      */
     public String readScriptBody(Long id) throws IOException {
         Script db = scriptMapper.selectById(id);
-        if (db == null) throw new IllegalArgumentException("script not found: " + id);
+        if (db == null) throw new BusinessException(BusinessErrorCode.SCRIPT_NOT_FOUND,
+                "script not found: " + id);
         if (db.getScriptPath() == null) return "";
         Path p = Paths.get(db.getScriptPath());
         if (!Files.exists(p)) return "";
@@ -354,9 +359,9 @@ public class ScriptService {
         int order = 0;
         for (ScriptParam p : params) {
             if (p.getName() == null || p.getName().isBlank())
-                throw new IllegalArgumentException("param name is required");
+                throw new BusinessException(BusinessErrorCode.PARAMETER_INVALID, "param name is required");
             if (p.getType() == null || !ALLOWED_TYPES.contains(p.getType().toLowerCase()))
-                throw new IllegalArgumentException("invalid param type: " + p.getType());
+                throw new BusinessException(BusinessErrorCode.PARAMETER_INVALID, "invalid param type: " + p.getType());
             p.setScriptId(scriptId);
             if (p.getSortOrder() == null) p.setSortOrder(order++);
             if (p.getRequired() == null) p.setRequired(Boolean.FALSE);
@@ -364,11 +369,11 @@ public class ScriptService {
             if (p.getVisibleWhenJson() != null && !p.getVisibleWhenJson().isBlank()) {
                 VisibleWhen rule = VisibleWhen.parse(p.getVisibleWhenJson());
                 if (rule == null || rule.getParam() == null) {
-                    throw new IllegalArgumentException(
+                    throw new BusinessException(BusinessErrorCode.PARAMETER_INVALID,
                         "invalid visibleWhenJson for param '" + p.getName() + "': " + p.getVisibleWhenJson());
                 }
                 if (!declaredNames.contains(rule.getParam())) {
-                    throw new IllegalArgumentException(
+                    throw new BusinessException(BusinessErrorCode.PARAMETER_INVALID,
                         "visibleWhen for param '" + p.getName() + "' references unknown param '"
                         + rule.getParam() + "'");
                 }
@@ -403,12 +408,12 @@ public class ScriptService {
      */
     private String readScriptFile(MultipartFile file) throws IOException {
         if (file == null || file.isEmpty())
-            throw new IllegalArgumentException("script file is required");
+            throw new BusinessException(BusinessErrorCode.FILE_INPUT_INVALID, "script file is required");
         if (file.getSize() > props.getMaxScriptBytes())
-            throw new IllegalArgumentException("script exceeds size limit");
+            throw new BusinessException(BusinessErrorCode.FILE_INPUT_INVALID, "script exceeds size limit");
         String name = file.getOriginalFilename();
         if (name != null && !name.toLowerCase().endsWith(".sh"))
-            throw new IllegalArgumentException("only .sh files are allowed");
+            throw new BusinessException(BusinessErrorCode.FILE_INPUT_INVALID, "only .sh files are allowed");
         return new String(file.getBytes(), StandardCharsets.UTF_8);
     }
 

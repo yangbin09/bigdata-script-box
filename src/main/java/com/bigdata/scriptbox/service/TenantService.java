@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.bigdata.scriptbox.config.ScriptBoxProperties;
 import com.bigdata.scriptbox.entity.ExecutionHistory;
 import com.bigdata.scriptbox.entity.Tenant;
+import com.bigdata.scriptbox.exception.BusinessErrorCode;
+import com.bigdata.scriptbox.exception.BusinessException;
 import com.bigdata.scriptbox.executor.CommandExecutor;
 import com.bigdata.scriptbox.executor.CommandResult;
 import com.bigdata.scriptbox.executor.CommandSpec;
@@ -139,11 +141,11 @@ public class TenantService {
      */
     public String saveKeytab(Long tenantId, MultipartFile file) throws IOException {
         if (file == null || file.isEmpty()) {
-            throw new IllegalArgumentException("keytab file is empty");
+            throw new BusinessException(BusinessErrorCode.FILE_INPUT_INVALID, "keytab file is empty");
         }
         String original = file.getOriginalFilename() == null ? "keytab" : file.getOriginalFilename();
         if (!original.toLowerCase().endsWith(".keytab")) {
-            throw new IllegalArgumentException("only .keytab files are allowed");
+            throw new BusinessException(BusinessErrorCode.FILE_INPUT_INVALID, "only .keytab files are allowed");
         }
         Path target = storagePathService.keytabPath(tenantId, UUID.randomUUID().toString());
         // 路径安全：阻断恶意 / 拼错的 keytab 路径越出受控根
@@ -160,7 +162,8 @@ public class TenantService {
      */
     public Tenant attachKeytab(Long tenantId, String keytabPath) {
         Tenant t = tenantMapper.selectById(tenantId);
-        if (t == null) throw new IllegalArgumentException("tenant not found: " + tenantId);
+        if (t == null) throw new BusinessException(BusinessErrorCode.TENANT_NOT_FOUND,
+                "tenant not found: " + tenantId);
         t.setKeytabPath(keytabPath);
         t.setUpdateTime(LocalDateTime.now());
         tenantMapper.updateById(t);
@@ -203,10 +206,12 @@ public class TenantService {
         }
 
         if (t.getKeytabPath() == null || t.getKeytabPath().isBlank()) {
-            throw new IllegalArgumentException("keytab not configured for tenant");
+            throw new BusinessException(BusinessErrorCode.TENANT_NOT_FOUND,
+                    "keytab not configured for tenant");
         }
         if (!Files.exists(Paths.get(t.getKeytabPath()))) {
-            throw new IllegalArgumentException("keytab file missing: " + t.getKeytabPath());
+            throw new BusinessException(BusinessErrorCode.INTERNAL_IO_ERROR,
+                    "keytab file missing: " + t.getKeytabPath());
         }
 
         Map<String, Object> result = new LinkedHashMap<>();

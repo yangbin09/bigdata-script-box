@@ -4,6 +4,8 @@ import com.bigdata.scriptbox.config.InMemoryMultipartFile;
 import com.bigdata.scriptbox.config.ScriptBoxProperties;
 import com.bigdata.scriptbox.entity.Script;
 import com.bigdata.scriptbox.entity.ScriptParam;
+import com.bigdata.scriptbox.exception.BusinessErrorCode;
+import com.bigdata.scriptbox.exception.BusinessException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -55,7 +57,8 @@ public class ScriptPackageService {
      */
     public byte[] export(Long scriptId) throws IOException {
         Script s = scriptService.getById(scriptId);
-        if (s == null) throw new IllegalArgumentException("script not found: " + scriptId);
+        if (s == null) throw new BusinessException(BusinessErrorCode.SCRIPT_NOT_FOUND,
+                "script not found: " + scriptId);
         String body = scriptService.readScriptBody(scriptId);
         List<ScriptParam> params = scriptService.paramsOf(scriptId);
 
@@ -104,9 +107,10 @@ public class ScriptPackageService {
      * 总是非覆盖，新增副本）。
      */
     public ImportResult doImport(MultipartFile file, boolean overwrite) throws IOException {
-        if (file == null || file.isEmpty()) throw new IllegalArgumentException("empty zip");
+        if (file == null || file.isEmpty())
+            throw new BusinessException(BusinessErrorCode.FILE_INPUT_INVALID, "empty zip");
         if (file.getSize() > props.getMaxScriptBytes() * 4)
-            throw new IllegalArgumentException("zip too large");
+            throw new BusinessException(BusinessErrorCode.FILE_INPUT_INVALID, "zip too large");
 
         Map<String, byte[]> entries = new LinkedHashMap<>();
         try (ZipInputStream zis = new ZipInputStream(file.getInputStream())) {
@@ -115,11 +119,11 @@ public class ScriptPackageService {
                 if (e.isDirectory()) continue;
                 String name = e.getName();
                 if (name.contains("..") || name.startsWith("/") || name.contains("\\"))
-                    throw new IllegalArgumentException("invalid entry name: " + name);
+                    throw new BusinessException(BusinessErrorCode.PATH_INVALID, "invalid entry name: " + name);
                 // 即便 names() 已经过滤，也再 normalize 一次确保安全
                 Path normalised = Paths.get(name).normalize();
                 if (normalised.startsWith("..") || normalised.isAbsolute())
-                    throw new IllegalArgumentException("zip slip attempt: " + name);
+                    throw new BusinessException(BusinessErrorCode.PATH_ESCAPE, "zip slip attempt: " + name);
                 ByteArrayOutputStream baos = new ByteArrayOutputStream();
                 byte[] buf = new byte[8192];
                 long total = 0;
@@ -127,7 +131,7 @@ public class ScriptPackageService {
                 while ((r = zis.read(buf)) > 0) {
                     total += r;
                     if (total > MAX_ENTRY_BYTES)
-                        throw new IllegalArgumentException("entry too large: " + name);
+                        throw new BusinessException(BusinessErrorCode.FILE_INPUT_INVALID, "entry too large: " + name);
                     baos.write(buf, 0, r);
                 }
                 entries.put(name, baos.toByteArray());
@@ -135,9 +139,9 @@ public class ScriptPackageService {
         }
 
         if (!entries.containsKey("manifest.json"))
-            throw new IllegalArgumentException("missing manifest.json");
+            throw new BusinessException(BusinessErrorCode.FILE_INPUT_INVALID, "missing manifest.json");
         if (!entries.containsKey("script.sh"))
-            throw new IllegalArgumentException("missing script.sh");
+            throw new BusinessException(BusinessErrorCode.FILE_INPUT_INVALID, "missing script.sh");
 
         @SuppressWarnings("unchecked")
         Map<String, Object> manifest = mapper.readValue(entries.get("manifest.json"), Map.class);

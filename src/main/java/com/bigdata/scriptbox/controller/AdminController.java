@@ -29,6 +29,11 @@ import java.util.Map;
  * <p>前端永远不发路径：受控目录由后端从 {@code scriptbox.executions-dir} /
  * {@code scriptbox.logs-dir} 派生并写入预览快照。设置写入走白名单，不允许
  * 任意键覆盖。
+ *
+ * <p>V3（#9）：本控制器原先的 3 个局部 {@code @ExceptionHandler}（{@code PREVIEW_EXPIRED:} /
+ * {@code BAD_REQUEST:} / {@code EXECUTE_FAILED:} 字符串前缀）已删除 —— 前端改读
+ * {@link ApiResponse#errorCode}（{@code BusinessErrorCode} 枚举名）即可精确分流，
+ * 不再需要消息文本前缀；统一异常由 {@code GlobalExceptionHandler} 处理。
  */
 @RestController
 @RequestMapping("/api/admin")
@@ -38,30 +43,6 @@ public class AdminController {
 
     private final CleanupService cleanupService;
     private final SystemSettingService settingsService;
-
-    // ----------------------------------------------------------------------
-    // 局部异常处理：本控制器的清理接口对前端契约保留 "PREVIEW_EXPIRED: ..." /
-    // "BAD_REQUEST: ..." / "EXECUTE_FAILED: ..." 前缀，便于前端按 code 前缀分流。
-    // 不污染全局 GlobalExceptionHandler 的语义。
-    // ----------------------------------------------------------------------
-
-    @ExceptionHandler(PreviewStore.PreviewExpiredException.class)
-    public ApiResponse<Void> handlePreviewExpired(PreviewStore.PreviewExpiredException ex) {
-        log.warn("cleanup preview expired: {}", ex.getMessage());
-        return ApiResponse.error("PREVIEW_EXPIRED: " + ex.getMessage());
-    }
-
-    @ExceptionHandler(IllegalArgumentException.class)
-    public ApiResponse<Void> handleIllegalArgument(IllegalArgumentException ex) {
-        log.warn("cleanup bad request: {}", ex.getMessage());
-        return ApiResponse.error("BAD_REQUEST: " + ex.getMessage());
-    }
-
-    @ExceptionHandler(Exception.class)
-    public ApiResponse<Void> handleAny(Exception ex) {
-        log.error("cleanup execute failed", ex);
-        return ApiResponse.error("EXECUTE_FAILED: " + ex.getMessage());
-    }
 
     // ----------------------------------------------------------------------
     // 清理

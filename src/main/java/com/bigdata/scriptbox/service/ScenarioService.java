@@ -5,6 +5,8 @@ import com.bigdata.scriptbox.dto.ExecutionRequest;
 import com.bigdata.scriptbox.entity.ExecutionHistory;
 import com.bigdata.scriptbox.entity.Scenario;
 import com.bigdata.scriptbox.entity.ScenarioStep;
+import com.bigdata.scriptbox.exception.BusinessErrorCode;
+import com.bigdata.scriptbox.exception.BusinessException;
 import com.bigdata.scriptbox.executor.ScriptExecutor;
 import com.bigdata.scriptbox.mapper.ExecutionHistoryMapper;
 import com.bigdata.scriptbox.mapper.ScenarioMapper;
@@ -117,11 +119,14 @@ public class ScenarioService {
      */
     public RunResult run(Long scenarioId, Long tenantId) {
         Scenario sc = scenarioMapper.selectById(scenarioId);
-        if (sc == null) throw new IllegalArgumentException("scenario not found: " + scenarioId);
+        if (sc == null) throw new BusinessException(BusinessErrorCode.SCENARIO_NOT_FOUND,
+                "scenario not found: " + scenarioId);
         if (sc.getEnabled() != null && !sc.getEnabled())
-            throw new IllegalArgumentException("scenario disabled: " + sc.getName());
+            throw new BusinessException(BusinessErrorCode.SCENARIO_DISABLED,
+                    "scenario disabled: " + sc.getName());
         List<ScenarioStep> steps = stepMapper.selectByScenarioIdOrderByStep(scenarioId);
-        if (steps.isEmpty()) throw new IllegalArgumentException("scenario has no steps");
+        if (steps.isEmpty()) throw new BusinessException(BusinessErrorCode.SCENARIO_NOT_FOUND,
+                "scenario has no steps");
 
         log.info("scenario: 开始执行 scenarioId={} name={} steps={}", scenarioId, sc.getName(), steps.size());
         RunResult result = new RunResult();
