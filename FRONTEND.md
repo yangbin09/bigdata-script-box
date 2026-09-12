@@ -1,13 +1,75 @@
-# 前端优化报告（Vue 3 + Vite + Element Plus）
+# 前端设计说明（Vue 3 + Vite + Element Plus）
 
-> 范围：`frontend/` 全部源码（9 个 api 模块、7 个 view、9 个 component、7 个 util）。
-> 目标：在**不改变产品行为**的前提下修掉真实缺陷、消除重复实现、降低无效计算与包体。
+> 范围：`frontend/` 全部源码（9 个 api 模块、7 个 view、10 个 component、7 个 util）。
+> 本文档是 README 的深入补充：前半部分讲架构与约定（改代码前先看），后半部分记录一次完整优化的结论与验证。
 > 验证：`npm run build` 通过；入口 chunk 1256.72 kB → **1117.92 kB**（gzip 404.98 kB → **368.84 kB**）。
-> 说明：本机没有 `mvn`，因此未做「启动后端 + 浏览器点检」的端到端验证，留给发布前回归（见文末）。
+> 后半部分（第二~八节）的目标是：在不改变产品行为的前提下修掉真实缺陷、消除重复实现、降低无效计算与包体。
+> 说明：优化时本机没有 `mvn`，因此未做「启动后端 + 浏览器点检」的端到端验证，留给发布前回归（见文末）。
 
 ---
 
-## 一、根因级修复：API 响应契约（一个 bug 类，5 处表现）
+## 一、架构与约定
+
+### 1.1 技术栈与构建
+Vue 3.4 + Vite 5 + Element Plus 2.8 + axios，路由 `vue-router` 4（**hash 模式**，Spring Boot 只需服务 `index.html`，无需 rewrite）。
+`vite.config.js`：`base: './'`（相对路径，可部署在任意前缀下）；dev server `:5173` 把 `/api` 代理到 `:80`；路由级动态 import 自动产出分包。
+Pinia 已在 `main.js` 注册，但仓库内**没有任何 store** —— 引入全局状态前先确认真的需要它。
+
+### 1.2 入口、路由与外壳
+- `main.js`：注册 Element Plus（`size: 'default'`）、Pinia、router，并**按需注册实际用到的 38 个图标**（`import *` 全量注册会让 tree-shaking 失效）。新增 `<SomeIcon />` 标签时要么在该组件内 import，要么把名字加进 `main.js`。
+- `router.js`：7 条路由全部懒加载 —— `/`、`/scripts`、`/scripts/edit`、`/tenants`、`/scenarios`、`/history`、`/settings`。
+- `App.vue` = `AppLayout` + `<router-view/>`；`AppLayout` 负责顶部导航，并用 `GET /api/system/info` 探测环境（MOCK/REAL 标签 + 就绪/离线状态）。
+
+### 1.3 API 层契约（改代码前必读）
+`api/http.js` 是唯一的 axios 实例（`baseURL: '/api'`，默认 `timeout: 60s`），响应拦截器规则：
+
+| 响应形态 | 拦截器返回 |
+| --- | --- |
+| JSON `{code, message, data}` 且 `code === 0` | **payload（`data`）** |
+| JSON 且 `code !== 0` | toast + `Promise.reject` |
+| `text/plain`（stdout/stderr）、blob（导出） | 原始 body |
+
+由此得到三条硬约定：
+
+1. `api/*.js` 只声明端点，**调用方不得再取一次 `.data`**（历史上两处都取，导致产物/结果页与清理流程静默失效）。
+2. 长任务要显式放行：`execute` / `rerunExecution` / `runBatch` 默认不设客户端超时（POST 会阻塞到脚本结束），`ExecuteView` 按 `(timeoutSeconds + 60) * 1000` 传入。
+3. 错误提示在 `http.js` 内做了 2 秒窗口内的同文案去重，业务层通常只需 `catch { /* 已提示 */ }`。
+
+### 1.4 目录职责与分层
+```
+api/         端点声明（无业务逻辑，不 import 组件）
+components/  可复用 UI：AppLayout / ParamForm / LogPane / ExecutionResultPanel /
+             ScriptCard / SBLabel / Cleanup*（清理子模块自成体系，内部直接调 api）
+views/       路由页面：唯一持有业务状态、请求编排与脏数据提示的地方
+utils/       无副作用的纯函数与薄封装：format / labels / status / params /
+             cleanup / clipboard / storage
+```
+约定：跨 2 处以上复用的逻辑必须下沉到 `utils/`（本轮已把 options 解析、visibleWhen 校验、剪贴板、状态图标、清理文案各收口成一份）。
+
+### 1.5 动态参数模型（ScriptParam）
+字段：`name / label / type / defaultValue / options / required / sortOrder / placeholder / helpText / visibleWhenJson`。
+
+- `type` 白名单：`text / textarea / number / select / boolean / date / file`（与后端 `ScriptService.ALLOWED_TYPES` 对齐）。
+- `options` 以字符串 `"label:value,value"` 存储；解析/序列化统一在 `utils/params.js`（编辑器与运行表单共用一份）。
+- `visibleWhenJson`（`{param, operator: equals|notEquals, value}`）的校验同样在 `utils/params.js`：**编辑器严格**（引用未声明参数即报错），**运行时宽松**（规则不合法则视为可见，绝不因配置错误挡住执行）。
+- `file` 类型参数的控件由 `ExecuteView` 的上传区渲染，`ParamForm` 不渲染它（避免出现重复输入框）。
+- `_options` 只是编辑器内的 UI 态，落库前序列化回 `options`。
+
+### 1.6 状态、文案与持久化
+- 无全局 store：状态放在 view 内的 `ref/reactive`；跨页面只走 `localStorage` / `sessionStorage`，键名集中在 `utils/storage.js` 的 `KEYS`（`lastTenantId` / `lastParams` / `rerun` / `settingsTab`），并带私有模式与配额兜底。
+- 状态文案/标签类型/图标统一走 `utils/labels.js`（`STATUS` / `STATUS_LABEL` / `STATUS_TAG_TYPE` / `STATUS_CLASS` / `STATUS_HEADLINE`）与 `utils/status.js`；清理结果文案走 `utils/cleanup.js`。**不要在 view 里再写一份映射表**（历史上 4 处副本，其中两处把"已取消"画成绿勾）。
+- 样式：设计 token 全部在 `style.css` 的 `:root`；组件只用 scoped 样式 + token，不写死颜色。新增 token 时同步补进 `:root`（曾漏定义 3 个，导致弱化文字静默继承主色）。
+
+### 1.7 易踩坑清单（评审反复出现，改代码时对照）
+1. 生命周期钩子（`onUnmounted` 等）必须在任何 `await` **之前**注册 —— 否则 Vue 找不到实例，钩子被静默丢弃。
+2. `watch` 尽量比较**内容签名**，不要依赖对象引用：父组件在模板里调用函数生成 props（`:x="fn()"`）会每次渲染都造新对象。
+3. 一切"点开某行 / 切到某实体"的异步加载都要**竞态守卫**（捕获 id，响应回来后比对），弱网与连点下否则会串数据。
+4. `ElMessageBox.confirm` 取消时会 reject，必须 `catch`，否则产生 unhandled rejection。
+5. 只给真实存在的能力做 UI：不要渲染后端 DTO 里不存在的字段（曾出现"耗时"列恒为 `0.0s`）。
+
+---
+
+## 二、根因级修复：API 响应契约（一个 bug 类，5 处表现）
 
 `api/http.js` 的响应拦截器返回的是整个 `{code, message, data}` 包装体，而 `api/*.js` 里每个函数又写了
 `.then((r) => r.data)`，于是调用方再写 `r?.data` 时**看起来正确、实际永远是 undefined**。
@@ -29,7 +91,7 @@
 | `HistoryView.vue` / `ExecutionResultPanel.vue` 产物页 | `listArtifacts()` 已解包，又取 `.data` → **产物列表永远为空** | 直接使用返回数组 |
 | `ScriptsView.vue` / `ScenariosView.vue` / `TenantsView.vue` 删除确认 | `related-counts` 二次解包 → 关联影响提示永远不显示（每次都白跑一次请求） | 直接使用返回值 |
 
-## 二、其它确认的功能缺陷
+## 三、其它确认的功能缺陷
 
 | # | 位置 | 问题 | 修复 |
 | --- | --- | --- | --- |
@@ -62,7 +124,7 @@
 | 27 | `style.css` | `--sb-text-1` / `--sb-text-muted` / `--sb-bg-soft` 被 8 个组件引用但从未定义 → 声明在计算值阶段失效，弱化文字静默继承主色，卡片底色透明 | 在 `:root` 补齐三个 token |
 | 28 | `utils/format.js` | `formatTimestamp` 对数字走 `toISOString()`（UTC），对字符串按本地时钟输出 → 同一时刻两种显示；缺位不补零 | 统一按本地时区格式化并补零 |
 
-## 三、结构性重构（消除重复实现）
+## 四、结构性重构（消除重复实现）
 
 新增 4 个共享模块，并在所有调用点替换掉各自的私有副本：
 
@@ -82,7 +144,7 @@
   替换 `HistoryView`/`ExecuteView` 里裸的 `sessionStorage` + 手写 `JSON.parse`，以及散落的 `'sb.settingsTab'` 等字符串字面量。
 - `utils/format.js` 增加 `isValidJson` / `toDateString`，供编辑器校验与日期快捷筛选复用。
 
-## 四、性能优化
+## 五、性能优化
 
 1. **包体**：`main.js` 不再 `import * as ElementPlusIconsVue` 全量注册 293 个图标，改为只注册实际用到的 38 个
    （`import *` + 动态循环会让 tree-shaking 完全失效）。
@@ -101,7 +163,7 @@
 7. **场景页 deep watch**：`watch(steps, ..., { deep: true })` 会在改 presetId / 开关时也触发（并重复 `openEdit` 的显式调用），
    改为只监听「被引用的脚本 id 序列」。
 
-## 五、删除的死代码
+## 六、删除的死代码
 
 - `labels.js` 6 个无引用导出（见上）。
 - `CleanupConfirmDialog` 空处理器 `onTokenChange`（每次输入都被调用）及其模板绑定。
@@ -113,7 +175,7 @@
   `ScriptEditView` 恒真的 `v-else-if="p.type !== 'select'"` 与保存时必被覆盖的 `sortOrder` 初始化。
 - 各 view 里 `const fmtBytes = formatBytes` 这类零收益别名（4 个清理组件），改为 import 时重命名。
 
-## 六、刻意没做的事（建议的后续项）
+## 七、刻意没做的事（建议的后续项）
 
 这些改动收益存在但要动架构或引入构建期成本，本轮没有做，避免与"修缺陷"混在一起：
 
@@ -129,7 +191,7 @@
    多 chunk（`ExecuteView-*.js`、`HistoryView-*.js` …）。建议要么改注释，要么显式把 `vue`/`element-plus` 拆成 vendor chunk。
 7. `listScripts()` / `listTenants()` 在 5 个 view 里各请求一次，可做带失效的请求级缓存。
 
-## 七、验证情况
+## 八、验证情况
 
 已做：
 

@@ -3,6 +3,14 @@
 > 部署在 FusionInsight 大数据节点上的轻量级 Shell 脚本管理和执行工具。
 > 个人/小团队使用，启动一次，新增脚本和参数都通过网页完成。
 
+## 文档
+
+| 文档 | 内容 |
+| --- | --- |
+| `README.md`（本文） | 产品定位、技术栈、构建与运行、目录结构、页面与 REST 一览、验收清单 |
+| `BACKEND.md` | 后端设计说明：分层与包结构、执行引擎、可靠性/清理、安全边界、配置项、已知问题 |
+| `FRONTEND.md` | 前端设计说明：架构与约定（API 契约、动态参数模型、易踩坑清单）+ 优化记录与验证 |
+
 ## 核心理念
 
 * **程序只部署一次**：未来新增 Hudi / Flink / Hive / HBase / HDFS / YARN 脚本，**不需要修改 Java、不需要重新打包、不需要重新部署**。
@@ -73,15 +81,19 @@ mvn test                      # 跑全部单元 + 集成测试
 mvn test -DskipFrontend=true  # 跳过 npm 调用（离线环境）
 ```
 
-12 个测试用例：
+28 个测试类 + 1 个基类 / 158 个用例（`src/test/java`），按主题大致分为：
 
-| 类 | 覆盖点 |
+| 主题 | 代表测试类 |
 | --- | --- |
-| `TenantServiceTest` | 租户 CRUD / 启用切换 |
-| `ScriptServiceTest` | 脚本 CRUD + 参数校验 + 脚本正文保存 |
-| `ScriptExecutorTest` | success / failed / stderr / timeout / 大日志 |
-| `H2PersistenceTest` | H2 文件写入验证 |
-| `ApiSmokeTest` | REST API 端到端 |
+| 租户 / 脚本 CRUD | `TenantServiceTest`、`ScriptServiceTest`、`ScriptPackageServiceTest` |
+| 执行引擎 | `ScriptExecutorTest`、`ProcessRunnerTest`、`ExecutionContextTest`、`ConcurrencyGateTest` |
+| 可靠性与取消 | `ExecutionCancellationTest`、`ExecutionSnapshotTest`、`StoragePathServiceTest` |
+| 参数与能力 | `ConditionalParamTest`、`DryRunTest`、`FileParameterTest`、`SyntaxCheckTest`、`PrecheckServiceTest`、`RiskLevelExecutionTest` |
+| 产物 / 结果 / 脱敏 | `ArtifactServiceTest`、`ResultParserServiceTest`、`SensitiveDataMaskerTest` |
+| 场景 / 批量 / 模板 / 版本 | `ScenarioServiceTest`、`BatchServiceTest`、`ScriptTemplateTest`、`ScriptVersionServiceTest`、`PresetServiceTest`、`GlobalVariableServiceTest` |
+| 端到端 | `ApiSmokeTest`、`UxEndpointsTest`、`H2PersistenceTest`、`BaseIntegrationTest`（基类） |
+
+> 完整的模块职责与测试覆盖矩阵见 `BACKEND.md`。
 
 ## 构建流程
 
@@ -112,7 +124,9 @@ mvn test -DskipFrontend=true  # 跳过 npm 调用（离线环境）
 ```
 bigdata-script-box/
 ├── pom.xml                              # Maven 配置（含 exec-maven-plugin 自动 npm 构建）
-├── README.md
+├── README.md                            # 本文：定位 / 构建运行 / 一览表
+├── BACKEND.md                           # 后端设计说明（分层、执行引擎、可靠性、配置、已知问题）
+├── FRONTEND.md                          # 前端设计说明（架构与约定 + 优化记录）
 ├── mock-scripts/                        # 内置示例脚本（启动时自动入库）
 │   ├── success.sh
 │   ├── failed.sh
@@ -190,7 +204,24 @@ bigdata-script-box/
 | GET | `/api/history?limit=200` | 最近执行 |
 | GET | `/api/history/{id}` | 单条详情 |
 
-统一返回 `{code, message, data}`。
+统一返回 `{code, message, data}`（前端在 `api/http.js` 只解包一次，见 `FRONTEND.md`）。
+
+其余端点分组（完整参数与语义见 `BACKEND.md`）：
+
+| 分组 | 路径前缀 |
+| --- | --- |
+| 执行控制 | `/api/executions/{id}/cancel`、`/state`、`/rerun`、`/result`、`/artifacts[/{name}]`、`GET /api/executions/active`、`POST /api/executions/preview`（dry run） |
+| 批量执行 | `POST /api/batches/execute`、`GET /api/batches/{batchId}` |
+| 参数方案 / 版本 | `/api/scripts/{id}/presets[/{presetId}]`（含 `/summary`、`/{presetId}/apply`）、`/api/scripts/{id}/versions[/{versionNo}[/rollback]]` |
+| 前置检查 / 语法检查 | `POST|GET|PUT /api/scripts/{id}/precheck`、`POST /api/scripts/syntax-check` |
+| 打包导入导出 | `GET /api/scripts/{id}/export`、`POST /api/scripts/import` |
+| 收藏 / 复制 / 引用计数 | `POST /api/scripts/{id}/favorite`、`/copy`、`GET /api/scripts/{id}/related-counts` |
+| 脚本模板 | `GET /api/script-templates[/{code}]`、`POST /api/scripts/from-template` |
+| 文件上传 | `POST /api/uploads`（作为 file 类型参数注入本次执行） |
+| 场景编排 | `/api/scenarios[/{id}]`、`PUT /api/scenarios/{id}/steps`、`POST /api/scenarios/{id}/run`、`GET /api/scenarios/{id}/related-counts` |
+| 全局变量 | `/api/global-variables[/{id}]` |
+| 清理与设置 | `POST /api/admin/cleanup/preview`、`/execute`、`GET /api/admin/cleanup/history`、`GET|PUT /api/admin/settings` |
+| 系统 | `GET /api/system/info` |
 
 ## 动态参数
 
@@ -242,18 +273,21 @@ scriptbox:
   max-script-bytes: 1048576
 ```
 
+> 上面只是最常用的一部分；`shell-executable`、`max-concurrent`、`max-batch-rows`、`retention-*-days`、
+> 产物限额（`max-artifact-bytes` / `max-artifact-files`）等全部配置项与默认值见 `BACKEND.md`。
+
 部署到 FusionInsight 节点时改为 `mock: false`，上传真实 keytab，`ScriptExecutor` 会自动用 kinit 包装。
 
 ## 验收清单
 
-1. `mvn test` 全部通过（12 个用例）✅
+1. `mvn test` 全部通过（28 个测试类 + 1 个基类 / 158 个用例）✅
 2. `mvn clean package` 成功（自动跑 npm 构建，最终单 JAR ~29 MB）✅
 3. Spring Boot 正常启动 ✅
 4. 浏览器访问首页（SPA shell 由 Spring Boot 提供）✅
-5. 4 个页面（执行中心 / 脚本 / 租户 / 历史）渲染正常 ✅
+5. 7 个页面（执行中心 / 脚本 / 脚本编辑 / 租户 / 场景 / 历史 / 设置）渲染正常 ✅
 6. 执行中心按 category 分类卡片，点击 Drawer 打开动态表单 ✅
 7. 5 个 mock 脚本端到端执行（success / failed / timeout / stderr-mix / large-output）✅
 8. stdout / stderr 正常保存并展示 ✅
 9. execution_history 正常记录 ✅
 10. H2 重启后数据存在 ✅（`./data/db/scriptbox.mv.db`）
-11. README 完整 ✅
+11. 文档完整：`README.md`（本文）+ `BACKEND.md` + `FRONTEND.md` ✅
