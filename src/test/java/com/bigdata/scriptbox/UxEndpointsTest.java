@@ -191,6 +191,19 @@ class UxEndpointsTest extends BaseIntegrationTest {
             assertEquals(0, live.getBody().length);
         }
 
+        // 更早的窗口：刚刚分配了 ID、许可登记之前（ExecutionRunner 会在 submit 时登记）
+        long allocatedId = 900_000_200L;
+        assertNull(historyMapper.selectById(allocatedId), "precondition: 该 id 不应有 history 行");
+        gate.markAllocated(allocatedId);
+        try {
+            var early = executionController.logTail(allocatedId, "stdout", 65536);
+            assertEquals(200, early.getStatusCode().value(),
+                    "已分配但还没落库/登记的 ID 也必须返回 200，否则前端会看到 404 噪音");
+            assertEquals(0, early.getBody().length);
+        } finally {
+            gate.clearAllocated(allocatedId);
+        }
+
         // 真正不存在的执行仍然 404，不能被静默当成空日志
         var unknown = executionController.logTail(900_000_999L, "stdout", 65536);
         assertEquals(404, unknown.getStatusCode().value(),

@@ -192,6 +192,32 @@ public class ExecutionGate {
     }
 
     /**
+     * 「已分配但还没登记许可」的 executionId。
+     *
+     * <p>存在这段窗口的原因：异步路径下 {@code ExecutionRunner.submit()} 先分配 ID 并立刻
+     * 返回给前端，worker 线程要走到 {@code captureSnapshot}（写 history 行）与
+     * {@code acquire}（登记许可）才真正可见。前端拿到 ID 就会拉一次实时日志，此时
+     * 行和许可都还不存在 —— 只看这两者会把"还没有日志"误判成"执行不存在"并返回 404，
+     * 在浏览器里留下一条无意义的控制台报错。
+     */
+    private final java.util.Set<Long> inFlight = ConcurrentHashMap.newKeySet();
+
+    /** 标记「这个 executionId 已经分配给某个执行，但可能还没落库」。 */
+    public void markAllocated(long executionId) {
+        inFlight.add(executionId);
+    }
+
+    /** 执行收尾（成功 / 失败 / 取消）时清除；此后该 ID 的可见性只由 history 行决定。 */
+    public void clearAllocated(long executionId) {
+        inFlight.remove(executionId);
+    }
+
+    /** 是否处于"已分配、可能还没落库"的窗口内。 */
+    public boolean isAllocated(long executionId) {
+        return inFlight.contains(executionId);
+    }
+
+    /**
      * 取消一个运行中的执行：立刻销毁进程及其子孙进程，并置位取消标志供执行线程读取。
      *
      * <p>幂等：进程已退出、执行已终结、或已发送过取消信号，都返回 false。

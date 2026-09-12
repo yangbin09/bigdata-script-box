@@ -47,6 +47,7 @@ public class ExecutionRunner {
     private final ScriptBoxProperties props;
     private final ScriptExecutor executor;
     private final ExecutionHistoryMapper historyMapper;
+    private final ExecutionGate executionGate;
 
     /** 独立 ID 序列，与 ScriptExecutor.counter 隔离。 */
     private final AtomicLong asyncCounter = new AtomicLong(System.currentTimeMillis() * 1000L);
@@ -120,6 +121,9 @@ public class ExecutionRunner {
         // 完整 ExecutionGate 准入仍在线程内由 ScriptExecutor.startProcess 负责。
         long executionId = asyncCounter.incrementAndGet();
         req.setExecutionId(executionId); // 让 ScriptExecutor 复用这个 ID
+        // 登记"已分配但可能还没落库"：前端拿到 ID 会立刻拉实时日志，
+        // 而 history 行要等 worker 走到 captureSnapshot 才写入。
+        executionGate.markAllocated(executionId);
         log.info("ExecutionRunner: submit executionId={} scriptId={} tenantId={}",
                 executionId, req.getScriptId(), req.getTenantId());
 
@@ -151,6 +155,11 @@ public class ExecutionRunner {
             log.error("ExecutionRunner: 任务异常 executionId={}: {}",
                     executionId, t.getMessage(), t);
             writeFailedHistory(req, t);
+        } finally {
+            // 收尾后才能取消登记：这之前/之后 history 行的可见性由本方法保证，
+            // 所以任何还在轮询这个 ID 的前端都能得到一个确定的答案（行或空日志），
+            // 而不是"既没行也没登记"的 404。
+            if (executionId > 0) executionGate.clearAllocated(executionId);
         }
     }
 
