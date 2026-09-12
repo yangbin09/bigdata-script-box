@@ -170,141 +170,165 @@
       </template>
 
       <template v-if="activeScript">
-        <!-- 表单视图 -->
-        <div v-if="!resultHistory">
-          <div class="sb-form-section">
-            <div class="sb-form-section-label">租户</div>
-            <el-select
-              v-model="tenantId"
-              :disabled="running"
-              style="width: 100%"
-            >
-              <el-option
-                v-for="t in enabledTenants"
-                :key="t.id"
-                :label="`${t.name}（${t.principal || '-'}）`"
-                :value="t.id"
-              />
-            </el-select>
-          </div>
-
-          <div class="sb-form-section">
-            <div class="sb-form-section-label">
-              参数方案 <span class="muted">(可选，覆盖默认参数)</span>
-            </div>
-            <el-select
-              v-model="presetId"
-              :disabled="running"
-              clearable
-              placeholder="不指定 (使用默认参数)"
-              style="width: 100%"
-              @change="applyPresetToForm"
-            >
-              <el-option
-                v-for="p in presets"
-                :key="p.id"
-                :label="p.name"
-                :value="p.id"
-              />
-            </el-select>
-          </div>
-
-          <!-- V3 (PR-3): 4 来源徽章（默认 / 上次 / 方案 / 草稿）+ 撤销 -->
-          <div class="sb-form-section sb-draft-badges">
-            <div class="sb-draft-row">
-              <el-tag
-                v-for="s in sourceBadges"
-                :key="s.id"
-                :type="draft.currentSource === s.id ? 'primary' : 'info'"
-                :effect="draft.currentSource === s.id ? 'dark' : 'plain'"
-                :disabled="!s.available || running"
-                class="sb-draft-badge"
-                @click="onPickSource(s.id)"
-              >
-                {{ s.label }}
-                <span v-if="s.hint" class="sb-draft-hint">{{ s.hint }}</span>
-              </el-tag>
-              <el-button
-                v-if="canUndo"
-                size="small"
-                text
+        <!-- V3 (PR-4): 抽屉内左右分栏（宽屏）。左：表单（运行中 disabled）；右：实时日志 + 结果。 -->
+        <div class="sb-exec-split" :class="{ 'sb-exec-narrow': narrowScreen }">
+          <div class="sb-exec-left">
+            <div class="sb-form-section">
+              <div class="sb-form-section-label">租户</div>
+              <el-select
+                v-model="tenantId"
                 :disabled="running"
-                @click="onUndo"
-              >撤销 ({{ undoLeft }}s)</el-button>
-              <el-button
-                v-if="draft.hasDraft() && draft.currentSource !== 'draft'"
-                size="small"
-                text
-                type="warning"
-                @click="onClearDraft"
-              >清除草稿</el-button>
-            </div>
-            <div v-if="draft.currentSource === 'draft'" class="sb-draft-banner">
-              <el-icon><Document /></el-icon>
-              <span>当前显示来自未提交的本地草稿（按来源徽章切换会覆盖）</span>
-            </div>
-          </div>
-
-          <div class="sb-form-section">
-            <ParamForm
-              ref="formRef"
-              :params="activeParams"
-              :initial-values="lastParams"
-              v-model="formValues"
-            />
-          </div>
-
-          <!-- 文件参数 -->
-          <div
-            v-if="fileParamNames.length"
-            class="sb-form-section"
-          >
-            <div class="sb-form-section-label">文件参数</div>
-            <div v-for="p in fileParamNames" :key="p" class="sb-file-row">
-              <div class="sb-file-row-label">{{ p }}</div>
-              <el-upload
-                :auto-upload="true"
-                :show-file-list="false"
-                :http-request="(opts) => uploadFileFor(opts.file, p)"
-                :before-upload="(f) => beforeUploadFile(f, p)"
-                accept="*"
+                style="width: 100%"
               >
-                <el-button size="small" :icon="UploadFilled">选择文件</el-button>
-              </el-upload>
-              <span v-if="fileInputs[p]" class="sb-file-name">
-                {{ fileInputs[p].originalName }} ({{ formatBytes(fileInputs[p].bytes) }})
-              </span>
-              <el-button v-else size="small" link type="info" disabled>未上传</el-button>
+                <el-option
+                  v-for="t in enabledTenants"
+                  :key="t.id"
+                  :label="`${t.name}（${t.principal || '-'}）`"
+                  :value="t.id"
+                />
+              </el-select>
+            </div>
+
+            <div class="sb-form-section">
+              <div class="sb-form-section-label">
+                参数方案 <span class="muted">(可选，覆盖默认参数)</span>
+              </div>
+              <el-select
+                v-model="presetId"
+                :disabled="running"
+                clearable
+                placeholder="不指定 (使用默认参数)"
+                style="width: 100%"
+                @change="applyPresetToForm"
+              >
+                <el-option
+                  v-for="p in presets"
+                  :key="p.id"
+                  :label="p.name"
+                  :value="p.id"
+                />
+              </el-select>
+            </div>
+
+            <!-- V3 (PR-3): 4 来源徽章（默认 / 上次 / 方案 / 草稿）+ 撤销 -->
+            <div class="sb-form-section sb-draft-badges">
+              <div class="sb-draft-row">
+                <el-tag
+                  v-for="s in sourceBadges"
+                  :key="s.id"
+                  :type="draft.currentSource === s.id ? 'primary' : 'info'"
+                  :effect="draft.currentSource === s.id ? 'dark' : 'plain'"
+                  :disabled="!s.available || running"
+                  class="sb-draft-badge"
+                  @click="onPickSource(s.id)"
+                >
+                  {{ s.label }}
+                  <span v-if="s.hint" class="sb-draft-hint">{{ s.hint }}</span>
+                </el-tag>
+                <el-button
+                  v-if="canUndo"
+                  size="small"
+                  text
+                  :disabled="running"
+                  @click="onUndo"
+                >撤销 ({{ undoLeft }}s)</el-button>
+                <el-button
+                  v-if="draft.hasDraft() && draft.currentSource !== 'draft'"
+                  size="small"
+                  text
+                  type="warning"
+                  @click="onClearDraft"
+                >清除草稿</el-button>
+              </div>
+              <div v-if="draft.currentSource === 'draft'" class="sb-draft-banner">
+                <el-icon><Document /></el-icon>
+                <span>当前显示来自未提交的本地草稿（按来源徽章切换会覆盖）</span>
+              </div>
+            </div>
+
+            <div class="sb-form-section">
+              <ParamForm
+                ref="formRef"
+                :params="activeParams"
+                :initial-values="lastParams"
+                v-model="formValues"
+              />
+            </div>
+
+            <!-- 文件参数 -->
+            <div
+              v-if="fileParamNames.length"
+              class="sb-form-section"
+            >
+              <div class="sb-form-section-label">文件参数</div>
+              <div v-for="p in fileParamNames" :key="p" class="sb-file-row">
+                <div class="sb-file-row-label">{{ p }}</div>
+                <el-upload
+                  :auto-upload="true"
+                  :show-file-list="false"
+                  :http-request="(opts) => uploadFileFor(opts.file, p)"
+                  :before-upload="(f) => beforeUploadFile(f, p)"
+                  accept="*"
+                >
+                  <el-button size="small" :icon="UploadFilled">选择文件</el-button>
+                </el-upload>
+                <span v-if="fileInputs[p]" class="sb-file-name">
+                  {{ fileInputs[p].originalName }} ({{ formatBytes(fileInputs[p].bytes) }})
+                </span>
+                <el-button v-else size="small" link type="info" disabled>未上传</el-button>
+              </div>
+            </div>
+
+            <!-- 批量执行 -->
+            <div class="sb-form-section">
+              <div class="sb-form-section-label">
+                <el-checkbox v-model="batchMode" :disabled="running">批量执行</el-checkbox>
+                <span class="muted" style="margin-left: 8px">每行 JSON：{"参数": "值"}</span>
+              </div>
+              <el-input
+                v-if="batchMode"
+                v-model="batchRowsText"
+                type="textarea"
+                :rows="5"
+                placeholder='例如：&#10;{"database": "dev"}&#10;{"database": "prod"}'
+                :disabled="running"
+              />
             </div>
           </div>
 
-          <!-- 批量执行 -->
-          <div class="sb-form-section">
-            <div class="sb-form-section-label">
-              <el-checkbox v-model="batchMode" :disabled="running">批量执行</el-checkbox>
-              <span class="muted" style="margin-left: 8px">每行 JSON：{"参数": "值"}</span>
+          <!-- V3 (PR-4): 右侧实时日志 + 结果面板。运行中拉 /log-tail，结束后替换为结果面板 -->
+          <div class="sb-exec-right">
+            <div class="sb-exec-right-header">
+              <span v-if="runningExecutionId">
+                执行中 · {{ elapsed }}s · #{{ runningExecutionId }}
+              </span>
+              <span v-else-if="resultHistory">
+                结果 · #{{ resultHistory.id }} · {{ formatDateTime(resultHistory.startTime) }}
+              </span>
+              <span v-else class="muted">日志 / 结果</span>
             </div>
-            <el-input
-              v-if="batchMode"
-              v-model="batchRowsText"
-              type="textarea"
-              :rows="5"
-              placeholder='例如：&#10;{"database": "dev"}&#10;{"database": "prod"}'
-              :disabled="running"
+            <div v-if="!resultHistory && running" class="sb-live-log">
+              <pre class="sb-log-stdout">{{ liveLog }}</pre>
+              <div v-if="liveLogError" class="sb-log-error">
+                <el-alert type="error" :closable="false" show-icon>
+                  读取日志失败 <el-button size="small" text @click="refreshLiveLog">重试</el-button>
+                </el-alert>
+              </div>
+            </div>
+            <ExecutionResultPanel
+              v-else-if="resultHistory"
+              :history="resultHistory"
+              :log-stdout="resultStdout"
+              :log-stderr="resultStderr"
+              @rerun="rerunFromResult"
+              @edit="backToForm"
+              @view-history="goHistory"
             />
+            <div v-else class="sb-right-empty muted">
+              提交后会在这里实时显示日志，完成后展示结果摘要。
+            </div>
           </div>
         </div>
-
-        <!-- 结果视图 (执行完成后) -->
-        <ExecutionResultPanel
-          v-else
-          :history="resultHistory"
-          :log-stdout="resultStdout"
-          :log-stderr="resultStderr"
-          @rerun="rerunFromResult"
-          @edit="backToForm"
-          @view-history="goHistory"
-        />
       </template>
 
       <template #footer>
@@ -423,7 +447,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Refresh, Search, VideoPlay, Loading, Close, ArrowRight, ArrowDown, CircleClose,
@@ -432,7 +456,7 @@ import {
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { listScripts, getScript, setScriptFavorite } from '../api/scripts'
 import { listTenants } from '../api/tenants'
-import { execute, submitExecution, readStdout, readStderr, cancelExecution, activeExecutions, executionState } from '../api/executions'
+import { execute, submitExecution, readStdout, readStderr, cancelExecution, activeExecutions, executionState, logTail } from '../api/executions'
 import { useExecutionStore } from '../stores/executionStore'
 import { recentScripts } from '../api/history'
 import { listPresets, dryRun, uploadFile, runBatch, getBatch } from '../api/extras'
@@ -524,6 +548,16 @@ const resultStderr = ref('')
 
 // V3 (PR-3): 来源徽章渲染数据 + 撤销倒计时。
 let nowTimer = null
+
+// V3 (PR-4): 实时日志（运行中）/ 窄屏判断。
+const liveLog = ref('')
+const liveLogError = ref(false)
+let liveLogTimer = null
+const narrowScreen = ref(false)
+function checkNarrow() {
+  narrowScreen.value = typeof window !== 'undefined' && window.innerWidth < 1024
+}
+checkNarrow()
 const sourceBadges = computed(() => [
   { id: DRAFT_SRC.DEFAULT, label: '默认参数', available: true,
     hint: (activeParams.value || []).some((p) => p.defaultValue != null) ? '· 有默认值' : '' },
@@ -572,6 +606,35 @@ function onClearDraft() {
   if (draft.currentSource.value === 'draft') {
     draft.applySource(DRAFT_SRC.DEFAULT)
   }
+}
+
+// V3 (PR-4): 实时日志拉取（增量）
+async function refreshLiveLog() {
+  if (!runningExecutionId.value) return
+  try {
+    const text = await logTail(runningExecutionId.value, 'stdout', 65536)
+    liveLogError.value = false
+    // 服务端返回完整文件末尾；前端只在新内容时更新（O(1) 字符串比较）
+    if (typeof text === 'string' && text !== liveLog.value) {
+      liveLog.value = text
+      await nextTick()
+      const el = document.querySelector('.sb-log-stdout')
+      if (el) el.scrollTop = el.scrollHeight
+    }
+  } catch (e) {
+    liveLogError.value = true
+  }
+}
+
+function startLiveLog() {
+  liveLog.value = ''
+  liveLogError.value = false
+  refreshLiveLog()
+  if (liveLogTimer) clearInterval(liveLogTimer)
+  liveLogTimer = setInterval(refreshLiveLog, 2000)
+}
+function stopLiveLog() {
+  if (liveLogTimer) { clearInterval(liveLogTimer); liveLogTimer = null }
 }
 
 const LAST_TENANT_KEY = KEYS.LAST_TENANT
@@ -948,6 +1011,7 @@ async function runScript() {
     // 由下面的 watch 终态后回填。
     const submission = await exec.submit(payload)
     runningExecutionId.value = submission
+    startLiveLog()
     const startedAt = Date.now()
     // 不阻塞等待 — 切走 / 关闭抽屉都不影响后端执行。
     // 等终态（或失败 / 超时）后回填 result panel。
@@ -963,6 +1027,8 @@ async function runScript() {
           ])
           resultStdout.value = so || ''
           resultStderr.value = se || ''
+          // 把右侧实时日志也固化下来，避免 liveLog 空窗
+          liveLog.value = so || liveLog.value
         } catch (_) { /* tolerate */ }
         finally { finalizeRun() }
       })
@@ -974,6 +1040,7 @@ async function runScript() {
     function finalizeRun() {
       running.value = false
       if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null }
+      stopLiveLog()
       recentScripts(6).then((r) => { recentList.value = r || [] }).catch(() => {})
     }
     void startedAt
@@ -981,6 +1048,7 @@ async function runScript() {
     // axios interceptor already toasted
     running.value = false
     if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null }
+    stopLiveLog()
   }
 }
 
@@ -1046,12 +1114,16 @@ async function toggleFavorite(s, val) {
 
 onUnmounted(() => {
   window.removeEventListener('resize', computeDrawerSize)
+  window.removeEventListener('resize', checkNarrow)
   if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null }
+  if (liveLogTimer) { clearInterval(liveLogTimer); liveLogTimer = null }
+  if (nowTimer) { clearInterval(nowTimer); nowTimer = null }
 })
 
 onMounted(async () => {
   computeDrawerSize()
   window.addEventListener('resize', computeDrawerSize)
+  window.addEventListener('resize', checkNarrow)
   await refreshAll()
   // Consume a possible rerun handoff from HistoryView (session storage)
   await consumeRerun()
@@ -1139,6 +1211,50 @@ onMounted(async () => {
   font-size: 12px;
   color: #9a3412;
 }
+
+/* V3 (PR-4): 抽屉内左右分栏（宽屏） */
+.sb-exec-split {
+  display: grid;
+  grid-template-columns: 380px 1fr;
+  gap: 16px;
+  height: 100%;
+  min-height: 0;
+}
+.sb-exec-split.sb-exec-narrow {
+  grid-template-columns: 1fr;
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+}
+.sb-exec-left { overflow-y: auto; padding-right: 4px; min-height: 0; }
+.sb-exec-right {
+  display: flex; flex-direction: column;
+  border: 1px solid var(--sb-border);
+  border-radius: 6px;
+  background: #fafbfc;
+  min-height: 0;
+  overflow: hidden;
+}
+.sb-exec-right-header {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--sb-border);
+  background: #f1f5f9;
+  color: var(--sb-text);
+}
+.sb-live-log { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.sb-log-stdout {
+  flex: 1; min-height: 0;
+  background: #0b1220; color: #d6e2ff;
+  border-radius: 0; margin: 0;
+  padding: 10px 12px;
+  font-size: 12px;
+  font-family: var(--el-font-family-monospace, monospace);
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.sb-log-error { padding: 8px 12px; }
+.sb-right-empty { padding: 14px; font-size: 13px; }
 
 .sb-file-row {
   display: flex;
