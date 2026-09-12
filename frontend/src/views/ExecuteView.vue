@@ -35,6 +35,29 @@
       />
     </div>
 
+    <!-- V3 (PR-5): 快捷操作 -->
+    <section v-if="quickActions.length" class="sb-block">
+      <div class="sb-section-head">
+        <h3 class="sb-section-title">快捷操作</h3>
+        <el-button text size="small" @click="showAddQuickDialog = true">
+          <el-icon><Plus /></el-icon> 新建
+        </el-button>
+      </div>
+      <div class="sb-qa-grid">
+        <QuickActionCard
+          v-for="qa in quickActions"
+          :key="qa.id"
+          :qa="qa"
+          :script="scriptById(qa.scriptId)"
+          :tenant="tenantById(qa.tenantId)"
+          @open="openFromQuickAction"
+          @edit="onEditQuickAction"
+          @delete="onDeleteQuickAction"
+          @run="onRunQuickAction"
+        />
+      </div>
+    </section>
+
     <el-empty
       v-if="!loading && !filteredScripts.length && !search.trim()"
       description="暂无可执行脚本。先去「脚本管理」创建或调整脚本的启用状态。"
@@ -338,6 +361,7 @@
             <el-button :disabled="running" @click="resetDefaults">恢复默认参数</el-button>
             <div class="right">
               <el-button @click="openPreview" :disabled="running" :loading="previewing">预览</el-button>
+              <el-button @click="openAddQuickFromForm" :disabled="running">保存为快捷操作</el-button>
               <el-button @click="closeDrawer" :disabled="running">取消</el-button>
               <!-- V2: cancel button appears only while a script is running.
                    Sends POST /executions/{id}/cancel for the running execution
@@ -443,6 +467,56 @@
         </el-table>
       </template>
     </el-drawer>
+
+    <!-- V3 (PR-5): 新建 / 编辑快捷操作 对话框 -->
+    <el-dialog
+      v-model="showAddQuickDialog"
+      :title="editingQuickAction ? '编辑快捷操作' : '新建快捷操作'"
+      width="500px"
+      :close-on-click-modal="false"
+      @closed="resetQuickForm"
+    >
+      <el-form :model="quickForm" label-position="top">
+        <el-form-item label="名称" required>
+          <el-input v-model="quickForm.name" placeholder="例如：日常巡检" />
+        </el-form-item>
+        <el-form-item label="图标（emoji 或留空）">
+          <el-input v-model="quickForm.icon" placeholder="⚡" />
+        </el-form-item>
+        <el-form-item label="脚本" required>
+          <el-select v-model="quickForm.scriptId" style="width:100%" filterable>
+            <el-option
+              v-for="s in scripts"
+              :key="s.id"
+              :label="`${s.displayName || s.name} (#${s.id})`"
+              :value="s.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="租户" required>
+          <el-select v-model="quickForm.tenantId" style="width:100%">
+            <el-option
+              v-for="t in enabledTenants"
+              :key="t.id"
+              :label="`${t.name}（${t.principal || '-'}）`"
+              :value="t.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="参数（JSON）">
+          <el-input
+            v-model="quickForm.paramsJson"
+            type="textarea"
+            :rows="5"
+            placeholder='{"参数": "值"}'
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showAddQuickDialog = false">取消</el-button>
+        <el-button type="primary" @click="submitQuickForm">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -451,7 +525,7 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Refresh, Search, VideoPlay, Loading, Close, ArrowRight, ArrowDown, CircleClose,
-  EditPen, RefreshRight, UploadFilled, Document
+  EditPen, RefreshRight, UploadFilled, Document, Plus
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { listScripts, getScript, setScriptFavorite } from '../api/scripts'
@@ -463,6 +537,8 @@ import { listPresets, dryRun, uploadFile, runBatch, getBatch } from '../api/extr
 import ScriptCard from '../components/ScriptCard.vue'
 import ParamForm from '../components/ParamForm.vue'
 import ExecutionResultPanel from '../components/ExecutionResultPanel.vue'
+import QuickActionCard from '../components/QuickActionCard.vue'
+import { listQuickActions, createQuickAction, updateQuickAction, deleteQuickAction } from '../api/quickActions'
 import { formatDateTime, formatBytes } from '../utils/format'
 import { getItem, setItem, takeSessionItem, KEYS, draftKey } from '../utils/storage'
 import { useParamDraft, DRAFT_SRC } from '../composables/useParamDraft'
@@ -476,6 +552,15 @@ const scripts = ref([])
 const tenants = ref([])
 const recentList = ref([])
 const loading = ref(false)
+
+// V3 (PR-5): 快捷操作
+const quickActions = ref([])
+const showAddQuickDialog = ref(false)
+const editingQuickAction = ref(null)
+const quickForm = reactive({
+  name: '', icon: '⚡', scriptId: null, tenantId: null,
+  paramsJson: '{}', presetId: null
+})
 
 const search = ref('')
 const collapsed = reactive({})
@@ -637,6 +722,107 @@ function stopLiveLog() {
   if (liveLogTimer) { clearInterval(liveLogTimer); liveLogTimer = null }
 }
 
+// V3 (PR-5): 快捷操作 helpers
+function scriptById(id) { return (scripts.value || []).find((s) => s.id === id) || null }
+function tenantById(id) { return (tenants.value || []).find((t) => t.id === id) || null }
+
+async function openFromQuickAction(qa) {
+  const s = scriptById(qa.scriptId)
+  if (!s) {
+    ElMessage.warning('关联脚本已不存在')
+    return
+  }
+  if (s.enabled === false) {
+    ElMessage.warning('脚本已禁用')
+    return
+  }
+  await openDrawer(s)
+  // Apply preset/params
+  if (qa.tenantId) tenantId.value = qa.tenantId
+  if (qa.presetId) {
+    presetId.value = qa.presetId
+    await applyPresetToForm(qa.presetId)
+  }
+  if (qa.paramsJson) {
+    try {
+      const vals = JSON.parse(qa.paramsJson)
+      const next = { ...formValues.value }
+      for (const [k, v] of Object.entries(vals)) next[k] = v == null ? '' : String(v)
+      formValues.value = next
+    } catch (_) { /* tolerate */ }
+  }
+}
+
+function onEditQuickAction(qa) {
+  editingQuickAction.value = qa
+  Object.assign(quickForm, {
+    name: qa.name, icon: qa.icon || '⚡',
+    scriptId: qa.scriptId, tenantId: qa.tenantId,
+    paramsJson: qa.paramsJson || '{}', presetId: qa.presetId
+  })
+  showAddQuickDialog.value = true
+}
+
+async function onDeleteQuickAction(qa) {
+  await ElMessageBox.confirm(`确认删除快捷操作「${qa.name}」？`, '确认', { type: 'warning' })
+  await deleteQuickAction(qa.id)
+  ElMessage.success('已删除')
+  await refreshAll()
+}
+
+async function onRunQuickAction(qa) {
+  await openFromQuickAction(qa)
+  // Trigger execution — same gate as DANGEROUS risk applies (handled in runScript)
+  await runScript()
+}
+
+function resetQuickForm() {
+  Object.assign(quickForm, {
+    name: '', icon: '⚡', scriptId: null, tenantId: null,
+    paramsJson: '{}', presetId: null
+  })
+  editingQuickAction.value = null
+}
+
+async function submitQuickForm() {
+  if (!quickForm.name || !quickForm.scriptId || !quickForm.tenantId) {
+    ElMessage.warning('名称、脚本、租户必填')
+    return
+  }
+  const payload = {
+    name: quickForm.name,
+    icon: quickForm.icon,
+    scriptId: quickForm.scriptId,
+    tenantId: quickForm.tenantId,
+    paramsJson: quickForm.paramsJson,
+    presetId: quickForm.presetId || null
+  }
+  if (editingQuickAction.value) {
+    await updateQuickAction(editingQuickAction.value.id, payload)
+  } else {
+    await createQuickAction(payload)
+  }
+  ElMessage.success('已保存')
+  showAddQuickDialog.value = false
+  resetQuickForm()
+  await refreshAll()
+}
+
+function openAddQuickFromForm() {
+  resetQuickForm()
+  if (activeScript.value) quickForm.scriptId = activeScript.value.id
+  if (tenantId.value) quickForm.tenantId = tenantId.value
+  // 预填当前表单参数
+  const snap = {}
+  for (const [k, v] of Object.entries(formValues.value || {})) {
+    if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+      snap[k] = v
+    }
+  }
+  quickForm.paramsJson = JSON.stringify(snap, null, 2)
+  showAddQuickDialog.value = true
+}
+
 const LAST_TENANT_KEY = KEYS.LAST_TENANT
 const LAST_PARAMS_KEY = KEYS.LAST_PARAMS
 
@@ -719,14 +905,16 @@ const lastParams = computed(() => lastParamsForScript())
 async function refreshAll() {
   loading.value = true
   try {
-    const [s, t, r] = await Promise.all([
+    const [s, t, r, qa] = await Promise.all([
       listScripts(),
       listTenants(),
-      recentScripts(6).catch(() => [])
+      recentScripts(6).catch(() => []),
+      listQuickActions().catch(() => [])
     ])
     scripts.value = s || []
     tenants.value = t || []
     recentList.value = r || []
+    quickActions.value = qa || []
   } finally {
     loading.value = false
   }
@@ -1255,6 +1443,17 @@ onMounted(async () => {
 }
 .sb-log-error { padding: 8px 12px; }
 .sb-right-empty { padding: 14px; font-size: 13px; }
+
+/* V3 (PR-5): 快捷操作 */
+.sb-section-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px;
+}
+.sb-qa-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+}
 
 .sb-file-row {
   display: flex;

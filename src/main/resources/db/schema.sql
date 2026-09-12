@@ -261,3 +261,19 @@ CREATE TABLE IF NOT EXISTS cleanup_history (
     message             VARCHAR(2048)
 );
 CREATE INDEX IF NOT EXISTS idx_cleanup_history_created_at ON cleanup_history(created_at);
+-- V3 (PR-5): 快捷操作 = 脚本 + 租户 + 参数组合，首页一键打开。
+-- params_json 存 params 字典；preset_id 可选；sort_order 控制首页展示顺序。
+CREATE TABLE IF NOT EXISTS quick_action (
+    id           BIGINT AUTO_INCREMENT PRIMARY KEY,
+    name         VARCHAR(128) NOT NULL,
+    icon         VARCHAR(64),                                -- emoji / icon key
+    script_id    BIGINT NOT NULL,
+    tenant_id    BIGINT NOT NULL,
+    params_json  VARCHAR(4096),
+    preset_id    BIGINT,
+    sort_order   INT NOT NULL DEFAULT 0,
+    created_by   VARCHAR(128),
+    create_time  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    update_time  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_quick_action_order ON quick_action(sort_order, id);
