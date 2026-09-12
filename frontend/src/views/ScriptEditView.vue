@@ -32,6 +32,7 @@
         <div>
           <el-button @click="$router.push('/scripts')">返回</el-button>
           <el-button :loading="saving" @click="saveAll(false)">保存</el-button>
+          <el-button @click="openTestRunDrawer" :disabled="isDirty" :icon="VideoPlay">就地试运行</el-button>
           <el-button type="primary" :loading="saving" :icon="VideoPlay" @click="saveAll(true)">保存并试运行</el-button>
         </div>
       </div>
@@ -151,124 +152,150 @@
 
         <!-- 参数 -->
         <el-tab-pane label="参数" name="params">
-          <div class="sb-card sb-edit-section">
-            <div class="sb-params-head">
-              <h3 class="sb-section-title" style="margin: 0">
-                动态参数 <span class="count">{{ params.length }}</span>
-              </h3>
-              <el-button size="small" type="primary" plain :icon="Plus" @click="addParam">新增参数</el-button>
-            </div>
-            <p class="sb-help">
-              声明脚本运行时需要的输入。执行时按 <code>--参数名 值</code> 传给脚本；选择「文件上传」时会上传到受控目录并将服务端路径作为参数传给 Shell。
-            </p>
-            <el-empty v-if="!params.length" :image-size="60" description="未声明参数" />
-            <div v-for="(p, idx) in params" :key="idx" class="sb-param-row">
-              <div class="sb-param-row-head">
-                <span class="sb-param-idx">#{{ idx + 1 }}</span>
-                <div class="sb-param-actions">
-                  <el-button size="small" :icon="Top" :disabled="idx === 0" @click="moveUp(idx)" />
-                  <el-button size="small" :icon="Bottom" :disabled="idx === params.length - 1" @click="moveDown(idx)" />
-                  <el-button size="small" type="danger" plain :icon="Delete" @click="removeParam(idx)">移除</el-button>
-                </div>
+          <div class="sb-card sb-edit-section sb-param-split">
+            <div class="sb-param-left">
+              <div class="sb-params-head">
+                <h3 class="sb-section-title" style="margin: 0">
+                  动态参数 <span class="count">{{ params.length }}</span>
+                </h3>
+                <el-button size="small" type="primary" plain :icon="Plus" @click="addParam">新增参数</el-button>
               </div>
-              <el-form label-position="top" :model="p" class="sb-param-form">
-                <div class="sb-param-grid">
-                  <el-form-item required>
-                    <template #label><SBLabel text="参数名" tip="Shell 脚本接收到的命令行参数名。例如填写 action，执行时生成 --action value。不需要填写前面的 --。" required /></template>
-                    <el-input v-model="p.name" placeholder="例如：database" />
-                    <div class="sb-help-inline">执行时以 <code>--参数名 值</code> 的形式传递给脚本。</div>
-                  </el-form-item>
-                  <el-form-item>
-                    <template #label><SBLabel text="显示名称" tip="执行页面展示给用户看的字段名称。例如参数名 tableType，可以显示为「表类型」。" /></template>
-                    <el-input v-model="p.label" placeholder="数据库" />
-                  </el-form-item>
-                  <el-form-item>
-                    <template #label><SBLabel text="参数类型" tip="决定该参数在执行页面以何种控件呈现。" /></template>
-                    <el-select v-model="p.type" style="width: 100%">
-                      <el-option
-                        v-for="t in PARAM_TYPE_OPTIONS"
-                        :key="t.value"
-                        :label="t.label"
-                        :value="t.value"
-                      />
-                    </el-select>
-                    <div class="sb-help-inline">{{ PARAM_TYPE_HELP[p.type] }}</div>
-                  </el-form-item>
-                  <el-form-item>
-                    <template #label><SBLabel text="是否必填" tip="开启后，执行脚本前必须填写该参数。" /></template>
-                    <el-switch v-model="p.required" />
-                  </el-form-item>
-
-                  <!-- Select options editor: shows for 下拉选择 type.
-                       The backend stores a comma-separated string in p.options,
-                       so we keep that data shape and only change the UI to
-                       a friendly table editor. -->
-                  <el-form-item v-if="p.type === 'select'" class="sb-param-full">
-                    <template #label><SBLabel text="选项配置" tip="定义下拉选择参数的候选项。执行页面展示「显示名称」，实际传给 Shell 脚本的是「参数值」。" /></template>
-                    <div class="sb-options-table">
-                      <div class="sb-options-head">
-                        <span>显示名称</span>
-                        <span>参数值</span>
-                        <span></span>
-                      </div>
-                      <div v-for="(opt, oi) in (p._options || [])" :key="oi" class="sb-options-row">
-                        <el-input v-model="opt.label" placeholder="例如：查看文件" size="small" />
-                        <el-input v-model="opt.value" placeholder="例如：ls" size="small" class="mono" />
-                        <el-button size="small" type="danger" plain :icon="Delete" @click="removeOption(p, oi)" />
-                      </div>
-                      <div v-if="!p._options || !p._options.length" class="sb-options-empty">
-                        暂无选项，点击下方新增。
-                      </div>
-                      <el-button size="small" plain :icon="Plus" @click="addOption(p)" style="margin-top: 6px">
-                        新增选项
-                      </el-button>
-                    </div>
-                  </el-form-item>
-                  <el-form-item v-else />
-
-                  <el-form-item>
-                    <template #label><SBLabel text="默认值" tip="打开执行页面时自动填充的初始值，用户仍然可以修改。" /></template>
-                    <el-input
-                      v-if="p.type === 'textarea'"
-                      v-model="p.defaultValue"
-                      type="textarea"
-                      :rows="2"
-                      :placeholder="PARAM_TYPE_DEFAULT_PLACEHOLDER[p.type] || ''"
-                    />
-                    <el-input
-                      v-else-if="p.type === 'select'"
-                      v-model="p.defaultValue"
-                      :placeholder="PARAM_TYPE_DEFAULT_PLACEHOLDER[p.type] || '可选值之一'"
-                    />
-                    <el-input
-                      v-else
-                      v-model="p.defaultValue"
-                      :placeholder="PARAM_TYPE_DEFAULT_PLACEHOLDER[p.type] || ''"
-                    />
-                  </el-form-item>
-                  <el-form-item>
-                    <template #label><SBLabel text="占位提示" tip="执行页面输入框为空时显示的灰色提示文字。留空将使用参数类型对应的默认提示。" /></template>
-                    <el-input v-model="p.placeholder" placeholder="例如：选择需要执行的操作" />
-                  </el-form-item>
-                  <el-form-item class="sb-param-full">
-                    <template #label><SBLabel text="帮助说明" tip="显示在执行表单参数下方，用于说明参数用途和填写方式。" /></template>
-                    <el-input v-model="p.helpText" type="textarea" :rows="2" placeholder="例如：选择需要执行的操作" />
-                  </el-form-item>
-                  <el-form-item label="显示条件 (visibleWhenJson)" :class="{ 'sb-param-full': true }">
-                    <template #label><SBLabel text="显示条件" tip="JSON 配置：引用其他参数的值满足某条件时才显示本参数。留空 = 总是显示。" /></template>
-                    <el-input v-model="p.visibleWhenJson"
-                      type="textarea" :rows="2" class="mono"
-                      placeholder='例如：{"param":"env","operator":"equals","value":"prod"}' />
-                    <div v-if="p.visibleWhenJson && visibleWhenError(p)" class="sb-visibility-warn">
-                      <el-icon><WarningFilled /></el-icon>
-                      <span>{{ visibleWhenError(p) }}</span>
-                    </div>
-                    <div v-else-if="p.visibleWhenJson" class="sb-visibility-hint muted">
-                      留空 = 总是显示。引用其他参数时使用 equals / notEquals。
-                    </div>
-                  </el-form-item>
+              <p class="sb-help">
+                声明脚本运行时需要的输入。执行时按 <code>--参数名 值</code> 传给脚本；选择「文件上传」时会上传到受控目录并将服务端路径作为参数传给 Shell。
+              </p>
+              <el-empty v-if="!params.length" :image-size="60" description="未声明参数" />
+              <div v-for="(p, idx) in params" :key="idx" class="sb-param-row">
+                <div class="sb-param-row-head">
+                  <span class="sb-param-idx">#{{ idx + 1 }}</span>
+                  <div class="sb-param-actions">
+                    <el-button size="small" :icon="Top" :disabled="idx === 0" @click="moveUp(idx)" />
+                    <el-button size="small" :icon="Bottom" :disabled="idx === params.length - 1" @click="moveDown(idx)" />
+                    <el-button size="small" type="danger" plain :icon="Delete" @click="removeParam(idx)">移除</el-button>
+                  </div>
                 </div>
-              </el-form>
+                <el-form label-position="top" :model="p" class="sb-param-form">
+                  <div class="sb-param-grid">
+                    <el-form-item required>
+                      <template #label><SBLabel text="参数名" tip="Shell 脚本接收到的命令行参数名。例如填写 action，执行时生成 --action value。不需要填写前面的 --。" required /></template>
+                      <el-input v-model="p.name" placeholder="例如：database" />
+                      <div class="sb-help-inline">执行时以 <code>--参数名 值</code> 的形式传递给脚本。</div>
+                    </el-form-item>
+                    <el-form-item>
+                      <template #label><SBLabel text="显示名称" tip="执行页面展示给用户看的字段名称。例如参数名 tableType，可以显示为「表类型」。" /></template>
+                      <el-input v-model="p.label" placeholder="数据库" />
+                    </el-form-item>
+                    <el-form-item>
+                      <template #label><SBLabel text="参数类型" tip="决定该参数在执行页面以何种控件呈现。" /></template>
+                      <el-select v-model="p.type" style="width: 100%">
+                        <el-option
+                          v-for="t in PARAM_TYPE_OPTIONS"
+                          :key="t.value"
+                          :label="t.label"
+                          :value="t.value"
+                        />
+                      </el-select>
+                      <div class="sb-help-inline">{{ PARAM_TYPE_HELP[p.type] }}</div>
+                    </el-form-item>
+                    <el-form-item>
+                      <template #label><SBLabel text="是否必填" tip="开启后，执行脚本前必须填写该参数。" /></template>
+                      <el-switch v-model="p.required" />
+                    </el-form-item>
+
+                    <!-- Select options editor -->
+                    <el-form-item v-if="p.type === 'select'" class="sb-param-full">
+                      <template #label><SBLabel text="选项配置" tip="定义下拉选择参数的候选项。" /></template>
+                      <div class="sb-options-table">
+                        <div class="sb-options-head">
+                          <span>显示名称</span>
+                          <span>参数值</span>
+                          <span></span>
+                        </div>
+                        <div v-for="(opt, oi) in (p._options || [])" :key="oi" class="sb-options-row">
+                          <el-input v-model="opt.label" placeholder="例如：查看文件" size="small" />
+                          <el-input v-model="opt.value" placeholder="例如：ls" size="small" class="mono" />
+                          <el-button size="small" type="danger" plain :icon="Delete" @click="removeOption(p, oi)" />
+                        </div>
+                        <div v-if="!p._options || !p._options.length" class="sb-options-empty">
+                          暂无选项，点击下方新增。
+                        </div>
+                        <el-button size="small" plain :icon="Plus" @click="addOption(p)" style="margin-top: 6px">
+                          新增选项
+                        </el-button>
+                      </div>
+                    </el-form-item>
+                    <el-form-item v-else />
+
+                    <el-form-item>
+                      <template #label><SBLabel text="默认值" tip="打开执行页面时自动填充的初始值，用户仍然可以修改。" /></template>
+                      <el-input
+                        v-if="p.type === 'textarea'"
+                        v-model="p.defaultValue"
+                        type="textarea"
+                        :rows="2"
+                        :placeholder="PARAM_TYPE_DEFAULT_PLACEHOLDER[p.type] || ''"
+                      />
+                      <el-input
+                        v-else-if="p.type === 'select'"
+                        v-model="p.defaultValue"
+                        :placeholder="PARAM_TYPE_DEFAULT_PLACEHOLDER[p.type] || '可选值之一'"
+                      />
+                      <el-input
+                        v-else
+                        v-model="p.defaultValue"
+                        :placeholder="PARAM_TYPE_DEFAULT_PLACEHOLDER[p.type] || ''"
+                      />
+                    </el-form-item>
+                    <el-form-item>
+                      <template #label><SBLabel text="占位提示" tip="执行页面输入框为空时显示的灰色提示文字。" /></template>
+                      <el-input v-model="p.placeholder" placeholder="例如：选择需要执行的操作" />
+                    </el-form-item>
+                    <el-form-item class="sb-param-full">
+                      <template #label><SBLabel text="帮助说明" tip="显示在执行表单参数下方。" /></template>
+                      <el-input v-model="p.helpText" type="textarea" :rows="2" placeholder="例如：选择需要执行的操作" />
+                    </el-form-item>
+                    <el-form-item class="sb-param-full">
+                      <template #label><SBLabel text="显示条件" tip="引用其他参数的值满足某条件时才显示本参数。留空 = 总是显示。" /></template>
+                      <div class="sb-visible-table">
+                        <div class="sb-visible-row sb-visible-head">
+                          <span>参数</span>
+                          <span>运算符</span>
+                          <span>值</span>
+                          <span></span>
+                        </div>
+                        <div v-for="(rule, ri) in (p._visibleWhen || [])" :key="ri" class="sb-visible-row">
+                          <el-input v-model="rule.param" placeholder="参数名" size="small" class="mono" />
+                          <el-select v-model="rule.operator" size="small">
+                            <el-option label="等于 (=)" value="equals" />
+                            <el-option label="不等于 (!=)" value="notEquals" />
+                            <el-option label="包含" value="contains" />
+                            <el-option label="不包含" value="notContains" />
+                          </el-select>
+                          <el-input v-model="rule.value" placeholder="值" size="small" />
+                          <el-button size="small" type="danger" plain :icon="Delete" @click="removeVisibleRule(p, ri)" />
+                        </div>
+                        <el-button size="small" plain :icon="Plus" @click="addVisibleRule(p)" style="margin-top: 6px">
+                          新增条件
+                        </el-button>
+                      </div>
+                      <div class="sb-help-inline muted">
+                        留空 = 总是显示。所有条件满足时（AND）才显示本参数。
+                      </div>
+                    </el-form-item>
+                  </div>
+                </el-form>
+              </div>
+            </div>
+            <!-- V3 (PR-6): 实时预览 ParamForm，200ms debounce 反映 schema 变更 -->
+            <div class="sb-param-right">
+              <h3 class="sb-section-title">实时预览</h3>
+              <p class="sb-help">修改左侧 schema 时这里同步刷新（保存后才生效到执行）。</p>
+              <el-empty v-if="!params.length" :image-size="60" description="未声明参数" />
+              <ParamForm
+                v-else
+                :params="params"
+                :initial-values="previewValues"
+                v-model="previewValues"
+              />
             </div>
           </div>
         </el-tab-pane>
@@ -381,6 +408,56 @@
       <el-drawer v-model="versionOpen" :title="`版本 v${activeVersion?.versionNo}`" direction="rtl" size="640px">
         <pre v-if="activeVersion" class="sb-log mono">{{ activeVersion.scriptContent }}</pre>
       </el-drawer>
+
+      <!-- V3 (PR-6): 就地试运行抽屉（高度 50vh，从底部弹出） -->
+      <el-drawer
+        v-model="testRunOpen"
+        direction="btt"
+        size="50vh"
+        :with-header="false"
+        :destroy-on-close="false"
+      >
+        <div class="sb-testrun-pane">
+          <header class="sb-testrun-head">
+            <span>
+              <el-icon><VideoPlay /></el-icon> 就地试运行
+              <span v-if="testRunExecutionId" class="muted">· #{{ testRunExecutionId }}</span>
+            </span>
+            <el-button text @click="testRunOpen = false"><el-icon><Close /></el-icon></el-button>
+          </header>
+          <el-form label-position="top" class="sb-testrun-form">
+            <el-form-item label="租户" required>
+              <el-select v-model="testRunForm.tenantId" :disabled="testRunRunning" style="width: 100%">
+                <el-option
+                  v-for="t in tenants"
+                  :key="t.id"
+                  :label="`${t.name}（${t.principal || '-'}）`"
+                  :value="t.id"
+                />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="参数">
+              <ParamForm :params="params" v-model="testRunForm.params" />
+            </el-form-item>
+          </el-form>
+          <pre v-if="testRunLiveLog" class="sb-log sb-testrun-log">{{ testRunLiveLog }}</pre>
+          <div v-if="testRunResult" class="sb-testrun-result">
+            <el-tag :type="testRunResult.state?.state === 'SUCCESS' ? 'success' : 'danger'">
+              {{ testRunResult.state?.state }} · exit {{ testRunResult.state?.exitCode }}
+            </el-tag>
+            <pre v-if="testRunResult.stderr" class="sb-log">{{ testRunResult.stderr }}</pre>
+          </div>
+          <footer class="sb-testrun-foot">
+            <el-button :disabled="testRunRunning" @click="testRunOpen = false">关闭</el-button>
+            <el-button type="primary" :loading="testRunSaving || testRunRunning"
+              :icon="testRunRunning ? Loading : VideoPlay"
+              :disabled="!testRunForm.tenantId"
+              @click="submitTestRun">
+              {{ testRunRunning ? '执行中…' : '执行' }}
+            </el-button>
+          </footer>
+        </div>
+      </el-drawer>
     </template>
   </div>
 </template>
@@ -389,7 +466,7 @@
 import { onBeforeUnmount, onMounted, reactive, ref, watch, computed } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import {
-  Plus, Delete, Top, Bottom, VideoPlay, WarningFilled, CircleCheck, CircleClose
+  Plus, Delete, Top, Bottom, VideoPlay, WarningFilled, CircleCheck, CircleClose, Close, Loading
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -403,6 +480,11 @@ import {
 } from '../api/extras'
 import { formatDateTime, isValidJson } from '../utils/format'
 import { parseOptions, serializeOptions, parseVisibilityRule } from '../utils/params'
+import ParamForm from '../components/ParamForm.vue'
+import { useExecutionStore } from '../stores/executionStore'
+import { submitExecution as submitExecutionApi, logTail as logTailApi,
+  readStdout as readStdoutApi, readStderr as readStderrApi,
+  executionState as executionStateApi } from '../api/executions'
 import {
   RISK_LEVEL_OPTIONS, normalizeRiskLevel,
   PARAM_TYPE_OPTIONS, PARAM_TYPE_HELP, PARAM_TYPE_DEFAULT_PLACEHOLDER, PARAM_TYPE
@@ -430,6 +512,96 @@ const form = reactive({
 })
 const body = ref('')
 const params = ref([])
+
+// V3 (PR-6): 实时预览 ParamForm 的值容器 + 防抖
+const previewValues = ref({})
+let previewDebounce = null
+watch(params, () => {
+  clearTimeout(previewDebounce)
+  previewDebounce = setTimeout(() => {
+    const next = {}
+    for (const p of params.value) {
+      if (p.defaultValue != null) next[p.name] = p.defaultValue
+    }
+    // 不丢用户已填的预览值；只补充新声明的字段
+    previewValues.value = { ...previewValues.value, ...next }
+  }, 200)
+}, { deep: true })
+
+// V3 (PR-6): 内嵌式试运行抽屉
+const testRunOpen = ref(false)
+const testRunForm = reactive({ tenantId: null, params: {} })
+const testRunSaving = ref(false)
+const testRunRunning = ref(false)
+const testRunResult = ref(null)
+const testRunExecutionId = ref(null)
+const testRunLiveLog = ref('')
+let testRunLiveTimer = null
+
+async function openTestRunDrawer() {
+  testRunForm.tenantId = form.defaultTenantId || tenants.value?.[0]?.id || null
+  const next = {}
+  for (const p of params.value) if (p.defaultValue != null) next[p.name] = p.defaultValue
+  testRunForm.params = { ...next }
+  testRunResult.value = null
+  testRunExecutionId.value = null
+  testRunLiveLog.value = ''
+  testRunOpen.value = true
+}
+
+async function submitTestRun() {
+  if (!testRunForm.tenantId) { ElMessage.warning('请选择租户'); return }
+  if (!script.value) return
+  testRunSaving.value = true
+  try {
+    const payload = {
+      scriptId: script.value.id,
+      tenantId: testRunForm.tenantId,
+      params: testRunForm.params
+    }
+    const res = await submitExecutionApi(payload)
+    const data = res.data
+    testRunExecutionId.value = data.executionId
+    testRunRunning.value = true
+    startTestRunLiveLog()
+    await waitTestRunTerminal(data.executionId)
+  } catch (_) { /* interceptor */ }
+  finally { testRunSaving.value = false }
+}
+
+function startTestRunLiveLog() {
+  testRunLiveLog.value = ''
+  refreshTestRunLog()
+  if (testRunLiveTimer) clearInterval(testRunLiveTimer)
+  testRunLiveTimer = setInterval(refreshTestRunLog, 2000)
+}
+function stopTestRunLiveLog() {
+  if (testRunLiveTimer) { clearInterval(testRunLiveTimer); testRunLiveTimer = null }
+}
+async function refreshTestRunLog() {
+  if (!testRunExecutionId.value) return
+  try {
+    const text = await logTailApi(testRunExecutionId.value, 'stdout', 65536)
+    if (typeof text === 'string' && text !== testRunLiveLog.value) testRunLiveLog.value = text
+  } catch (_) { /* tolerate */ }
+}
+async function waitTestRunTerminal(executionId) {
+  const exec = useExecutionStore()
+  await new Promise((resolve) => {
+    const stop = exec.$subscribe(() => {
+      const v = exec.byId.get(Number(executionId))
+      if (v && exec.isTerminal(v.status)) { stop(); resolve() }
+    })
+  })
+  testRunRunning.value = false
+  stopTestRunLiveLog()
+  const [so, se, st] = await Promise.all([
+    readStdoutApi(executionId).catch(() => ''),
+    readStderrApi(executionId).catch(() => ''),
+    executionStateApi(executionId).catch(() => null)
+  ])
+  testRunResult.value = { stdout: so || '', stderr: se || '', state: st?.data }
+}
 
 const precheckJson = ref('')
 const precheckResult = ref(null)
@@ -460,6 +632,42 @@ function addOption(p) {
 function removeOption(p, i) {
   p._options.splice(i, 1)
 }
+
+// V3 (PR-6): visibleWhen JSON <-> table row helpers
+function _decodeVisible(p) {
+  if (p._visibleWhen) return  // 已经解过
+  const s = (p.visibleWhenJson || '').trim()
+  if (!s) { p._visibleWhen = []; return }
+  try {
+    const obj = JSON.parse(s)
+    if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+      p._visibleWhen = [{ param: obj.param || '', operator: obj.operator || 'equals', value: obj.value != null ? String(obj.value) : '' }]
+    } else if (Array.isArray(obj)) {
+      p._visibleWhen = obj.map((r) => ({
+        param: r.param || '', operator: r.operator || 'equals',
+        value: r.value != null ? String(r.value) : ''
+      }))
+    } else {
+      p._visibleWhen = []
+    }
+  } catch (_) {
+    p._visibleWhen = []  // 非法 JSON → 不生成规则，由旧 textarea 接管
+  }
+}
+function addVisibleRule(p) {
+  _decodeVisible(p)
+  p._visibleWhen.push({ param: '', operator: 'equals', value: '' })
+}
+function removeVisibleRule(p, i) {
+  p._visibleWhen.splice(i, 1)
+  // 持久化回 JSON
+  p.visibleWhenJson = p._visibleWhen.length
+    ? JSON.stringify(p._visibleWhen.length === 1 ? p._visibleWhen[0] : p._visibleWhen)
+    : ''
+}
+watch(() => params.value, () => {
+  for (const p of params.value) _decodeVisible(p)
+}, { deep: true, immediate: true })
 
 async function load() {
   const id = Number(route.query.id)
@@ -784,6 +992,57 @@ onBeforeUnmount(() => { if (syntaxTimer) clearTimeout(syntaxTimer) })
 </script>
 
 <style scoped>
+/* V3 (PR-6): 参数 tab 左右分栏 + 实时预览 */
+.sb-param-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+@media (max-width: 1100px) {
+  .sb-param-split { grid-template-columns: 1fr; }
+}
+.sb-param-left { min-width: 0; }
+.sb-param-right {
+  border-left: 1px dashed var(--sb-border);
+  padding-left: 16px;
+  min-width: 0;
+}
+.sb-visible-table {
+  border: 1px solid var(--sb-border);
+  border-radius: 6px;
+  padding: 8px;
+  background: #fafbfc;
+}
+.sb-visible-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 36px;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.sb-visible-head {
+  font-size: 11px; font-weight: 600; color: var(--sb-text-2);
+  text-transform: uppercase; letter-spacing: 0.5px;
+  padding-bottom: 4px; border-bottom: 1px solid var(--sb-border);
+}
+
+/* V3 (PR-6): 就地试运行面板 */
+.sb-testrun-pane {
+  padding: 16px; height: 100%; overflow: auto;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.sb-testrun-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-weight: 600; font-size: 15px;
+  padding-bottom: 8px; border-bottom: 1px solid var(--el-border-color-lighter);
+}
+.sb-testrun-form { flex: 0 0 auto; }
+.sb-testrun-log {
+  background: #0b1220; color: #d6e2ff; max-height: 200px;
+  font-size: 12px;
+}
+.sb-testrun-result { display: flex; flex-direction: column; gap: 6px; }
+.sb-testrun-foot { display: flex; justify-content: flex-end; gap: 8px; }
 .sb-empty { padding-top: 60px; text-align: center; }
 .sb-edit-section { padding: 16px; }
 .sb-edit-section :deep(.el-form-item) { margin-bottom: 12px; }
