@@ -80,3 +80,5 @@ frontend/*.local
 frontend/npm-debug.log*
 frontend/yarn-error.log*script-box.out
 script-box.pid
+script-box.out
+script-box.pid
