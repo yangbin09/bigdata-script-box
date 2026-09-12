@@ -3,7 +3,7 @@ package com.bigdata.scriptbox.controller;
 import com.bigdata.scriptbox.dto.ApiResponse;
 import com.bigdata.scriptbox.entity.GlobalVariable;
 import com.bigdata.scriptbox.service.GlobalVariableService;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -17,9 +17,10 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/global-variables")
+@RequiredArgsConstructor
 public class GlobalVariableController {
 
-    @Autowired private GlobalVariableService variableService;
+    private final GlobalVariableService variableService;
 
     /**
      * 列出全部全局变量（敏感字段已遮罩）。

@@ -65,7 +65,7 @@ public class CleanupService {
     private final SystemSettingService settings;
     private final ExecutionHistoryMapper historyMapper;
     private final ExecutionArtifactMapper artifactMapper;
-    private final RunningExecutionRegistry runningRegistry;
+    private final ExecutionGate executionGate;
     private final PreviewStore previewStore;
     private final CleanupExecutor executor;
     private final CleanupHistoryService historyService;
@@ -176,7 +176,7 @@ public class CleanupService {
                 c.startTimeIso = row.getStartTime() == null ? null
                         : row.getStartTime().atZone(ZoneId.systemDefault()).toInstant().toString();
                 c.status = row.getStatus();
-                if (runningRegistry.get(row.getId()) != null) {
+                if (executionGate.get(row.getId()) != null) {
                     c.flag = CandidateOutcome.Status.SKIPPED_RUNNING;
                     c.reason = "任务正在运行";
                     t.skippedRunning++;
@@ -194,7 +194,7 @@ public class CleanupService {
             List<ExecutionHistory> oldRuns = historyMapper.selectList(
                     new QueryWrapper<ExecutionHistory>().lt("start_time", cutoff));
             for (ExecutionHistory h : oldRuns) {
-                if (runningRegistry.get(h.getId()) != null) continue;
+                if (executionGate.get(h.getId()) != null) continue;
                 // 跳过"执行目录已被列为候选"的行，避免双重删除
                 boolean covered = p.executionDirs.stream()
                         .anyMatch(c -> c.id != null && c.id.equals(h.getId())
@@ -271,7 +271,7 @@ public class CleanupService {
                         : h.getStartTime().atZone(ZoneId.systemDefault()).toInstant().toString();
                 c.status = h.getStatus();
             }
-            if (runningRegistry.get(id) != null) {
+            if (executionGate.get(id) != null) {
                 c.flag = CandidateOutcome.Status.SKIPPED_RUNNING;
                 c.reason = "任务正在运行";
             }

@@ -2,10 +2,16 @@ package com.bigdata.scriptbox.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.bigdata.scriptbox.config.ScriptBoxProperties;
+import com.bigdata.scriptbox.entity.ExecutionHistory;
+import com.bigdata.scriptbox.entity.ScenarioStep;
 import com.bigdata.scriptbox.entity.Script;
 import com.bigdata.scriptbox.entity.ScriptParam;
+import com.bigdata.scriptbox.entity.ScriptPreset;
+import com.bigdata.scriptbox.mapper.ExecutionHistoryMapper;
+import com.bigdata.scriptbox.mapper.ScenarioStepMapper;
 import com.bigdata.scriptbox.mapper.ScriptMapper;
 import com.bigdata.scriptbox.mapper.ScriptParamMapper;
+import com.bigdata.scriptbox.mapper.ScriptPresetMapper;
 import com.bigdata.scriptbox.model.RiskLevel;
 import com.bigdata.scriptbox.model.VisibleWhen;
 import jakarta.annotation.PostConstruct;
@@ -21,7 +27,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -45,6 +53,9 @@ public class ScriptService {
 
     private final ScriptMapper scriptMapper;
     private final ScriptParamMapper scriptParamMapper;
+    private final ExecutionHistoryMapper historyMapper;
+    private final ScriptPresetMapper presetMapper;
+    private final ScenarioStepMapper scenarioStepMapper;
     private final ScriptBoxProperties props;
     private final ScriptVersionService versionService;
     private final PresetService presetService;
@@ -276,8 +287,43 @@ public class ScriptService {
         return db;
     }
 
-    /** 暴露给 ScriptController.savePrecheck 用，避免 controller 重复注入 mapper。 */
-    public ScriptMapper getMapper() { return scriptMapper; }
+    /**
+     * 保存脚本的 PreCheck 配置 JSON（{@code null} 表示清空配置）。
+     *
+     * <p>历史上这个写入动作由 Controller 直接拿 {@code ScriptMapper} 完成；
+     * 现在收敛成 Service 上的意图方法。
+     *
+     * @param scriptId 脚本 ID
+     * @param precheckConfigJson PreCheck 配置 JSON（可为 null）
+     * @return 更新后的实体；脚本不存在时返回 {@code null}
+     */
+    public Script savePrecheckConfig(Long scriptId, String precheckConfigJson) {
+        Script db = scriptMapper.selectById(scriptId);
+        if (db == null) return null;
+        db.setPrecheckConfigJson(precheckConfigJson);
+        db.setUpdateTime(LocalDateTime.now());
+        scriptMapper.updateById(db);
+        return db;
+    }
+
+    /**
+     * V2: 删除脚本站点需要展示的关联表行数（爆炸半径）。
+     * H2 没有外键约束，删除会留下孤儿行；这里让数字可见。
+     *
+     * @param id 脚本 ID
+     * @return 键为 {@code historyCount} / {@code presetCount} / {@code scenarioCount} 的计数
+     */
+    public Map<String, Long> relatedCounts(Long id) {
+        Map<String, Long> out = new HashMap<>();
+        out.put("historyCount",
+                historyMapper.selectCount(new QueryWrapper<ExecutionHistory>().eq("script_id", id)));
+        out.put("presetCount",
+                presetMapper.selectCount(new QueryWrapper<ScriptPreset>().eq("script_id", id)));
+        // 引用了此脚本的场景步骤数
+        out.put("scenarioCount",
+                scenarioStepMapper.selectCount(new QueryWrapper<ScenarioStep>().eq("script_id", id)));
+        return out;
+    }
 
     /**
      * V2: 编辑器随打随探的 bash -n 入口。不会持久化任何东西；返回结构化

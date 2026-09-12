@@ -19,9 +19,12 @@ import java.util.Map;
  *   <li>{@link #stdoutPath} / {@link #stderrPath} — 输出落盘路径（必填，
  *       由调用方控制路径必须在受控目录下）；</li>
  *   <li>{@link #timeoutSeconds} — 等待超时（秒），超过则 {@code destroyForcibly}；</li>
- *   <li>{@link #scriptId} / {@link #tenantId} — 透传给 RunningExecutionRegistry，
- *       用于取消时定位执行 + 防止同脚本并发。</li>
+ *   <li>{@link #label} — 日志与 drain 线程名前缀。</li>
  * </ul>
+ *
+ * <p>注意：并发槽位与取消跟踪由 {@link com.bigdata.scriptbox.service.ExecutionGate}
+ * 的许可（Permit）承担，本请求不再携带 scriptId / tenantId —— 那些信息在准入时
+ * 就已经记录，避免同一份元数据在两处各存一遍、并保持一致性的负担。
  */
 public record ProcessRequest(
         List<String> command,
@@ -30,9 +33,7 @@ public record ProcessRequest(
         Path stdoutPath,
         Path stderrPath,
         int timeoutSeconds,
-        String label,
-        long scriptId,
-        long tenantId
+        String label
 ) {
     public ProcessRequest {
         if (command == null || command.isEmpty())
@@ -41,16 +42,10 @@ public record ProcessRequest(
             throw new IllegalArgumentException("stdout/stderr paths are required");
         if (timeoutSeconds <= 0)
             throw new IllegalArgumentException("timeoutSeconds must be positive");
+        if (label == null || label.isBlank())
+            throw new IllegalArgumentException("label is required");
         // 防御性拷贝：构造完成后再修改外部集合无法影响本请求
         command = List.copyOf(command);
         environment = environment == null ? Map.of() : Map.copyOf(environment);
-    }
-
-    /**
-     * 兼容旧调用：scriptId/tenantId 不参与 registry 语义；仅用于测试 / 未注册场景。
-     */
-    public ProcessRequest(List<String> command, Path workingDirectory, Map<String, String> environment,
-                          Path stdoutPath, Path stderrPath, int timeoutSeconds, String label) {
-        this(command, workingDirectory, environment, stdoutPath, stderrPath, timeoutSeconds, label, -1L, -1L);
     }
 }

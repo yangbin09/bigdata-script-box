@@ -2,7 +2,6 @@ package com.bigdata.scriptbox.controller;
 
 import com.bigdata.scriptbox.config.ScriptBoxProperties;
 import com.bigdata.scriptbox.dto.ApiResponse;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -21,10 +20,14 @@ import java.util.Map;
 @RequestMapping("/api/system")
 public class SystemController {
 
-    @Autowired private ScriptBoxProperties props;
+    private final ScriptBoxProperties props;
+    private final String environmentName;
 
-    @Value("${bigdata.environment-name:Mock 环境}")
-    private String environmentName;
+    public SystemController(ScriptBoxProperties props,
+                            @Value("${bigdata.environment-name:Mock 环境}") String environmentName) {
+        this.props = props;
+        this.environmentName = environmentName;
+    }
 
     /**
      * 返回系统摘要信息。

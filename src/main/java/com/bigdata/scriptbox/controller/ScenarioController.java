@@ -1,16 +1,12 @@
 package com.bigdata.scriptbox.controller;
 
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.bigdata.scriptbox.dto.ApiResponse;
-import com.bigdata.scriptbox.entity.ExecutionHistory;
 import com.bigdata.scriptbox.entity.Scenario;
 import com.bigdata.scriptbox.entity.ScenarioStep;
-import com.bigdata.scriptbox.mapper.ExecutionHistoryMapper;
 import com.bigdata.scriptbox.service.ScenarioService;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -22,10 +18,10 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/scenarios")
+@RequiredArgsConstructor
 public class ScenarioController {
 
-    @Autowired private ScenarioService scenarioService;
-    @Autowired private ExecutionHistoryMapper historyMapper;
+    private final ScenarioService scenarioService;
 
     /**
      * 列出全部场景。
@@ -81,10 +77,7 @@ public class ScenarioController {
     /** V2: 关联到本场景的 execution_history 行数（用于删除确认对话框）。 */
     @GetMapping("/{id}/related-counts")
     public ApiResponse<Map<String, Long>> relatedCounts(@PathVariable Long id) {
-        Map<String, Long> out = new HashMap<>();
-        out.put("historyCount",
-                historyMapper.selectCount(new QueryWrapper<ExecutionHistory>().eq("scenario_id", id)));
-        return ApiResponse.ok(out);
+        return ApiResponse.ok(scenarioService.relatedCounts(id));
     }
 
     /**

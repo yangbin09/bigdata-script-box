@@ -2,7 +2,12 @@ package com.bigdata.scriptbox.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.bigdata.scriptbox.config.ScriptBoxProperties;
+import com.bigdata.scriptbox.entity.ExecutionHistory;
 import com.bigdata.scriptbox.entity.Tenant;
+import com.bigdata.scriptbox.executor.CommandExecutor;
+import com.bigdata.scriptbox.executor.CommandResult;
+import com.bigdata.scriptbox.executor.CommandSpec;
+import com.bigdata.scriptbox.mapper.ExecutionHistoryMapper;
 import com.bigdata.scriptbox.mapper.TenantMapper;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
@@ -16,7 +21,10 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -35,8 +43,10 @@ import java.util.UUID;
 public class TenantService {
 
     private final TenantMapper tenantMapper;
+    private final ExecutionHistoryMapper historyMapper;
     private final ScriptBoxProperties props;
     private final StoragePathService storagePathService;
+    private final CommandExecutor commandExecutor;
 
     /** 启动时确保 keytab 根目录存在。 */
     @PostConstruct
@@ -155,5 +165,89 @@ public class TenantService {
         t.setUpdateTime(LocalDateTime.now());
         tenantMapper.updateById(t);
         return t;
+    }
+
+    /**
+     * V2: 引用此租户的执行历史行数，用于删除确认对话框展示爆炸半径。
+     *
+     * @param id 租户 ID
+     * @return 键为 {@code historyCount} 的计数
+     */
+    public Map<String, Long> relatedCounts(Long id) {
+        Map<String, Long> out = new HashMap<>();
+        out.put("historyCount",
+                historyMapper.selectCount(new QueryWrapper<ExecutionHistory>().eq("tenant_id", id)));
+        return out;
+    }
+
+    /**
+     * 租户连通性测试：mock 模式返回模拟输出；真实模式跑
+     * {@code kinit -kt <keytab> <principal>} + {@code klist}。
+     *
+     * <p>历史上这段进程编排写在 {@code TenantController#test} 里，用的是
+     * {@code new ProcessBuilder(...)} + 无超时 {@code waitFor()} + {@code readAllBytes()}，
+     * 既让 Controller 越界触碰进程层，又可能在 KDC 无响应时挂死 Tomcat 线程。
+     * 现在统一走 {@link CommandExecutor}（硬超时 + 排空 + 进程树回收 + 不占并发槽位）。
+     *
+     * @param id 租户 ID
+     * @return 结果视图；租户不存在时返回 {@code null}
+     */
+    public TenantConnectivity testConnectivity(Long id) {
+        Tenant t = tenantMapper.selectById(id);
+        if (t == null) return null;
+
+        if (props.isMock()) {
+            // mock 模式下避免触碰真实 kinit；给一份假输出
+            log.info("租户连通性测试 (mock)，tenant={}", t.getName());
+            return TenantConnectivity.mock(t);
+        }
+
+        if (t.getKeytabPath() == null || t.getKeytabPath().isBlank()) {
+            throw new IllegalArgumentException("keytab not configured for tenant");
+        }
+        if (!Files.exists(Paths.get(t.getKeytabPath()))) {
+            throw new IllegalArgumentException("keytab file missing: " + t.getKeytabPath());
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("mode", "real");
+        try {
+            // streamOutput=true：kinit / klist 只看退出码，输出直接透传日志，不落盘。
+            CommandResult kinit = commandExecutor.exec(new CommandSpec(
+                    List.of(props.getKinitExecutable(), "-kt", t.getKeytabPath(), t.getPrincipal()),
+                    null, Map.of(), null, null,
+                    props.getCommandTimeoutSeconds(), "kinit", 0L, true));
+            result.put("kinitExit", kinit.exitCode());
+            if (!kinit.ok()) {
+                result.put("ok", false);
+                log.warn("租户连通性测试失败：kinit exit={} timeout={}，tenant={}",
+                        kinit.exitCode(), kinit.timeout(), t.getName());
+                return new TenantConnectivity(t, false, result);
+            }
+            CommandResult klist = commandExecutor.exec(CommandSpec.of(
+                    List.of(props.getKlistExecutable()), props.getCommandTimeoutSeconds(), "klist"));
+            result.put("ok", true);
+            log.info("租户连通性测试通过，tenant={}", t.getName());
+            return new TenantConnectivity(t, true, result);
+        } catch (IOException ioe) {
+            log.warn("租户连通性测试异常，tenant={}，error={}", t.getName(), ioe.getMessage());
+            throw new IllegalStateException("test failed: " + ioe.getMessage(), ioe);
+        }
+    }
+
+    /** 租户连通性测试结果视图。 */
+    public record TenantConnectivity(Tenant tenant, boolean ok, Map<String, Object> details) {
+
+        /** mock 模式下的固定输出（不触碰真实 kinit）。 */
+        static TenantConnectivity mock(Tenant t) {
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("mode", "mock");
+            result.put("ok", true);
+            result.put("stdout", "Mock kinit OK for principal " + t.getPrincipal()
+                    + "\nMock klist:\n  Ticket cache: FILE:/tmp/krb5cc_mock\n  Default principal: "
+                    + t.getPrincipal() + "\n");
+            result.put("stderr", "");
+            return new TenantConnectivity(t, true, result);
+        }
     }
 }

@@ -1,11 +1,7 @@
 package com.bigdata.scriptbox.controller;
 
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
-import com.bigdata.scriptbox.config.ScriptBoxProperties;
 import com.bigdata.scriptbox.dto.ApiResponse;
-import com.bigdata.scriptbox.entity.ExecutionHistory;
 import com.bigdata.scriptbox.entity.Tenant;
-import com.bigdata.scriptbox.mapper.ExecutionHistoryMapper;
 import com.bigdata.scriptbox.service.TenantService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -13,9 +9,6 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Paths;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -32,8 +25,6 @@ import java.util.Map;
 public class TenantController {
 
     private final TenantService tenantService;
-    private final ScriptBoxProperties props;
-    private final ExecutionHistoryMapper historyMapper;
 
     /**
      * 列出全部租户。
@@ -89,10 +80,7 @@ public class TenantController {
      */
     @GetMapping("/{id}/related-counts")
     public ApiResponse<Map<String, Long>> relatedCounts(@PathVariable Long id) {
-        Map<String, Long> out = new HashMap<>();
-        out.put("historyCount",
-                historyMapper.selectCount(new QueryWrapper<ExecutionHistory>().eq("tenant_id", id)));
-        return ApiResponse.ok(out);
+        return ApiResponse.ok(tenantService.relatedCounts(id));
     }
 
     /**
@@ -124,54 +112,14 @@ public class TenantController {
     /**
      * 测试租户连通性：mock 模式返回模拟输出；真实模式跑 {@code kinit -kt} +
      * {@code klist -e}。
+     *
+     * <p>进程编排已下沉到 {@link TenantService#testConnectivity(Long)}，Controller
+     * 只做协议转换。
      */
     @PostMapping("/{id}/test")
     public ApiResponse<Map<String, Object>> test(@PathVariable Long id) {
-        Tenant t = tenantService.getById(id);
-        if (t == null) return ApiResponse.error("tenant not found");
-        Map<String, Object> result = new HashMap<>();
-        if (props.isMock()) {
-            // mock 模式下避免触碰真实 kinit；给一份假输出
-            result.put("mode", "mock");
-            result.put("ok", true);
-            result.put("stdout", "Mock kinit OK for principal " + t.getPrincipal() + "\nMock klist:\n  Ticket cache: FILE:/tmp/krb5cc_mock\n  Default principal: " + t.getPrincipal() + "\n");
-            result.put("stderr", "");
-            log.info("租户连通性测试 (mock)，tenant={}", t.getName());
-            return ApiResponse.ok(result);
-        }
-        // 真实模式
-        if (t.getKeytabPath() == null || t.getKeytabPath().isBlank()) {
-            log.warn("租户连通性测试失败：未配置 keytab，tenant={}", t.getName());
-            return ApiResponse.error("keytab not configured for tenant");
-        }
-        if (!Files.exists(Paths.get(t.getKeytabPath()))) {
-            log.warn("租户连通性测试失败：keytab 文件缺失，tenant={}", t.getName());
-            return ApiResponse.error("keytab file missing: " + t.getKeytabPath());
-        }
-        try {
-            ProcessBuilder pb = new ProcessBuilder("kinit", "-kt", t.getKeytabPath(), t.getPrincipal());
-            pb.redirectErrorStream(true);
-            Process p = pb.start();
-            String out = new String(p.getInputStream().readAllBytes());
-            int code = p.waitFor();
-            result.put("kinitExit", code);
-            result.put("stdout", out);
-            if (code != 0) {
-                result.put("ok", false);
-                log.warn("租户连通性测试失败：kinit 退出码={}，tenant={}", code, t.getName());
-                return ApiResponse.ok(result);
-            }
-            ProcessBuilder klist = new ProcessBuilder("klist");
-            klist.redirectErrorStream(true);
-            Process kp = klist.start();
-            result.put("klist", new String(kp.getInputStream().readAllBytes()));
-            kp.waitFor();
-            result.put("ok", true);
-            log.info("租户连通性测试通过，tenant={}", t.getName());
-            return ApiResponse.ok(result);
-        } catch (Exception e) {
-            log.warn("租户连通性测试异常，tenant={}，error={}", t.getName(), e.getMessage());
-            return ApiResponse.error("test failed: " + e.getMessage());
-        }
+        TenantService.TenantConnectivity result = tenantService.testConnectivity(id);
+        if (result == null) return ApiResponse.error("tenant not found");
+        return ApiResponse.ok(result.details());
     }
 }

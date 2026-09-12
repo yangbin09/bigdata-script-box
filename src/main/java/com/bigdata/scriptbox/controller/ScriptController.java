@@ -1,19 +1,14 @@
 package com.bigdata.scriptbox.controller;
 
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.bigdata.scriptbox.config.ScriptBoxProperties;
 import com.bigdata.scriptbox.dto.ApiResponse;
-import com.bigdata.scriptbox.entity.ExecutionHistory;
 import com.bigdata.scriptbox.entity.Script;
 import com.bigdata.scriptbox.entity.ScriptParam;
-import com.bigdata.scriptbox.entity.ScriptPreset;
 import com.bigdata.scriptbox.entity.ScriptTemplate;
-import com.bigdata.scriptbox.mapper.ExecutionHistoryMapper;
-import com.bigdata.scriptbox.mapper.ScriptPresetMapper;
-import com.bigdata.scriptbox.mapper.ScenarioStepMapper;
 import com.bigdata.scriptbox.service.ScriptService;
 import com.bigdata.scriptbox.service.ScriptTemplateService;
 import com.bigdata.scriptbox.service.SyntaxCheckService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -42,10 +37,8 @@ public class ScriptController {
 
     private final ScriptService scriptService;
     private final ScriptTemplateService templateService;
-    private final ExecutionHistoryMapper historyMapper;
-    private final ScriptPresetMapper presetMapper;
-    private final ScenarioStepMapper scenarioStepMapper;
     private final ScriptBoxProperties props;
+    private final ObjectMapper mapper;
 
     /**
      * 列出全部脚本（按分类、ID 排序）。
@@ -130,9 +123,8 @@ public class ScriptController {
         // 应用模板自带的参数规格
         if (t.getParamsJson() != null && !t.getParamsJson().isBlank()) {
             try {
-                List<ScriptParam> params = new com.fasterxml.jackson.databind.ObjectMapper()
-                        .readValue(t.getParamsJson(),
-                                new com.fasterxml.jackson.core.type.TypeReference<List<ScriptParam>>() {});
+                List<ScriptParam> params = mapper.readValue(t.getParamsJson(),
+                        new com.fasterxml.jackson.core.type.TypeReference<List<ScriptParam>>() {});
                 scriptService.replaceParams(saved.getId(), params);
             } catch (Exception ex) {
                 return ApiResponse.error("template param parse failed: " + ex.getMessage());
@@ -237,15 +229,7 @@ public class ScriptController {
      */
     @GetMapping("/{id}/related-counts")
     public ApiResponse<Map<String, Long>> relatedCounts(@PathVariable Long id) {
-        Map<String, Long> out = new HashMap<>();
-        out.put("historyCount",
-                historyMapper.selectCount(new QueryWrapper<ExecutionHistory>().eq("script_id", id)));
-        out.put("presetCount",
-                presetMapper.selectCount(new QueryWrapper<ScriptPreset>().eq("script_id", id)));
-        // 引用了此脚本的场景步骤数
-        out.put("scenarioCount",
-                scenarioStepMapper.selectCount(new QueryWrapper<com.bigdata.scriptbox.entity.ScenarioStep>().eq("script_id", id)));
-        return ApiResponse.ok(out);
+        return ApiResponse.ok(scriptService.relatedCounts(id));
     }
 
     /**
@@ -348,19 +332,16 @@ public class ScriptController {
         String json;
         if (cfg instanceof String s2) {
             json = s2;
-        } else if (cfg instanceof java.util.Map<?, ?> map) {
+        } else if (cfg instanceof Map<?, ?> map) {
             try {
-                json = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(map);
+                json = mapper.writeValueAsString(map);
             } catch (Exception ex) {
                 return ApiResponse.error("invalid config: " + ex.getMessage());
             }
         } else {
             json = null;
         }
-        s.setPrecheckConfigJson(json);
-        s.setUpdateTime(java.time.LocalDateTime.now());
-        scriptService.getMapper().updateById(s);
-        return ApiResponse.ok(s);
+        return ApiResponse.ok(scriptService.savePrecheckConfig(id, json));
     }
 
     /**

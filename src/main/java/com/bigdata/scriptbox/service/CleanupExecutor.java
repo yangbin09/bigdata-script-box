@@ -38,7 +38,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class CleanupExecutor {
 
-    private final RunningExecutionRegistry runningRegistry;
+    private final ExecutionGate executionGate;
     private final ExecutionHistoryMapper historyMapper;
     private final ExecutionArtifactMapper artifactMapper;
     private final StoragePathService storagePathService;
@@ -178,7 +178,7 @@ public class CleanupExecutor {
             String name = path.getFileName() == null ? "" : path.getFileName().toString();
             try {
                 long execId = Long.parseLong(name);
-                if (runningRegistry.get(execId) != null) return -1;
+                if (executionGate.get(execId) != null) return -1;
             } catch (NumberFormatException ignored) { /* 非数字目录名，跳过 id 检查 */ }
 
             long bytes = FileSystemUtils.directorySize(real);

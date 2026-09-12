@@ -1,9 +1,15 @@
 package com.bigdata.scriptbox.service;
 
+import com.bigdata.scriptbox.config.ScriptBoxProperties;
+import com.bigdata.scriptbox.executor.CommandExecutor;
+import com.bigdata.scriptbox.executor.CommandResult;
+import com.bigdata.scriptbox.executor.CommandSpec;
+import com.bigdata.scriptbox.util.TextDecoder;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -19,14 +25,25 @@ import java.util.Map;
  * bash 会输出形如 {@code line 2: syntax error: ...} 的诊断信息，这些信息会被原样
  * 收入 {@code errors} 列表，与真实 bash 行为完全一致。
  *
- * <p>fallback：当 {@code bash} 不可用（如精简容器）时退回到字符级启发式检查
- * （行长度 / 引号平衡 / here-doc 闭合 / 关键字配对），尽力而为。
+ * <p>子进程统一走 {@link CommandExecutor}（历史上本类自己 {@code new ProcessBuilder}
+ * 且 {@code waitFor()} 无超时，会让请求线程永久挂起）。shell 可执行文件由
+ * {@code scriptbox.shell-executable} 配置，因为部署目标是 Linux，而本地开发环境
+ * （Windows + WSL 的 {@code C:\Windows\system32\bash.exe}）会把 {@code C:\Users\...}
+ * 吞成 {@code C:Users...}，任何带路径参数的调用都会失败。
+ *
+ * <p>fallback：当 shell 不可用（精简容器 / 非 POSIX 平台 / 启动失败）时退回到
+ * 字符级启发式检查（行长度 / 引号平衡 / here-doc 闭合 / 关键字配对），尽力而为。
  *
  * <p>注意：{@code bash -n} 不会执行 set -e 之类的副作用；它只解析语法。这是
  * "软"检查，目的是拦截明显笔误，不要也不可能替代真正的 lint。
  */
 @Service
+@Slf4j
+@RequiredArgsConstructor
 public class SyntaxCheckService {
+
+    private final ScriptBoxProperties props;
+    private final CommandExecutor commandExecutor;
 
     /**
      * 语法校验结果。{@link #ok} = true 表示没有 error；warning 不影响 ok。
@@ -89,34 +106,59 @@ public class SyntaxCheckService {
     }
 
     /**
-     * 跑 {@code bash -n}。把内容写到临时文件，捕获 bash 的 stderr 与 exitCode。
-     * 返回 null 表示 bash 不可用（异常 / 找不到）。
+     * 跑 {@code bash -n}。把内容写到临时文件，通过 {@link CommandExecutor} 执行并
+     * 捕获合并输出（bash 的诊断信息在 stderr 上，必须读回来才能报给用户）。
+     *
+     * <p>返回 null 表示 shell 不可用（启动失败 / 不在 PATH），由调用方退回启发式检查。
+     *
+     * <p>与旧实现的差别：
+     * <ul>
+     *   <li>旧版 {@code p.waitFor()} <b>无超时</b>，可挂死请求线程；现在由
+     *       {@link CommandExecutor} 统一施加硬超时并回收进程树；</li>
+     *   <li>不占用并发执行槽位（语法检查不是用户脚本）；</li>
+     *   <li>诊断文本用 {@link TextDecoder} 宽容解码 —— Windows 上 bash 会写 UTF-16LE，
+     *       严格解码会直接抛异常。</li>
+     * </ul>
      */
     private BashResult tryBashN(String content) {
         Path tmp = null;
+        Path outPath = null;
+        Path errPath = null;
         try {
             tmp = Files.createTempFile("scriptbox-syntax-", ".sh");
             Files.writeString(tmp, content, StandardCharsets.UTF_8);
-            ProcessBuilder pb = new ProcessBuilder("bash", "-n", tmp.toAbsolutePath().toString());
-            pb.redirectErrorStream(true);
-            Process p = pb.start();
-            String out;
-            try (var reader = new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8)) {
-                StringBuilder sb = new StringBuilder();
-                char[] buf = new char[4096];
-                int r;
-                while ((r = reader.read(buf)) > 0) sb.append(buf, 0, r);
-                out = sb.toString();
-            }
-            int code = p.waitFor();
+            outPath = Files.createTempFile("scriptbox-syntax-out-", ".log");
+            errPath = Files.createTempFile("scriptbox-syntax-err-", ".log");
+
+            CommandSpec spec = new CommandSpec(
+                    List.of(props.getShellExecutable(), "-n", tmp.toAbsolutePath().toString()),
+                    null, Map.of(), outPath, errPath,
+                    props.getCommandTimeoutSeconds(), "syntax-check", 0L, false);
+            CommandResult result = commandExecutor.exec(spec);
+
             BashResult br = new BashResult();
-            br.exitCode = code;
-            br.diagnostics = splitDiagnostics(out);
+            br.exitCode = result.exitCode();
+            String combined = TextDecoder.readLenient(outPath)
+                    + TextDecoder.readLenient(errPath);
+            br.diagnostics = splitDiagnostics(combined);
             return br;
-        } catch (IOException | InterruptedException ex) {
+        } catch (IOException ex) {
+            // shell 不存在 / 不可执行 → 交给启发式检查兜底
+            log.debug("bash -n 不可用（{}），回退启发式语法检查", ex.getMessage());
             return null;
         } finally {
-            if (tmp != null) try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
+            deleteQuietly(tmp);
+            deleteQuietly(outPath);
+            deleteQuietly(errPath);
+        }
+    }
+
+    private static void deleteQuietly(Path p) {
+        if (p == null) return;
+        try {
+            Files.deleteIfExists(p);
+        } catch (IOException ignored) {
+            // best-effort；临时目录由操作系统回收
         }
     }
 

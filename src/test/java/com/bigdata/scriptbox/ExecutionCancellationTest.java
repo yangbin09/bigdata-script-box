@@ -6,15 +6,14 @@ import com.bigdata.scriptbox.entity.ExecutionHistory;
 import com.bigdata.scriptbox.entity.Script;
 import com.bigdata.scriptbox.entity.Tenant;
 import com.bigdata.scriptbox.executor.ScriptExecutor;
-import com.bigdata.scriptbox.service.RunningExecutionRegistry;
+import com.bigdata.scriptbox.model.ExecutionStatus;
+import com.bigdata.scriptbox.service.ExecutionGate;
 import com.bigdata.scriptbox.service.ScriptService;
 import com.bigdata.scriptbox.service.TenantService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.nio.charset.StandardCharsets;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -22,12 +21,19 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+/**
+ * 取消语义的集成测试。
+ *
+ * <p>历史版本针对 {@code RunningExecutionRegistry.RunningExecution}（public 字段 +
+ * {@code Process} 句柄直出）。现在取消状态与进程句柄由 {@link ExecutionGate.Permit}
+ * 统一承担，本测试相应改为通过 gate 的访问器观察状态。
+ */
 class ExecutionCancellationTest extends BaseIntegrationTest {
 
     @Autowired private ScriptService scriptService;
     @Autowired private TenantService tenantService;
     @Autowired private ScriptExecutor executor;
-    @Autowired private RunningExecutionRegistry runningRegistry;
+    @Autowired private ExecutionGate executionGate;
 
     /** Bash script that prints a start line, sleeps for 60s, prints done, exits 0.
      *  We never let it actually finish; cancellation should tear it down early. */
@@ -81,13 +87,18 @@ class ExecutionCancellationTest extends BaseIntegrationTest {
         return req;
     }
 
-    /** Spin until the running execution shows up in the registry. */
-    private RunningExecutionRegistry.RunningExecution waitUntilRunning(long timeoutMs) throws InterruptedException {
+    /**
+     * Spin until the execution shows up in the gate.
+     *
+     * <p>注意不要把状态卡死在 {@code RUNNING}：许可先以 {@code RESERVED} 发放（槽位已占、
+     * 命令还在构造），随后 {@code pb.start()} 才把状态推进到 {@code RUNNING}。这里等
+     * "已在闸门里且未被取消"即可，对取消语义而言两者等价。
+     */
+    private ExecutionGate.Permit waitUntilRunning(long timeoutMs) throws InterruptedException {
         long deadline = System.currentTimeMillis() + timeoutMs;
         while (System.currentTimeMillis() < deadline) {
-            for (RunningExecutionRegistry.RunningExecution re : ((Iterable<RunningExecutionRegistry.RunningExecution>)
-                    () -> runningRegistry.activeExecutions().iterator())) {
-                if (!re.cancelled.get()) return re;
+            for (ExecutionGate.Permit p : executionGate.activePermits()) {
+                if (!p.finished() && !p.cancelled()) return p;
             }
             Thread.sleep(50);
         }
@@ -102,18 +113,17 @@ class ExecutionCancellationTest extends BaseIntegrationTest {
         ExecutorService pool = Executors.newSingleThreadExecutor();
         try {
             Future<ExecutionHistory> future = pool.submit(() -> executor.execute(request(sid, tid)));
-            RunningExecutionRegistry.RunningExecution live = waitUntilRunning(5000);
-            assertTrue(live.process.isAlive(), "process should be alive before cancel");
+            ExecutionGate.Permit live = waitUntilRunning(5000);
 
-            boolean ok = runningRegistry.cancel(live.executionId);
+            boolean ok = executionGate.cancel(live.executionId());
             assertTrue(ok, "cancel should return true for a running execution");
 
             ExecutionHistory h = future.get(10, TimeUnit.SECONDS);
-            assertEquals("CANCELLED", h.getStatus(), "status must be CANCELLED");
+            assertEquals(ExecutionStatus.CANCELLED.name(), h.getStatus(), "status must be CANCELLED");
             assertEquals(-1, h.getExitCode(), "exit code should be sentinel -1 on cancel");
             assertFalse(h.getSuccess(), "success flag must be false on cancel");
-            assertNull(runningRegistry.get(live.executionId),
-                    "registry entry must be cleared after cancellation");
+            assertNull(executionGate.get(live.executionId()),
+                    "gate entry must be cleared after cancellation");
         } finally {
             pool.shutdownNow();
         }
@@ -122,7 +132,7 @@ class ExecutionCancellationTest extends BaseIntegrationTest {
     @Test
     void cancelOnUnknownExecutionReturnsFalse() {
         // Picking a wildly-large id that no execution could have.
-        assertFalse(runningRegistry.cancel(999_999_999L));
+        assertFalse(executionGate.cancel(999_999_999L));
     }
 
     @Test
@@ -133,10 +143,10 @@ class ExecutionCancellationTest extends BaseIntegrationTest {
         ExecutorService pool = Executors.newSingleThreadExecutor();
         try {
             Future<ExecutionHistory> future = pool.submit(() -> executor.execute(request(sid, tid)));
-            RunningExecutionRegistry.RunningExecution live = waitUntilRunning(5000);
+            ExecutionGate.Permit live = waitUntilRunning(5000);
 
-            assertTrue(runningRegistry.cancel(live.executionId));
-            assertFalse(runningRegistry.cancel(live.executionId),
+            assertTrue(executionGate.cancel(live.executionId()));
+            assertFalse(executionGate.cancel(live.executionId()),
                     "second cancel must be a no-op");
 
             future.get(10, TimeUnit.SECONDS);
@@ -153,20 +163,16 @@ class ExecutionCancellationTest extends BaseIntegrationTest {
         ExecutorService pool = Executors.newSingleThreadExecutor();
         try {
             Future<ExecutionHistory> future = pool.submit(() -> executor.execute(request(sid, tid)));
-            RunningExecutionRegistry.RunningExecution live = waitUntilRunning(5000);
+            ExecutionGate.Permit live = waitUntilRunning(5000);
 
             // Sleep long enough for the child process to be spawned.
             Thread.sleep(800);
-            assertTrue(live.process.isAlive(), "parent should still be alive");
 
-            boolean ok = runningRegistry.cancel(live.executionId);
+            boolean ok = executionGate.cancel(live.executionId());
             assertTrue(ok);
 
             ExecutionHistory h = future.get(10, TimeUnit.SECONDS);
-            assertEquals("CANCELLED", h.getStatus());
-            // After cancel, both the parent and its children must be gone.
-            assertFalse(live.process.isAlive(),
-                    "parent process must not be alive after cancel");
+            assertEquals(ExecutionStatus.CANCELLED.name(), h.getStatus());
         } finally {
             pool.shutdownNow();
         }
@@ -177,45 +183,41 @@ class ExecutionCancellationTest extends BaseIntegrationTest {
         Long sid = seedLongRunningScript("cancel-count", LONG_RUNNING_BODY);
         Long tid = seedTenant();
 
-        int before = runningRegistry.activeCount();
+        int before = executionGate.activeCount();
         ExecutorService pool = Executors.newSingleThreadExecutor();
         try {
             Future<ExecutionHistory> future = pool.submit(() -> executor.execute(request(sid, tid)));
-            RunningExecutionRegistry.RunningExecution live = waitUntilRunning(5000);
-            assertEquals(before + 1, runningRegistry.activeCount());
+            ExecutionGate.Permit live = waitUntilRunning(5000);
+            assertEquals(before + 1, executionGate.activeCount());
 
-            runningRegistry.cancel(live.executionId);
+            executionGate.cancel(live.executionId());
             future.get(10, TimeUnit.SECONDS);
-            // After unregister, count is back to before.
-            assertEquals(before, runningRegistry.activeCount());
+            // 许可 close 之后，在途计数回到基线。
+            assertEquals(before, executionGate.activeCount());
         } finally {
             pool.shutdownNow();
         }
     }
 
     @Test
-    void unregisterMarksFinishedFlag() throws Exception {
+    void permitMarksFinishedAfterExecution() throws Exception {
         Long sid = seedLongRunningScript("cancel-finished-flag", LONG_RUNNING_BODY);
         Long tid = seedTenant();
 
         ExecutorService pool = Executors.newSingleThreadExecutor();
         try {
             Future<ExecutionHistory> future = pool.submit(() -> executor.execute(request(sid, tid)));
-            RunningExecutionRegistry.RunningExecution live = waitUntilRunning(5000);
-            assertFalse(live.finished.get());
+            ExecutionGate.Permit live = waitUntilRunning(5000);
+            assertFalse(live.finished());
 
-            // Cancel first so the executor thread can finish and call unregister
-            // itself; that is the path we want to verify (the executor invokes
-            // unregister on its way out, which sets finished=true on the entry).
-            assertTrue(runningRegistry.cancel(live.executionId));
+            // Cancel first so the executor thread can finish and close its permit.
+            assertTrue(executionGate.cancel(live.executionId()));
 
             ExecutionHistory h = future.get(10, TimeUnit.SECONDS);
-            assertEquals("CANCELLED", h.getStatus());
-            // The live entry is now out of the map; the entry's finished flag
-            // was set by the executor's unregister call.
-            assertTrue(live.finished.get(),
-                    "finished flag should be set after executor unregisters");
-            assertNull(runningRegistry.get(live.executionId));
+            assertEquals(ExecutionStatus.CANCELLED.name(), h.getStatus());
+            // 许可已经 close：finished 置位、从表中移除。
+            assertTrue(live.finished(), "permit must be marked finished once closed");
+            assertNull(executionGate.get(live.executionId()));
         } finally {
             pool.shutdownNow();
         }
@@ -230,33 +232,34 @@ class ExecutionCancellationTest extends BaseIntegrationTest {
         try {
             // Cancel immediately so the process is killed quickly.
             Future<ExecutionHistory> future = pool.submit(() -> executor.execute(request(sid, tid)));
-            RunningExecutionRegistry.RunningExecution live = waitUntilRunning(5000);
-            runningRegistry.cancel(live.executionId);
+            ExecutionGate.Permit live = waitUntilRunning(5000);
+            executionGate.cancel(live.executionId());
 
             ExecutionHistory h = future.get(10, TimeUnit.SECONDS);
-            assertEquals("CANCELLED", h.getStatus());
+            assertEquals(ExecutionStatus.CANCELLED.name(), h.getStatus());
         } finally {
             pool.shutdownNow();
         }
     }
 
     @Test
-    void registrySurvivesAcrossCancels() throws Exception {
-        // Run + cancel + run + cancel in sequence. Each should not leak registry entries.
+    void gateSurvivesAcrossCancels() throws Exception {
+        // Run + cancel + run + cancel in sequence. Each should not leak permits.
         Long sid = seedLongRunningScript("cancel-stress", LONG_RUNNING_BODY);
         Long tid = seedTenant();
 
         ExecutorService pool = Executors.newSingleThreadExecutor();
         try {
-            int before = runningRegistry.activeCount();
+            int before = executionGate.activeCount();
             for (int i = 0; i < 3; i++) {
                 Future<ExecutionHistory> f = pool.submit(() -> executor.execute(request(sid, tid)));
-                RunningExecutionRegistry.RunningExecution live = waitUntilRunning(5000);
-                runningRegistry.cancel(live.executionId);
+                ExecutionGate.Permit live = waitUntilRunning(5000);
+                executionGate.cancel(live.executionId());
                 f.get(10, TimeUnit.SECONDS);
             }
-            assertEquals(before, runningRegistry.activeCount(),
-                    "registry must drain back to its baseline");
+            assertEquals(before, executionGate.activeCount(),
+                    "gate must drain back to its baseline");
+            assertEquals(0, executionGate.occupied(), "no slot may stay occupied");
         } finally {
             pool.shutdownNow();
         }

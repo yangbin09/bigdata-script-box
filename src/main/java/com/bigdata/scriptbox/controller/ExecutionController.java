@@ -4,7 +4,8 @@ import com.bigdata.scriptbox.dto.ApiResponse;
 import com.bigdata.scriptbox.dto.ExecutionRequest;
 import com.bigdata.scriptbox.entity.ExecutionHistory;
 import com.bigdata.scriptbox.executor.ScriptExecutor;
-import com.bigdata.scriptbox.service.RunningExecutionRegistry;
+import com.bigdata.scriptbox.model.ExecutionStatus;
+import com.bigdata.scriptbox.service.ExecutionGate;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -38,7 +39,7 @@ public class ExecutionController {
 
     private final ScriptExecutor executor;
     private final com.bigdata.scriptbox.service.ResultParserService resultParserService;
-    private final RunningExecutionRegistry runningRegistry;
+    private final ExecutionGate executionGate;
     private final com.bigdata.scriptbox.service.ArtifactService artifactService;
 
     /**
@@ -79,83 +80,84 @@ public class ExecutionController {
      *  用于前端在「取消正在等待的那条」时查找 executionId。
      *  因为 POST /executions 是阻塞到结束的，前端拿不到 id。 */
     @GetMapping("/active")
-    public ApiResponse<java.util.List<Map<String, Object>>> active(
+    public ApiResponse<java.util.List<RunningExecutionView>> active(
             @RequestParam(value = "scriptId", required = false) Long scriptId,
             @RequestParam(value = "tenantId", required = false) Long tenantId) {
-        java.util.List<Map<String, Object>> out = new java.util.ArrayList<>();
-        for (RunningExecutionRegistry.RunningExecution re :
-                runningRegistry.activeExecutions()) {
-            if (scriptId != null && re.scriptId != scriptId) continue;
-            if (tenantId != null && re.tenantId != tenantId) continue;
-            Map<String, Object> data = new java.util.LinkedHashMap<>();
-            data.put("id", re.executionId);
-            data.put("scriptId", re.scriptId);
-            data.put("tenantId", re.tenantId);
-            data.put("startedAtMs", re.startedAtMs);
-            data.put("cancelled", re.cancelled.get());
-            out.add(data);
+        java.util.List<RunningExecutionView> out = new java.util.ArrayList<>();
+        for (ExecutionGate.Permit p : executionGate.activePermits()) {
+            if (p.finished()) continue;
+            if (scriptId != null && p.scriptId() != scriptId) continue;
+            if (tenantId != null && p.tenantId() != tenantId) continue;
+            out.add(new RunningExecutionView(p.executionId(), p.scriptId(), p.tenantId(),
+                    p.startedAtMs(), p.cancelled()));
         }
         return ApiResponse.ok(out);
     }
 
+    /** 运行中执行的只读视图（替代原先就地拼装的 Map）。 */
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.ALWAYS)
+    public record RunningExecutionView(long id, long scriptId, long tenantId,
+                                       long startedAtMs, boolean cancelled) { }
+
     /** V2: 取消正在运行的执行。幂等 — 已结束的返回 "not found"。
      *  取消在后台线程完成；执行线程返回后 history 行会更新为 CANCELLED。 */
     @PostMapping("/{id}/cancel")
-    public ApiResponse<Map<String, Object>> cancel(@PathVariable Long id) {
+    public ApiResponse<ExecutionStateView> cancel(@PathVariable Long id) {
         ExecutionHistory existing = executor.history(id);
         if (existing == null) {
-            // 可能仍在跑且还没写库，先到 registry 里找
-            RunningExecutionRegistry.RunningExecution live = runningRegistry.get(id);
+            // 可能仍在跑且还没写库，先到 gate 里找
+            ExecutionGate.Permit live = executionGate.get(id);
             if (live == null) return ApiResponse.error("execution not found");
-            boolean signalled = runningRegistry.cancel(id);
+            boolean signalled = executionGate.cancel(id);
             log.info("用户取消脚本执行，executionId={}，signalled={}", id, signalled);
-            Map<String, Object> data = new java.util.LinkedHashMap<>();
-            data.put("id", id);
-            data.put("cancelled", signalled);
-            data.put("state", "RUNNING");
-            return ApiResponse.ok(data);
+            return ApiResponse.ok(new ExecutionStateView(id, signalled, "RUNNING", null, null, null, null, null));
         }
         // 已结束，不能再取消
-        if (!"RUNNING".equals(existing.getStatus())) {
-            Map<String, Object> data = new java.util.LinkedHashMap<>();
-            data.put("id", id);
-            data.put("cancelled", false);
-            data.put("state", existing.getStatus());
-            data.put("message", "execution already finished with status " + existing.getStatus());
-            return ApiResponse.ok(data);
+        if (!ExecutionStatus.RUNNING.name().equals(existing.getStatus())) {
+            return ApiResponse.ok(new ExecutionStateView(id, false, existing.getStatus(),
+                    "execution already finished with status " + existing.getStatus(),
+                    existing.getScriptId(), existing.getTenantId(), null, existing.getExitCode()));
         }
-        boolean signalled = runningRegistry.cancel(id);
+        boolean signalled = executionGate.cancel(id);
         log.info("用户取消脚本执行，executionId={}，signalled={}", id, signalled);
-        Map<String, Object> data = new java.util.LinkedHashMap<>();
-        data.put("id", id);
-        data.put("cancelled", signalled);
-        data.put("state", "RUNNING");
-        return ApiResponse.ok(data);
+        return ApiResponse.ok(new ExecutionStateView(id, signalled, "RUNNING", null, null, null, null, null));
     }
 
     /** V2: 查询某次执行的当前状态。 */
     @GetMapping("/{id}/state")
-    public ApiResponse<Map<String, Object>> state(@PathVariable Long id) {
-        Map<String, Object> data = new java.util.LinkedHashMap<>();
-        data.put("id", id);
-        RunningExecutionRegistry.RunningExecution live = runningRegistry.get(id);
+    public ApiResponse<ExecutionStateView> state(@PathVariable Long id) {
+        ExecutionGate.Permit live = executionGate.get(id);
         if (live != null) {
-            data.put("state", "RUNNING");
-            data.put("scriptId", live.scriptId);
-            data.put("tenantId", live.tenantId);
-            data.put("startedAtMs", live.startedAtMs);
-            data.put("cancelled", live.cancelled.get());
-            return ApiResponse.ok(data);
+            return ApiResponse.ok(new ExecutionStateView(id, false, "RUNNING", null,
+                    live.scriptId(), live.tenantId(), live.startedAtMs(), null));
         }
         ExecutionHistory h = executor.history(id);
         if (h == null) {
-            data.put("state", "UNKNOWN");
-            return ApiResponse.ok(data);
+            return ApiResponse.ok(new ExecutionStateView(id, false, "UNKNOWN", null,
+                    null, null, null, null));
         }
-        data.put("state", h.getStatus());
-        data.put("exitCode", h.getExitCode());
-        return ApiResponse.ok(data);
+        return ApiResponse.ok(new ExecutionStateView(id, false, h.getStatus(), null,
+                h.getScriptId(), h.getTenantId(), null, h.getExitCode()));
     }
+
+    /**
+     * 取消 / 状态接口的统一响应体。
+     *
+     * <p>字段名与历史 Map 版本逐一对应（{@code id} / {@code cancelled} / {@code state} /
+     * {@code message} / {@code scriptId} / {@code tenantId} / {@code startedAtMs} /
+     * {@code exitCode}），因此前端无需改动；不适用的字段序列化为 {@code null}。
+     * 旧实现就地拼 {@code LinkedHashMap}，字段名靠字符串约定，拼错编译期无感知。
+     */
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.ALWAYS)
+    public record ExecutionStateView(
+            long id,
+            boolean cancelled,
+            String state,
+            String message,
+            Long scriptId,
+            Long tenantId,
+            Long startedAtMs,
+            Integer exitCode) { }
 
     /**
      * 读取执行 stdout 日志（截断到 {@code maxLogBytes}）。

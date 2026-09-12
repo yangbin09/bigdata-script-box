@@ -3,7 +3,7 @@ package com.bigdata.scriptbox.controller;
 import com.bigdata.scriptbox.dto.ApiResponse;
 import com.bigdata.scriptbox.entity.ScriptPreset;
 import com.bigdata.scriptbox.service.PresetService;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.LinkedHashMap;
@@ -22,9 +22,10 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/scripts/{scriptId}/presets")
+@RequiredArgsConstructor
 public class PresetController {
 
-    @Autowired private PresetService presetService;
+    private final PresetService presetService;
 
     /**
      * 列出脚本的全部预设。

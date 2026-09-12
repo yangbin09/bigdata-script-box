@@ -6,7 +6,7 @@ import com.bigdata.scriptbox.entity.Tenant;
 import com.bigdata.scriptbox.service.PrecheckService;
 import com.bigdata.scriptbox.service.ScriptService;
 import com.bigdata.scriptbox.service.TenantService;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
@@ -19,32 +19,41 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/scripts/{scriptId}/precheck")
+@RequiredArgsConstructor
 public class PrecheckController {
 
-    @Autowired private ScriptService scriptService;
-    @Autowired private TenantService tenantService;
-    @Autowired private PrecheckService precheckService;
+    private final ScriptService scriptService;
+    private final TenantService tenantService;
+    private final PrecheckService precheckService;
 
     /**
      * 触发执行前检查。请求体：{@code { "tenantId": ... }}。
      *
      * @param scriptId 脚本 ID（路径变量）
      * @param body 请求体，含 tenantId
-     * @return Precheck 结果
+     * @return Precheck 结果（{@link PrecheckService.PrecheckReport}，字段名与历史 Map 一致）
      */
     @PostMapping
-    public ApiResponse<Map<String, Object>> run(@PathVariable Long scriptId,
-                                                @RequestBody Map<String, Object> body) {
+    public ApiResponse<PrecheckService.PrecheckReport> run(@PathVariable Long scriptId,
+                                                           @RequestBody Map<String, Object> body) {
         Script script = scriptService.getById(scriptId);
         if (script == null) return ApiResponse.error("script not found");
-        Object tid = body.get("tenantId");
-        Tenant tenant = null;
-        if (tid instanceof Number n) {
-            tenant = tenantService.getById(n.longValue());
-        } else if (tid != null) {
-            try { tenant = tenantService.getById(Long.parseLong(tid.toString())); }
-            catch (Exception ignored) {}
-        }
+        Tenant tenant = resolveTenant(body.get("tenantId"));
         return ApiResponse.ok(precheckService.run(script, tenant));
+    }
+
+    /** tenantId 允许是数字或数字字符串；缺失 / 非法时返回 null（Kerberos 策略会判失败）。 */
+    private Tenant resolveTenant(Object raw) {
+        if (raw instanceof Number n) {
+            return tenantService.getById(n.longValue());
+        }
+        if (raw != null) {
+            try {
+                return tenantService.getById(Long.parseLong(raw.toString().trim()));
+            } catch (NumberFormatException ignored) {
+                // 非法 tenantId 视为未提供
+            }
+        }
+        return null;
     }
 }

@@ -6,6 +6,7 @@ import com.bigdata.scriptbox.entity.ExecutionHistory;
 import com.bigdata.scriptbox.entity.Scenario;
 import com.bigdata.scriptbox.entity.ScenarioStep;
 import com.bigdata.scriptbox.executor.ScriptExecutor;
+import com.bigdata.scriptbox.mapper.ExecutionHistoryMapper;
 import com.bigdata.scriptbox.mapper.ScenarioMapper;
 import com.bigdata.scriptbox.mapper.ScenarioStepMapper;
 import lombok.RequiredArgsConstructor;
@@ -14,6 +15,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -32,6 +34,7 @@ public class ScenarioService {
 
     private final ScenarioMapper scenarioMapper;
     private final ScenarioStepMapper stepMapper;
+    private final ExecutionHistoryMapper historyMapper;
     private final ScriptExecutor executor;
 
     /**
@@ -92,6 +95,19 @@ public class ScenarioService {
     /** 列出某场景下的所有步骤（按 stepNo 升序）。 */
     public List<ScenarioStep> stepsOf(Long scenarioId) {
         return stepMapper.selectByScenarioIdOrderByStep(scenarioId);
+    }
+
+    /**
+     * V2: 关联到本场景的 {@code execution_history} 行数（用于删除确认对话框）。
+     *
+     * @param id 场景 ID
+     * @return 键为 {@code historyCount} 的计数
+     */
+    public Map<String, Long> relatedCounts(Long id) {
+        Map<String, Long> out = new HashMap<>();
+        out.put("historyCount",
+                historyMapper.selectCount(new QueryWrapper<ExecutionHistory>().eq("scenario_id", id)));
+        return out;
     }
 
     /**

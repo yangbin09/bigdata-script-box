@@ -1,6 +1,7 @@
 package com.bigdata.scriptbox;
 
 import com.bigdata.scriptbox.config.InMemoryMultipartFile;
+import com.bigdata.scriptbox.config.ScriptBoxProperties;
 import com.bigdata.scriptbox.dto.ExecutionRequest;
 import com.bigdata.scriptbox.entity.Script;
 import com.bigdata.scriptbox.entity.Tenant;
@@ -24,6 +25,7 @@ class DryRunTest extends BaseIntegrationTest {
     @Autowired private TenantService tenantService;
     @Autowired private ScriptExecutor executor;
     @Autowired private GlobalVariableService variableService;
+    @Autowired private ScriptBoxProperties props;
 
     private Long seedScript() throws IOException {
         Script s = new Script();
@@ -67,7 +69,9 @@ class DryRunTest extends BaseIntegrationTest {
         assertEquals("Preview", preview.get("scriptDisplayName"));
         @SuppressWarnings("unchecked")
         List<String> cmd = (List<String>) preview.get("command");
-        assertEquals("bash", cmd.get(0));
+        // 命令首项是配置的 shell（scriptbox.shell-executable），不要在测试里写死 "bash"：
+        // 部署目标是 Linux 走 PATH 上的 bash，本地开发用 -Pgit-bash 指向 Git Bash。
+        assertEquals(props.getShellExecutable(), cmd.get(0));
         assertTrue(cmd.contains("--database"));
         assertTrue(cmd.contains("cobp"));
         assertTrue(cmd.contains("--count"));

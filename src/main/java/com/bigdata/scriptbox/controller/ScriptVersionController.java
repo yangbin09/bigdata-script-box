@@ -3,7 +3,7 @@ package com.bigdata.scriptbox.controller;
 import com.bigdata.scriptbox.dto.ApiResponse;
 import com.bigdata.scriptbox.entity.ScriptVersion;
 import com.bigdata.scriptbox.service.ScriptVersionService;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.LinkedHashMap;
@@ -22,9 +22,10 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/scripts/{scriptId}/versions")
+@RequiredArgsConstructor
 public class ScriptVersionController {
 
-    @Autowired private ScriptVersionService versionService;
+    private final ScriptVersionService versionService;
 
     /**
      * 列出指定脚本的全部版本（按 version_no 降序）。

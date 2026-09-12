@@ -3,7 +3,7 @@ package com.bigdata.scriptbox.controller;
 import com.bigdata.scriptbox.dto.ApiResponse;
 import com.bigdata.scriptbox.entity.ExecutionHistory;
 import com.bigdata.scriptbox.service.BatchService;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -18,9 +18,10 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/batches")
+@RequiredArgsConstructor
 public class BatchController {
 
-    @Autowired private BatchService batchService;
+    private final BatchService batchService;
 
     /**
      * 触发批量执行。

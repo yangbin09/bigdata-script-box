@@ -3,7 +3,7 @@ package com.bigdata.scriptbox.controller;
 import com.bigdata.scriptbox.dto.ApiResponse;
 import com.bigdata.scriptbox.entity.ExecutionHistory;
 import com.bigdata.scriptbox.service.HistoryService;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -16,9 +16,10 @@ import java.util.List;
  */
 @RestController
 @RequestMapping("/api/history")
+@RequiredArgsConstructor
 public class HistoryController {
 
-    @Autowired private HistoryService historyService;
+    private final HistoryService historyService;
 
     /**
      * 查询执行历史，支持多维过滤。

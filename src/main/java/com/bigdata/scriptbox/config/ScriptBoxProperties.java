@@ -34,19 +34,41 @@ public class ScriptBoxProperties {
     private String keytabsDir = "./data/keytabs";
     /** 执行结果受控目录（每个 execution 一个子目录）。 */
     private String executionsDir = "./data/executions";
+
+    // V3: 子进程可执行文件路径。部署目标是 Linux 节点，默认 "bash" 走 PATH；
+    // 本地开发（尤其是 Windows + WSL）必须能覆盖，因为 C:\Windows\system32\bash.exe
+    // 会把 C:\Users\... 吞成 C:Users...，导致任何带路径参数的 bash 调用失败。
+    // 例：scriptbox.shell-executable="C:/Program Files/Git/bin/bash.exe"
+    private String shellExecutable = "bash";
+    /** kinit 可执行文件路径（租户连通性测试用）。 */
+    private String kinitExecutable = "kinit";
+    /** klist 可执行文件路径（租户连通性测试用）。 */
+    private String klistExecutable = "klist";
+
     /** 单次日志返回的最大字节数（前端分页拉取）。 */
     private long maxLogBytes = 1048576L;
     /** 单个脚本文件最大字节数。 */
     private long maxScriptBytes = 1048576L;
     /** 文件参数上传的最大字节数（10 MB）。 */
     private long maxInputFileBytes = 10485760L; // 10 MB
-    // V2: 全局同时执行上限，由 ProcessRunner 的 Semaphore 强制控制。
+    /** 脚本未显式声明超时时的默认执行超时（秒）。schema.sql 的 DEFAULT 需与此保持一致。 */
+    private int defaultTimeoutSeconds = 600;
+    // V2: 全局同时执行上限，由 ExecutionGate 的准入许可强制控制。
     // 默认 5 既能覆盖正常使用，又能在失控 fork 时保护宿主机。
     private int maxConcurrent = 5;
+    // V3: 单次执行 stdout / stderr 落盘字节上限，防止脚本死循环输出打满磁盘。
+    // 0 表示不限制（不推荐）。默认 256 MB，与应用日志滚动策略同量级。
+    private long maxOutputBytes = 268435456L;
+    // V3: 内部短命令（bash -n 语法检查、kinit / klist 连通性测试）的超时（秒）。
+    // 这些命令不占用 maxConcurrent 槽位，但必须有自己的硬超时，避免挂死请求线程。
+    private int commandTimeoutSeconds = 30;
     // V2: 单次执行的执行产物限制。脚本写到 $ARTIFACT_DIR，
     // 结束后扫描注册，超限文件 WARN 跳过而非中断执行。
     private long maxArtifactBytes = 52428800L; // 50 MB 每文件
     private int maxArtifactFiles = 50;         // 最多 50 个文件
+    // V2: 单次执行的总产物上限。**注意：当前未被任何代码读取**（ArtifactService 只按
+    // "单文件上限 + 文件数上限"裁剪）。属于 #10 待清理项 —— 要么在 scanAndRegister 里
+    // 真正接线，要么删除，不要留着造成"改了不生效"。
     private long maxArtifactTotalBytes = 209715200L; // 200 MB 单次执行总产物
     // V2: 清理保留天数。CleanupService 优先读 system_setting 覆盖值，再回退到这里的默认值。
     // 0 表示禁用对应类别。
@@ -87,5 +109,20 @@ public class ScriptBoxProperties {
     /** 显式 setter：保留原有的"应用日志保留天数 ≥ 0"边界校验。 */
     public void setRetentionLogDays(int v) {
         this.retentionLogDays = Math.max(0, v);
+    }
+
+    /** 显式 setter：默认执行超时必须为正数（0 / 负数会让进程启动即被 kill）。 */
+    public void setDefaultTimeoutSeconds(int v) {
+        this.defaultTimeoutSeconds = v <= 0 ? 600 : v;
+    }
+
+    /** 显式 setter：内部短命令超时必须为正数。 */
+    public void setCommandTimeoutSeconds(int v) {
+        this.commandTimeoutSeconds = v <= 0 ? 30 : v;
+    }
+
+    /** 显式 setter：输出上限允许 0（表示不限），负值归一为 0。 */
+    public void setMaxOutputBytes(long v) {
+        this.maxOutputBytes = Math.max(0, v);
     }
 }

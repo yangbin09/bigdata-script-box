@@ -21,6 +21,11 @@
         <java.version>17</java.version>
         <mybatis-plus.version>3.5.7</mybatis-plus.version>
         <node.version>v22.23.2</node.version>
+        <!-- 执行 shell 脚本用的可执行文件。部署目标是 Linux，默认走 PATH 上的 bash。
+             Windows 本地开发必须覆盖：C:\Windows\system32\bash.exe 是 WSL 转发器，
+             会把 C:\Users\... 吞成 C:Users...，任何带路径的 bash 调用都会失败。
+             用 `mvn -Pgit-bash test` 走 Git Bash 即可。 -->
+        <scriptbox.shell-executable>bash</scriptbox.shell-executable>
     </properties>
 
     <dependencies>
@@ -133,8 +138,14 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
-                    <!-- JDK 17 + Mockito 5 inline mock maker requires self-attach. -->
-                    <argLine>-Djdk.attach.allowAttachSelf=true</argLine>
+                    <!-- JDK 17 + Mockito 5 inline mock maker requires self-attach.
+                         file.encoding=UTF-8：中文 Windows 默认 ANSI 代码页会让 JVM 以
+                         非 UTF-8 的 native encoding 启动，子进程（bash.exe）随之为管道/stdout
+                         选择 UTF-16LE，落盘日志带 FF FE BOM，Files.readString 直接抛
+                         MalformedInputException。钉死 UTF-8 消除这类平台差异。
+                         scriptbox.shell-executable 让测试可以使用非 PATH 上的 shell
+                         （Windows 上用 -Pgit-bash 覆盖；默认仍是 Linux 目标的 bash）。 -->
+                    <argLine>-Xshare:off -Djdk.attach.allowAttachSelf=true -Dfile.encoding=UTF-8 -Dsun.stdout.encoding=UTF-8 -Dsun.stderr.encoding=UTF-8 -Dscriptbox.shell-executable=${scriptbox.shell-executable}</argLine>
                 </configuration>
             </plugin>
 
@@ -161,6 +172,22 @@
             <id>no-frontend</id>
             <properties>
                 <skipFrontend>true</skipFrontend>
+            </properties>
+        </profile>
+
+        <!-- Windows 本地开发：用 Git Bash 跑测试与脚本执行。
+             C:\Windows\system32\bash.exe（WSL 转发器）会吞掉 Windows 路径里的反斜杠，
+             导致 bash -n <path> 与 bash <script.sh> 全部找不到文件。
+             激活：mvn -Pgit-bash test
+             注意 bash.exe 的默认路径含空格，而 Maven 的 <argLine> 无法安全传递带空格的
+             -D 值（fork 出来的 JVM 会把它当成两个参数）。因此这里默认指向一个无空格的
+             目录联接：mklink /J C:\gitbash "C:\Program Files\Git\bin"
+             若 Git 装在别处且路径无空格，直接 -Dgit.bash.path=... 覆盖即可。 -->
+        <profile>
+            <id>git-bash</id>
+            <properties>
+                <git.bash.path>C:/gitbash/bash.exe</git.bash.path>
+                <scriptbox.shell-executable>${git.bash.path}</scriptbox.shell-executable>
             </properties>
         </profile>
     </profiles>

@@ -9,6 +9,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -46,23 +47,25 @@ class StoragePathServiceTest {
 
     @Test
     void pathGenerationFollowsConvention() {
+        // 用 Paths.get 逐段拼接断言，避免硬编码 '/' 分隔符导致 Windows 上误判。
         Path script = svc.scriptFilePath(42L);
-        assertTrue(script.endsWith("scripts/42/script.sh"));
+        assertTrue(script.endsWith(Paths.get("scripts", "42", "script.sh")), script.toString());
 
         Path keytab = svc.keytabPath(7L, "uuid");
-        assertTrue(keytab.toString().contains("keytabs/tenant_7_uuid.keytab"));
+        assertEquals("tenant_7_uuid.keytab", keytab.getFileName().toString());
+        assertTrue(keytab.getParent().endsWith(Paths.get("keytabs")), keytab.toString());
 
         Path execDir = svc.executionDirFor(123L);
-        assertTrue(execDir.endsWith("executions/123"));
+        assertTrue(execDir.endsWith(Paths.get("executions", "123")), execDir.toString());
 
         Path art = svc.artifactsDirFor(123L);
-        assertTrue(art.endsWith("executions/123/artifacts"));
+        assertTrue(art.endsWith(Paths.get("executions", "123", "artifacts")), art.toString());
 
         Path input = svc.inputDirFor(123L);
-        assertTrue(input.endsWith("executions/123/input"));
+        assertTrue(input.endsWith(Paths.get("executions", "123", "input")), input.toString());
 
         Path upload = svc.pendingUploadDir("tok-abc");
-        assertTrue(upload.endsWith("data/uploads/tok-abc"));
+        assertTrue(upload.endsWith(Paths.get("data", "uploads", "tok-abc")), upload.toString());
     }
 
     @Test

@@ -13,7 +13,6 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -186,9 +185,7 @@ public class ScriptPackageService {
         Script saved = scriptService.create(s, mf);
         // 重新落 precheckConfigJson（create() 默认不会回填这个字段）
         if (precheckCfg != null && !precheckCfg.isBlank()) {
-            saved.setPrecheckConfigJson(precheckCfg);
-            saved.setUpdateTime(java.time.LocalDateTime.now());
-            scriptService.getMapper().updateById(saved);
+            saved = scriptService.savePrecheckConfig(saved.getId(), precheckCfg);
         }
         if (!params.isEmpty()) scriptService.replaceParams(saved.getId(), params);
 

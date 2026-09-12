@@ -8,7 +8,7 @@ import com.bigdata.scriptbox.entity.Script;
 import com.bigdata.scriptbox.entity.Tenant;
 import com.bigdata.scriptbox.executor.ScriptExecutor;
 import com.bigdata.scriptbox.mapper.ScriptMapper;
-import com.bigdata.scriptbox.service.RunningExecutionRegistry;
+import com.bigdata.scriptbox.service.ExecutionGate;
 import com.bigdata.scriptbox.service.ScriptService;
 import com.bigdata.scriptbox.service.TenantService;
 import org.junit.jupiter.api.Test;
@@ -28,7 +28,7 @@ class ConcurrencyGateTest extends BaseIntegrationTest {
     @Autowired private TenantService tenantService;
     @Autowired private ScriptExecutor executor;
     @Autowired private ScriptMapper scriptMapper;
-    @Autowired private RunningExecutionRegistry runningRegistry;
+    @Autowired private ExecutionGate executionGate;
     @Autowired private ScriptBoxProperties props;
 
     private static final String SLEEP_BODY =
@@ -79,16 +79,24 @@ class ConcurrencyGateTest extends BaseIntegrationTest {
         return req;
     }
 
-    /** Wait until any execution with this scriptId shows up in the registry. */
-    private RunningExecutionRegistry.RunningExecution waitForScript(long scriptId, long timeoutMs) throws InterruptedException {
+    /**
+     * Wait until a permit for this script shows up in the gate.
+     *
+     * <p>不要求状态已经是 {@code RUNNING}：许可先以 {@code RESERVED} 发放（槽位已占、
+     * 命令还在构造），{@code pb.start()} 之后才变 {@code RUNNING}。对并发语义而言
+     * 两者都算"已经占住槽位"。
+     */
+    private ExecutionGate.Permit waitForScript(long scriptId, long timeoutMs) throws InterruptedException {
         long deadline = System.currentTimeMillis() + timeoutMs;
         while (System.currentTimeMillis() < deadline) {
-            for (RunningExecutionRegistry.RunningExecution re : runningRegistry.activeExecutions()) {
-                if (re.scriptId == scriptId && !re.cancelled.get()) return re;
+            for (ExecutionGate.Permit p : executionGate.activePermits()) {
+                if (p.scriptId() == scriptId && !p.finished() && !p.cancelled()) {
+                    return p;
+                }
             }
             Thread.sleep(50);
         }
-        throw new IllegalStateException("no execution for scriptId=" + scriptId + " appeared in registry within " + timeoutMs + "ms");
+        throw new IllegalStateException("no execution for scriptId=" + scriptId + " appeared in gate within " + timeoutMs + "ms");
     }
 
     @Test
@@ -109,8 +117,8 @@ class ConcurrencyGateTest extends BaseIntegrationTest {
                     "should mention duplicate-runner: " + ex.getMessage());
 
             // Clean up: cancel the running execution so the future resolves.
-            RunningExecutionRegistry.RunningExecution live = waitForScript(sid, 5000);
-            runningRegistry.cancel(live.executionId);
+            ExecutionGate.Permit live = waitForScript(sid, 5000);
+            executionGate.cancel(live.executionId());
             f1.get(10, TimeUnit.SECONDS);
         } finally {
             pool.shutdownNow();
@@ -127,17 +135,17 @@ class ConcurrencyGateTest extends BaseIntegrationTest {
             Future<ExecutionHistory> f1 = pool.submit(() -> executor.execute(request(sid, tid)));
             Future<ExecutionHistory> f2 = pool.submit(() -> executor.execute(request(sid, tid)));
 
-            // Both must start; we wait briefly for the registry to see both.
+            // Both must start; we wait briefly for the gate to see both.
             Thread.sleep(500);
             int matching = 0;
-            for (RunningExecutionRegistry.RunningExecution re : runningRegistry.activeExecutions()) {
-                if (re.scriptId == sid) matching++;
+            for (ExecutionGate.Permit p : executionGate.activePermits()) {
+                if (p.scriptId() == sid) matching++;
             }
             assertEquals(2, matching, "both executions should be live concurrently");
 
             // Cancel both to release the futures.
-            for (RunningExecutionRegistry.RunningExecution re : runningRegistry.activeExecutions()) {
-                if (re.scriptId == sid) runningRegistry.cancel(re.executionId);
+            for (ExecutionGate.Permit p : executionGate.activePermits()) {
+                if (p.scriptId() == sid) executionGate.cancel(p.executionId());
             }
             f1.get(10, TimeUnit.SECONDS);
             f2.get(10, TimeUnit.SECONDS);
@@ -171,8 +179,8 @@ class ConcurrencyGateTest extends BaseIntegrationTest {
                 assertTrue(ex.getMessage().contains("max-concurrent=1"),
                         "should report the configured cap: " + ex.getMessage());
 
-                RunningExecutionRegistry.RunningExecution live = waitForScript(sidA, 5000);
-                runningRegistry.cancel(live.executionId);
+                ExecutionGate.Permit live = waitForScript(sidA, 5000);
+                executionGate.cancel(live.executionId());
                 fA.get(10, TimeUnit.SECONDS);
             } finally {
                 pool.shutdownNow();
@@ -189,14 +197,13 @@ class ConcurrencyGateTest extends BaseIntegrationTest {
         try {
             Long sid = seedScript("slot-release", FAST_BODY, true);
             Long tid = seedTenant();
-            int before = runningRegistry.activeCount();
+            int before = executionGate.activeCount();
             int semBefore = availableSlots();
 
             ExecutionHistory h = executor.execute(request(sid, tid));
             assertTrue(h.getSuccess());
-            // After completion, the registry is empty AND the semaphore is
-            // back to its full capacity.
-            assertEquals(before, runningRegistry.activeCount());
+            // After completion, the gate is empty AND the slot count is back to full.
+            assertEquals(before, executionGate.activeCount());
             assertEquals(semBefore, availableSlots());
         } finally {
             props.setMaxConcurrent(5);
@@ -214,11 +221,11 @@ class ConcurrencyGateTest extends BaseIntegrationTest {
             ExecutorService pool = Executors.newSingleThreadExecutor();
             try {
                 Future<ExecutionHistory> f = pool.submit(() -> executor.execute(request(sid, tid)));
-                RunningExecutionRegistry.RunningExecution live = waitForScript(sid, 5000);
+                ExecutionGate.Permit live = waitForScript(sid, 5000);
                 assertEquals(semBefore - 1, availableSlots(),
                         "slot should be held while running");
 
-                runningRegistry.cancel(live.executionId);
+                executionGate.cancel(live.executionId());
                 f.get(10, TimeUnit.SECONDS);
                 assertEquals(semBefore, availableSlots(),
                         "slot must be released after cancel+finish");
@@ -253,9 +260,9 @@ class ConcurrencyGateTest extends BaseIntegrationTest {
         }
     }
 
-    /** Number of available "slots" = cap minus registry-active count. */
+    /** Number of available slots, straight from the gate's own accounting. */
     private int availableSlots() {
-        return Math.max(0, props.getMaxConcurrent() - runningRegistry.activeCount());
+        return executionGate.availableSlots();
     }
 
     /** Cheap helper: round-trip many sequential executions and assert no
