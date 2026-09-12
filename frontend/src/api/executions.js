@@ -11,6 +11,40 @@ const LONG_RUNNING = { timeout: 0 }
 export const execute = (payload, timeoutMs) =>
   http.post('/executions', payload, timeoutMs == null ? LONG_RUNNING : { timeout: timeoutMs })
 
+/**
+ * V3 (PR-0): 异步执行提交。
+ *
+ * <p>后端在准入后立即返回 `{executionId, status: "PENDING"}`，前端据此轮询。
+ * 同步回退路径（{@code scriptbox.exec.async-enabled=false}）下返回完整
+ * {@code ExecutionHistory}，调用方按历史兼容路径处理。
+ *
+ * <p>参数 timeoutMs 在异步模式下基本无意义（提交瞬间就返回）；
+ * 保留它只是为了保持与 {@link execute} 同样的入参形状，便于调用方切换。
+ */
+export const submitExecution = (payload, timeoutMs) =>
+  http.post('/executions', payload, timeoutMs == null ? LONG_RUNNING : { timeout: timeoutMs })
+
+/**
+ * V3 (PR-0): 合并内存 Permit + DB 残行的活跃执行列表。
+ *
+ * <p>无 scriptId / tenantId 过滤 —— 任务中心看全部。
+ * 返回结构：`[{id, scriptId, tenantId, status, startedAtMs, cancelled}]`。
+ */
+export const recentActive = () => http.get('/executions/recent-active')
+
+/**
+ * V3 (PR-0): 拉取 stdout / stderr 末尾 N 字节。前端每 2s 拉一次做"日志实时跟随"。
+ *
+ * @param id     执行 ID
+ * @param stream {@code 'stdout'} 或 {@code 'stderr'}
+ * @param bytes  最多返回字节数（默认 64KB）
+ */
+export const logTail = (id, stream = 'stdout', bytes = 65536) =>
+  http.get(`/executions/${id}/log-tail`, {
+    params: { stream, bytes },
+    responseType: 'text'
+  })
+
 export const readStdout = (id) =>
   http.get(`/executions/${id}/stdout`, { responseType: 'text' })
 

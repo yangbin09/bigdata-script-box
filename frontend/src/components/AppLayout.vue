@@ -35,6 +35,25 @@
           :class="{ live: ready, offline: offline }"
         />
         <span class="sb-status-text">{{ ready ? '就绪' : (offline ? '离线' : '加载中') }}</span>
+        <!--
+          V3 (PR-0): 任务中心按钮 + 角标。点击打开 TaskCenterDrawer。
+          角标 = activeCount（运行中 + 待处理）。
+        -->
+        <el-badge
+          v-if="exec.activeCount > 0"
+          :value="exec.activeCount"
+          :max="99"
+          type="warning"
+        >
+          <el-button text @click="ui.toggleTaskCenter()">
+            <el-icon :size="16"><Timer /></el-icon>
+            <span>任务中心</span>
+          </el-button>
+        </el-badge>
+        <el-button v-else text @click="ui.toggleTaskCenter()">
+          <el-icon :size="16"><Timer /></el-icon>
+          <span>任务中心</span>
+        </el-button>
       </div>
     </header>
     <main class="sb-main">
@@ -47,11 +66,16 @@
 import { onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { systemInfo } from '../api/system'
+import { useExecutionStore } from '../stores/executionStore'
+import { useUiStore } from '../stores/uiStore'
+import { Timer } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const ready = ref(false)
 const offline = ref(false)
 const envInfo = reactive({ mock: true, environmentName: 'Mock 环境' })
+const exec = useExecutionStore()
+const ui = useUiStore()
 
 const navItems = [
   { path: '/',         label: '执行中心',   icon: 'Promotion' },
