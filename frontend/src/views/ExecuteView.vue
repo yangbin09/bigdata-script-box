@@ -1352,6 +1352,10 @@ async function toggleFavorite(s, val) {
 // onMounted body) so the teardown below is actually registered: a lifecycle
 // hook called after an `await` inside onMounted has no live instance and Vue
 // silently drops it, leaking the listener and the 1 s elapsed-time interval.
+const drawerSize = ref('520px')
+function computeDrawerSize() {
+  drawerSize.value = window.innerWidth >= 1280 ? '560px' : '460px'
+}
 // V3 (PR-2): 当前正在运行的 executionId。开启异步路径后，runScript 不再
 // 阻塞等待 submit 结果，而是把 executionId 塞回这里，由 executionStore
 // 的全局轮询驱动 UI 状态。这样切到别的页面也不会丢进度，回来能直接看到。
